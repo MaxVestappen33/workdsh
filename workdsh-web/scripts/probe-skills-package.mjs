@@ -30,7 +30,8 @@ await writeFile(skillFile, `---\nname: ${fixture}\ndescription: Standalone packa
 // WorkDSH-owned local catalog: metadata plus inert payload, installed through
 // the same managed import path the browser upload uses.
 const catalogSkill = 'catalog-fixture';
-const catalogRoot = join(home, 'agents/.workdsh-catalog');
+const catalogRoot = join(home, 'selected-catalog');
+env.WORKDSH_SKILL_CATALOG = catalogRoot;
 await mkdir(join(catalogRoot, 'icons'), { recursive: true });
 await mkdir(join(catalogRoot, 'payloads', catalogSkill), { recursive: true });
 await writeFile(join(catalogRoot, 'icons/tiny.svg'), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#3ba55d"/></svg>');
@@ -262,7 +263,7 @@ try {
   assert.equal(missing.value.diagnostics[0].code, 'skill/catalog-missing');
   assert.ok((await api(host, 'list')).value.some(row => row.name === catalogSkill));
   await stop();
-  delete env.WORKDSH_SKILL_CATALOG;
+  env.WORKDSH_SKILL_CATALOG = catalogRoot;
   await writeFile(join(catalogRoot, 'catalog.json'), '{ not json');
   host = await start();
   const invalid = await api(host, 'catalog');

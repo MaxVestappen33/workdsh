@@ -1,57 +1,105 @@
 # Desktop and WorkDSH ownership
 
-The released Desktop is one Electron application. Its packaged entry point is
-`dsh-plugin-desktop/lib/workdsh-main.js`; it starts the DSH CLI from the
-bundled `workdsh-runtime/profiles/workdsh` profile. The Desktop package must
-not install or start a second DSH dependency tree from its own `node_modules`.
-The official primary runtime supplies the Node executable for both the DSH
-Host and Office skills; packaging must not add a second standalone Node copy.
+Desktop is one Electron carrier around an unmodified DeepSeek Harness
+installation. That installation supplies the official Host, complete Web Client
+and Agent execution. The carrier contains no DSH runtime dependencies in
+`app.asar`. The bundled primary runtime supplies Node; packaging must not add a
+second Node or DSH installation to the carrier.
 
-The pinned `deepseek-harness` submodule and the DSH version inside the bundled
-Profile are one version boundary. Upgrade to the latest official stable DSH
-release by default, only after the Profile and Desktop compatibility checks
-pass. An explicit pre-release decision may temporarily pin a release candidate.
-The current `0.1.7-rc.2` pin is such a transitional baseline; it is not a
-stable-release policy. Do not publish an installer when the version-alignment
-check fails.
+Personal and enterprise Desktop execute DSH and local tools on the user's
+computer. Enterprise Web retains its ECS account processes. Model inference and
+remote MCP calls execute at their respective services. Desktop login must not
+start a server-side member DSH process.
 
-WorkDSH's user-facing additions are projects, library, experts, skills, and
-connectors. `activity` and `office` provide WorkDSH product behavior used by
-those surfaces. `audit`, `access`, `identity-local`, and `browser-session` are
-internal services for the same Profile. They are not separate Desktop editions
-or downloads. The `workdsh-bundle` composes them into the single runtime.
+## Official version
 
-The former Cordis Host/Client and SSH sources have been removed from the
-Desktop release branch along with their old DSH dependencies and build entry
-points. The current carrier and packaged Profile use one DSH version.
+The product target and Desktop pin are **DSH 0.2.0-rc.2**, selected explicitly
+by the user. A pin change does not upgrade already installed applications or
+Profiles. Version alignment, Desktop checks and packaged-runtime verification
+must pass before an upgrade is declared complete. Stable releases remain the
+default policy; pre-releases require a product decision. Platform installation
+and graphical acceptance are separate from headless checks.
 
-The Desktop Profile selects and directly depends on exactly five WorkDSH
-product bundles: experts, skills, connectors, library, and projects. Its
-support packages are installed as optional runtime dependencies. The Profile's
-own `cordis.patch.yml` activates their service entries and the WorkDSH client
-composition, so they do not become separately manageable product plugins.
-`dsh-plugin-desktop/scripts/workdsh-package-boundary.mjs` is the reviewed
-inventory shared by Profile preparation and packaged-app verification; update
-it when a WorkDSH release changes package ownership.
-The release archives remain bundled for offline installation and updates.
-This is a management boundary, not a physical package consolidation: the
-support packages still ship inside the Profile. Moving their implementation
-into Desktop-owned runtime modules would require a corresponding WorkDSH
-source and release change; hiding them from the plugin manager alone does not
-accomplish that separate change.
+## Plugin delivery
 
-The pinned DSH plugin manager derives its bundle inventory from the Profile's
-selected bundles and direct dependencies, as well as installation dependencies.
-Its client hides a small fixed set of official built-in bundle names; it does
-not hide WorkDSH support packages because their manifests say `private`.
-The Profile layout now keeps support packages out of those two inventory
-inputs. Installed-app acceptance still requires checking the running plugin
-manager's `listBundles()` output and exercising project, library, office,
-browser, identity, access, and audit behavior. A source-level package count or
-successful config dump alone does not prove that runtime outcome.
-Profile preparation now boots the bundled DSH plugin manager and requires its
-`listBundles()` response to contain exactly the five installed and enabled
-WorkDSH products. The Electron `afterPack` gate repeats that live inventory
-check with the Node executable and Profile inside each packaged application.
-The installed application's UI and feature flows still need their own
-acceptance checks on both platforms.
+The built-in owned feature plugins are **experts, library, skills and
+MCP/connectors**. This does not preinstall every expert definition, skill or MCP
+server. The enterprise account plugin is additionally carried by the immutable
+runtime and selected only after enterprise login. Personal defaults and the
+personal plugin inventory do not enable it; employees do not install an account
+tgz. Projects, WorkDSH Office, activity, collaboration, notifications and other
+business applications remain external plugins requiring explicit installation.
+Official runtime plugins and primary-runtime Office skills are separate
+infrastructure, not the WorkDSH Office feature package.
+
+`dsh-plugin-desktop/scripts/workdsh-package-boundary.mjs` owns the release
+inventory: four feature packages, the enterprise account package, and the
+required local identity, browser-session, access, audit and composition packages.
+SkillHub 0.2.16 and dshmarket 1.66.1 retain the existing third-party catalog integration in this same Profile. Catalog entries remain separately installed and subject to compatibility checks.
+The five support packages are activated by the default Profile patch; they are
+not additional manageable product bundles. The enterprise account patch is
+selected by enterprise mode, never by the personal default patch.
+
+`profile-installation.json` is generated from that single installed manifest.
+It exposes support and enterprise packages as peers for the official Profile
+resolver, while the official plugin manager lists selected bundles and
+dependencies. It points at the same installation tree; it is not another runtime
+installation or a separately maintained product selection.
+
+## Administrator deployment configuration
+
+`WORKDSH_DEPLOYMENT_CONFIG` selects an administrator-owned packaging input. Its
+only supported setting is `enterprise.backendUrl`. Before packaging, the input
+is validated and a fresh `workdsh-config.json` is written to application resources;
+without an input, the resource is `{}`. Previous company configuration must not
+leak into a subsequent package.
+
+A company package fixes the backend origin. Main uses it ahead of saved values,
+entry form values or page parameters. Employees cannot redirect that package's
+login to another backend. HTTPS certificate validation remains enabled; HTTP is
+accepted only for loopback development. Deployment configuration never contains
+passwords, member tokens, server service keys or model credentials. See the
+[personal and enterprise guide](DESKTOP-PERSONAL-ENTERPRISE.md) for administrator
+and employee steps.
+
+## Runtime and writable Profiles
+
+Release preparation uses fresh archives from the unique WorkDSH source.
+`pack-workdsh-profile.mjs` records package versions and hashes;
+`prepare-workdsh-runtime.mjs` verifies the DSH target, archive set, hashes and
+dependency closure. It does not copy a running Profile. Archives and lockfile
+paths remain relative inside release resources. Official package operations use
+the pinned pnpm JavaScript CLI and the same bundled Node. The version gate checks
+all installed official DSH instances, including transitive pnpm instances.
+
+Profile preparation boots the actual official plugin manager. Its personal
+default inventory contains exactly the four enabled WorkDSH feature bundles.
+The Electron `afterPack` gate repeats this check with packaged resources and
+bundled Node, verifies archive and deployment configuration integrity, and
+rejects a second runtime tree. These checks do not substitute for real windows,
+model conversations, local tools or platform installer acceptance.
+
+Each writable personal or member Profile owns its configuration, selected
+plugins and lockfile. The official installation anchor supplies common immutable
+dependencies, including the account plugin when enterprise mode selects it.
+Explicitly installed packages resolve from the writable Profile. A new writable
+Profile has an empty dependency map and no `node_modules`; it does not inherit
+the release graph or lockfile. Restart and base upgrades preserve user
+configuration and installed plugins without writing through shared runtime
+links. Unsupported Profiles without ownership records are not automatically
+rewritten.
+
+A Profile is configuration composition, not a user account or authorization
+boundary. Enterprise local storage is separated by verified backend, organization
+and member. Separate directories do not provide an operating-system sandbox.
+Main owns backend authentication; business windows do not receive the backend
+bearer. The enterprise plugin uses a restricted local interface for account,
+logout and visible-body synchronization. Supplier model keys stay on the server;
+users configure internal model API credentials through the official settings.
+
+Desktop owns entry, packaging, process and window lifecycle. WorkDSH packages
+own shared business services and pages; enterprise adapters own member identity
+and synchronization. The backend owns server authorization and organization
+services. New features extend these boundaries instead of copying personal,
+Web or Desktop implementations. Company packaging and member flows are described
+in the [Desktop connection guide](DESKTOP-PERSONAL-ENTERPRISE.md).

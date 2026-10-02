@@ -144,6 +144,15 @@ async function copyImportTree(source: string, target: string, signal?: AbortSign
   }
 }
 
+/** Explicit Host scope configuration; never derived from a browser/model request. */
+export interface SkillManagerOptions {
+  dshHome?: string;
+  agentsHome?: string;
+  catalogRoot?: string;
+  /** Optional server-owned import boundary; personal imports remain unrestricted. */
+  importRoot?: string;
+}
+
 /** Host authority for local skill files. Harness remains the discovery and execution owner. */
 export class SkillManager extends Service implements SkillManagementService {
   readonly contractVersion = 1 as const;
@@ -156,13 +165,15 @@ export class SkillManager extends Service implements SkillManagementService {
   private readonly receiptRoot: string;
   private readonly draftRoot: string;
   private readonly catalogStore: SkillCatalogStore;
+  private readonly importRoot?: string;
   private readonly dependencyInspectors = new Set<SkillDependencyInspector>();
   readonly imports: SkillImportStaging;
 
-  constructor(ctx: Context) {
+  constructor(ctx: Context, options: SkillManagerOptions = {}) {
     super(ctx, 'workdshSkills');
-    const dshHome = resolve(process.env.DSH_HOME ?? join(homedir(), '.dsh'));
-    const agentsHome = resolve(process.env.DSH_AGENTS_HOME ?? join(dshHome, 'agents'));
+    this.importRoot = options.importRoot === undefined ? undefined : resolve(options.importRoot);
+    const dshHome = resolve(options.dshHome ?? process.env.DSH_HOME ?? join(homedir(), '.dsh'));
+    const agentsHome = resolve(options.agentsHome ?? process.env.DSH_AGENTS_HOME ?? join(dshHome, 'agents'));
     this.activeRoots = [join(agentsHome, 'skills'), join(dshHome, 'skills')];
     this.disabledRoot = join(agentsHome, '.workdsh-disabled', 'skills');
     this.trashRoot = join(agentsHome, '.workdsh-trash', 'skills');
@@ -171,7 +182,8 @@ export class SkillManager extends Service implements SkillManagementService {
     this.originRoot = join(this.stateRoot, 'disabled-origins');
     this.receiptRoot = join(this.stateRoot, 'trash-receipts');
     this.draftRoot = join(this.stateRoot, 'drafts');
-    this.catalogStore = new SkillCatalogStore(process.env.WORKDSH_SKILL_CATALOG ?? join(agentsHome, '.workdsh-catalog'));
+    this.catalogStore = new SkillCatalogStore(options.catalogRoot ??
+      (options.agentsHome === undefined ? process.env.WORKDSH_SKILL_CATALOG : undefined));
     this.imports = new SkillImportStaging(
       join(this.stateRoot, 'imports'),
       (source, signal) => this.inspectImport(source, signal),
@@ -395,8 +407,18 @@ export class SkillManager extends Service implements SkillManagementService {
     });
   }
 
+  private async importSource(source: string): Promise<string> {
+    const path = resolve(source);
+    if (this.importRoot !== undefined) {
+      if (!inside(this.importRoot, path)) throw new Error('skill/import-outside-member-root');
+      const [root, canonical] = await Promise.all([realpath(this.importRoot), realpath(path)]);
+      if (root !== this.importRoot || !inside(root, canonical)) throw new Error('skill/import-outside-member-root');
+    }
+    return path;
+  }
+
   async inspectImport(source: string, signal?: AbortSignal): Promise<SkillImportInspection> {
-    const resolvedSource = resolve(source);
+    const resolvedSource = await this.importSource(source);
     const inspected = await inspectImportTree(resolvedSource, signal);
     const metadata = frontmatter(inspected.document);
     const name = typeof metadata.name === 'string' ? metadata.name.trim() : undefined;
@@ -408,7 +430,7 @@ export class SkillManager extends Service implements SkillManagementService {
 
   async installImport(request: SkillImportRequest, signal?: AbortSignal): Promise<SkillMutationReceipt> {
     signal?.throwIfAborted();
-    const source = resolve(request.source);
+    const source = await this.importSource(request.source);
     const inspected = await inspectImportTree(source, signal);
     const metadata = frontmatter(inspected.document);
     const name = typeof metadata.name === 'string' ? metadata.name.trim() : '';

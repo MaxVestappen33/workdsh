@@ -9,10 +9,11 @@ import { ExpertsError } from '../domain/values.js';
 import { expertPersonaConfig } from './preset-compiler.js';
 
 /** Asset admission and role composition only. No child driver, mailbox or Team state. */
-export function registerExpertExecutionGuard(ctx: Context): void {
+export function registerExpertExecutionGuard(ctx: Context, options: { agentsHome?: string } = {}): void {
   const installed = new WeakMap<Agent, string>();
 
   async function prepare(agent: Agent, signal: AbortSignal | undefined, creating: boolean): Promise<void> {
+    const agentsHome = options.agentsHome;
     const membership = ctx.agentTeams.tryMembership(agent);
     const root = membership?.root ?? agent;
     const header = agent.session.header;
@@ -43,11 +44,11 @@ export function registerExpertExecutionGuard(ctx: Context): void {
     if (installed.get(agent) === revision.compositionDigest) return;
     signal?.throwIfAborted();
     // Read only our already verified immutable composition, not arbitrary plugins.
-    const rows = (JSON.parse(await readExpertPreset(revision.presetRevisionRef)) as { plugins: { name?: string; config?: SkillFiles.Config }[] }).plugins;
+    const rows = (JSON.parse(await readExpertPreset(revision.presetRevisionRef, agentsHome)) as { plugins: { name?: string; config?: SkillFiles.Config }[] }).plugins;
     const skills = rows.find(row => row.name === '@deepseek-ai/dsh-skill-filesystem')?.config;
     if (!skills) throw new ExpertsError('experts/dependency-missing', '固定专家组合缺少技能目录。');
     const definition = revision.definition;
-    const packageRoot = definition.packageDocuments ? join(expertPresetDir(revision.presetRevisionRef), 'expert-package') : undefined;
+    const packageRoot = definition.packageDocuments ? join(expertPresetDir(revision.presetRevisionRef, agentsHome), 'expert-package') : undefined;
     // The official Agent scope owns these providers and their disposal.
     const persona = agent.ctx.plugin(Persona, expertPersonaConfig({ definition, packageRoot, teamMembers: revision.teamMembers }));
     ctx.effect(() => () => persona.dispose());

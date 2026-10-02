@@ -36,3 +36,12 @@ This repository owns WorkDSH Web and Desktop. The Desktop product runs an unmodi
 - Keep graphical application launch explicit. Builds, typechecks, unit tests, and Loader smokes must remain headless-safe.
 - Commit before major changes of direction and keep the submodule pin update separate from desktop behavior changes.
 - Keep the repository topology and package-manager split consistent with the [owning Agent Note](.agents/notes/implemented/process/2026-08-15-pinned-upstream-and-isolated-yarn-workspace.md).
+
+## Personal and enterprise product boundary
+
+- Personal Desktop, enterprise Desktop and enterprise Web use one validated official DSH version and the same owned feature implementations. Preserve the complete official interface; never copy its settings, sidebar or right panel.
+- Enterprise Web runs on a single ECS with one on-demand official DSH process per account; enterprise Desktop runs the official Host, Agent and tools on the employee computer. Identity, storage, permissions and synchronization are explicit adaptations.
+- The enterprise account plugin is carried in the immutable Desktop runtime and activated only after enterprise login. Members do not manually install it, and member packages cannot shadow the bundled implementation. Personal mode does not activate it. Collaboration, notifications and business applications remain optional external plugins.
+- The administrator presets only the public backend origin in packaged `workdsh-config.json` via `WORKDSH_DEPLOYMENT_CONFIG`. Login credentials and model keys do not belong in this file.
+- WorkDSH Admin owns accounts, organizations, authorization, audited member-visible conversation access and Spring AI internal model APIs. Members manually configure company API, internal Key, protocol and model catalog through official Custom Model API settings; personal providers can coexist. Do not restore enterprise model injection or synchronization.
+- Preserve user-facing README content and organize new material in the corresponding sections. Development logs, raw acceptance evidence, credentials and generated packages are not submission content.

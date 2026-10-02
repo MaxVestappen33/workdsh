@@ -34,6 +34,7 @@ const command = async (bin, args, cwd = home) => (await exec(process.execPath, [
 const cli = (...args) => command(dsh, args);
 let server, browser, log = '';
 const browserErrors = [];
+const failedResources = [];
 const checks = [];
 const pass = text => { checks.push(text); console.log(`PASS: ${text}`); };
 async function start() {
@@ -98,6 +99,12 @@ try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   page.on('pageerror', error => browserErrors.push(error.message));
   page.on('console', message => { if (message.type() === 'error') browserErrors.push(message.text()); });
+  page.on('response', response => {
+    if (response.status() >= 400) {
+      const url = new URL(response.url());
+      failedResources.push({ status: response.status(), path: url.pathname, type: response.request().resourceType() });
+    }
+  });
   await page.context().addCookies(host.cookie.split('; ').map(pair => { const at = pair.indexOf('='); return { name: pair.slice(0, at), value: pair.slice(at + 1), url: host.address }; }));
   await page.goto(host.address);
   for (const name of ['Continue', 'Configure later']) await page.getByRole('button', { name, exact: true }).click({ timeout: 4000 }).catch(() => {});
@@ -294,6 +301,7 @@ try {
     await page.screenshot({ path: join(artifacts, 'failure.png'), fullPage: true });
     await writeFile(join(artifacts, 'failure-text.txt'), await page.locator('body').innerText());
     await writeFile(join(artifacts, 'failure-errors.json'), JSON.stringify(browserErrors, null, 2));
+    await writeFile(join(artifacts, 'failure-resources.json'), JSON.stringify(failedResources, null, 2));
     await writeFile(join(artifacts, 'failure-inputs.json'), JSON.stringify(await page.locator('textarea, [role="textbox"], [contenteditable]').evaluateAll(elements => elements.map(element => element.outerHTML)), null, 2));
   }
   throw error;

@@ -1,6 +1,6 @@
 # WorkDSH 专家插件 / Experts plugin
 
-一个插件管理多个专家与专家团配置。当前源码候选为 `workdsh-plugin-experts@0.1.0-alpha.8`，面向 **DeepSeek Harness 0.1.7-rc.2 / Cordis 4.0.3**；本地 Web 升级证据见 [rc.2 记录](../../../docs/DSH-0.1.7-UPGRADE-PLAN.md)，候选代码与已经发布的安装包仍须分别验收。
+一个插件管理多个专家与专家团配置。当前源码候选为 `workdsh-plugin-experts@0.1.0-alpha.8`，精确锁定 **DeepSeek Harness 0.2.0-rc.2 / Cordis 4.0.4**；实际构建、安装与运行范围见[验收要求](../../../docs/ACCEPTANCE.md)，旧探针和已发布安装包不能证明本轮候选已验收。
 
 WorkDSH manages authored expert assets and immutable revisions. Team execution, messaging, tasks and the Web team panel use the official DSH Agent Teams plugins.
 
@@ -57,13 +57,13 @@ corepack pnpm probe:experts:team:real
 - `probe:experts:team:real` 显式读取已配置的 preview DeepSeek 凭据，在一次性 DSH Home 中创建独立真实执行；真实 lead 创建两阶段任务并通过官方消息与状态工具交给两名真实成员。凭据不进入命令参数和报告，临时副本在退出时删除。
 - `probe:experts` 保留专家资产与编辑页面的独立打包回归。
 
-本轮证据位于仓库 `.artifacts/dsh-0.1.6-upgrade/native-expert-team/` 和 `native-team-web/`，长任务、交接、重连和失败恢复的判定见 `docs/evidence/expert-team-resilience.md`，完整状态以 `docs/STATUS.md` 为准。两种测试都不修改用户 preview；只有显式 `:real` 命令调用付费模型。
+此前 `.artifacts/dsh-0.1.6-upgrade/native-expert-team/` 和 `native-team-web/` 结果属于旧候选历史，不作为当前 0.2.0-rc.2 源码验收。当前实际结果以[验收要求](../../../docs/ACCEPTANCE.md)为准。探针使用独立 Home；只有显式 `:real` 命令调用付费模型。
 
-官方 Team 在该版本仍为实验性能力。纯官方 fork 历史查询另有可复现的 `seeded session constructor seed must equal its inherited prefix` 问题；公共持久化读取与成员冷恢复的通过不能代替 Web 分叉历史验收。默认使用 fresh 成员。真实模型专业成果质量、企业远程多用户和完整热卸载仍须分别验收，不宣称本轮已完成。
+官方 Team 仍为实验性能力。旧候选纯官方 fork 历史查询曾记录 `seeded session constructor seed must equal its inherited prefix` 问题；公共持久化读取与成员冷恢复的通过不能代替 Web 分叉历史验收。默认使用 fresh 成员。真实模型专业成果质量、企业远程多用户和完整热卸载仍须分别验收，不宣称本轮已完成。
 
 ## 安装候选包
 
-当前源码依赖 DSH 0.1.7-rc.2，应使用同一次构建产出的配套 tgz；不要把旧 Release 的安装包当作已含本次升级。先在独立 Profile 验证，再部署实际使用的 Profile：
+当前源码依赖 DSH 0.2.0-rc.2 / Cordis 4.0.4，应使用同一次构建产出的配套 tgz；不要把旧 Release 的安装包当作已含本次升级。先在独立 Profile 验证，再部署实际使用的 Profile：
 
 ```sh
 dsh --profile workdsh --from-default-profile web --dump-config
@@ -78,3 +78,9 @@ dsh --profile workdsh
 在专家入口保存、校验、预览并确认发布，然后召唤。示例只填入原生草稿，发送后才执行；模型与账号在 Harness 中配置。
 
 页面与弹窗使用 Harness 原生主题语义颜色，跟随官方外观设置及系统明暗切换。
+
+可信 Host 可以通过 `ExpertsManagerOptions.agentsHome`（也适用于 `applyExpertsHost(ctx, options)`）指定独立目录；导入、预设编译、包检查与执行 guard 使用同一目录。不传配置保持个人 env/home 默认值。当前企业使用独立账号进程内的同一专家包、官方 Skill filesystem 与 Agent preset；旧共享 Host 的管理/执行 selector 已删除。目录配置不代替会话归属、文件与执行授权。实际企业装配范围见[验收要求](../../../docs/ACCEPTANCE.md)。
+
+### 专家技能扫描配置
+
+`ExpertsManagerOptions.includeDefaultSkillRoots` 为可选启动配置。省略或 true 保留个人版默认项目/用户技能发现；false 生成仅使用受管 Skill 快照及专家包资源的官方 filesystem provider 配置。false 参与不可变 preset 标识及输入摘要，不能复用旧的默认扫描 preset。此配置由服务器装配传入，不从浏览器请求接收。独立目录不等于完整企业执行验收；官方 preset/子 Agent 仍需成员组合验证。

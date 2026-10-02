@@ -2,7 +2,7 @@
 <h1 align="center">WorkDSH</h1>
 <p align="center"><strong>WorkBuddy 式工作台，让技能、专家与插件组成更多工作场景。</strong></p>
 <p align="center">WorkDSH 将资料、专家、技能和连接器带入同一工作台；接入 SkillHub 技能目录，并支持安装 DSH 社区插件。</p>
-<p align="center"><a href="#下载桌面版">下载桌面版</a> · <a href="#从资料到成果">了解工作流</a> · <a href="docs/user-guide.md">使用指南</a> · <a href="README.md">English</a></p>
+<p align="center"><a href="#下载桌面版">下载桌面版</a> · <a href="#从资料到成果">了解工作流</a> · <a href="#个人与企业使用">个人与企业</a> · <a href="docs/user-guide.md">使用指南</a> · <a href="README.md">English</a></p>
 
 [![Desktop release](https://img.shields.io/badge/Desktop-2.0.6--alpha.1-176BFF)](https://github.com/techflag/workdsh/releases/tag/desktop-v2.0.6-alpha.1) [![GitHub stars](https://img.shields.io/github/stars/techflag/workdsh?label=stars)](https://github.com/techflag/workdsh) [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -56,6 +56,75 @@ WorkDSH 接入两个独立维护的目录：[SkillHub](https://skillhub.cn/) 提
 
 <sub>社区插件的发现和安装由第三方 dsh-market 插件提供；截图不代表目录中的插件已随 WorkDSH 安装包提供。</sub>
 
+## 个人与企业使用
+
+WorkDSH 支持个人使用，以及企业 Web 和企业 Desktop 两种形式。个人与企业保留完整官方 DSH 界面，复用同一套 WorkDSH 功能插件；企业通过 [WorkDSH Admin](https://github.com/techflag/workdsh-admin) 管理公司账号、组织、权限和内部模型 API。
+
+| 使用方式 | Agent 与工具在哪里执行 | 如何进入 |
+| --- | --- | --- |
+| 个人 Desktop | 本机，使用个人文件和模型配置。 | 打开应用，选择“个人使用”。 |
+| 企业 Desktop | 员工本机，使用本机文件和工具。 | 安装公司提供的桌面应用，选择“企业登录”。 |
+| 企业 Web | 公司 ECS 服务器上的独立账号进程。 | 打开公司 Web 地址并登录。 |
+
+Desktop 的个人与企业空间分别保存数据和凭据。企业账号插件已内置在 Desktop 中，仅在企业模式启用，成员无需另行安装。协作、通知和业务应用仍作为独立插件安装。
+
+### 企业登录与账号
+
+公司 Desktop 的后台地址由管理员打包预置，员工安装后使用自己的公司账号登录。企业 Web 使用管理员提供的 Web 地址。
+
+![Desktop 个人与企业使用入口](assets/screenshots/desktop-login.png)
+
+<sub>本节企业截图使用演示账号、组织和本地地址，示例数据不随应用预装。</sub>
+
+登录后，在**设置 → 企业账号**查看当前成员的姓名、组织和角色，或退出登录。
+
+<details>
+<summary>查看企业账号与退出入口</summary>
+
+![企业 Desktop 企业账号](assets/screenshots/enterprise-account.png)
+
+</details>
+
+企业 Desktop 按当前成员身份向后台同步用户和助手已显示的会话文字，不将思考、工具轨迹或附件作为正文上传。本组织有权限的管理员可只读查看已同步正文，每次访问记录审计。
+
+### 配置公司模型
+
+管理员在 WorkDSH Admin 中配置上游模型 API、供应商 Key、协议和允许使用的模型目录。成员获得内部 API 地址与访问 Key 后，进入**设置 → 模型 → 自定义模型 API**，填写：
+
+| 字段 | 填写内容 |
+| --- | --- |
+| Provider ID 与显示名称 | 例如 `company-api` 和“公司模型”。 |
+| API 地址 | 管理员提供的内部地址，例如 `https://enterprise.example/api/model-gateway/v1`。 |
+| API 协议 | 内部接口支持的协议。 |
+| API 密钥 | 管理员提供的内部访问 Key。 |
+| 模型目录 | 获取可用模型，或添加管理员提供的允许使用的模型 ID。 |
+
+保存提供商后，在对话中选择其模型。个人自配模型可与公司模型并存。真实供应商 Key 只保存在服务器上；公司模型通过官方设置配置，不自动注入 DSH。模型请求发送到配置的 API，与 Agent 在本机或 ECS 执行分别决定。
+
+<details>
+<summary>查看官方模型设置中的公司模型配置</summary>
+
+![企业 Desktop 公司模型设置](assets/screenshots/company-model.png)
+
+</details>
+
+<details>
+<summary>查看企业 Web 工作台、技能管理与管理后台</summary>
+
+企业 Web：对话工作台。
+
+![企业 Web 对话工作台](assets/screenshots/enterprise-web.jpg)
+
+企业 Web：技能管理。
+
+![企业 Web 技能管理](assets/screenshots/skills.jpg)
+
+WorkDSH Admin：组织概览。
+
+![WorkDSH Admin 组织概览](assets/screenshots/admin-overview.jpg)
+
+</details>
+
 ## 下载桌面版
 
 计划发布的桌面安装包版本为 **2.0.6-alpha.1**。发布 [GitHub Release](https://github.com/techflag/workdsh/releases/tag/desktop-v2.0.6-alpha.1) 后，以下下载链接才会生效：
@@ -68,6 +137,8 @@ WorkDSH 接入两个独立维护的目录：[SkillHub](https://skillhub.cn/) 提
 
 Desktop 安装包默认内置 Node.js 和 Python 运行时，普通用户无需单独安装。当前为 **Alpha 版**：项目资料引用、专家执行及不同 Office 格式的端到端体验仍在验收中。macOS DMG 未签名；更新请从 [Releases](https://github.com/techflag/workdsh/releases) 下载。开始使用前请阅读[用户指南](docs/user-guide.md)和[常见问题](docs/faq.md)。
 
+企业 Desktop 使用公司提供、包含企业入口的安装包。已有下载版本的功能以对应发行说明为准。
+
 ## 开发与文档
 
 源码分工：[WorkDSH 功能包与 Web](workdsh-web/README.zh-CN.md) · [Desktop 外壳](dsh-plugin-desktop/README.zh.md) · [架构](docs/architecture.md) · [全部文档](docs/README.md)。从源码运行需要 Node.js 22.19+ 或 24+、Corepack 和 Yarn 4.18.0：
@@ -79,6 +150,20 @@ corepack yarn dev
 ```
 
 运行检查：`corepack yarn check`。在 macOS 或 Windows 上，从当前提交一键打包 Web Profile 与 Desktop：`corepack yarn release:pack`；Web 包发布后，正式安装包使用 `corepack yarn release:pack:published`。两条命令使用同一个[打包脚本](scripts/package-desktop-release.mjs)。[参与贡献](CONTRIBUTING.md)
+
+### 企业 Desktop 打包配置
+
+企业管理员部署 [WorkDSH Admin](https://github.com/techflag/workdsh-admin) 后，在打包时提供公司的公开后台地址。配置文件只保存地址，例如：
+
+```json
+{
+  "enterprise": {
+    "backendUrl": "https://enterprise.example"
+  }
+}
+```
+
+通过 `WORKDSH_DEPLOYMENT_CONFIG` 指定该文件，打包后写入应用资源中的 `workdsh-config.json`，员工入口使用固定地址。模型 API 地址与内部访问 Key 仍在官方模型设置中填写，不放入打包配置。具体操作见 [Desktop 打包说明](dsh-plugin-desktop/README.zh.md)。
 
 ## 社区与致谢
 

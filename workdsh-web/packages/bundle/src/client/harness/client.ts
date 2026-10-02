@@ -43,7 +43,6 @@ export function apply(ctx: Context): void {
   });
   let legacyBrowserEnabled = false;
   ctx.effect(() => {
-    const controller = new AbortController();
     let disposed = false;
     let unregister: (() => void) | undefined;
     const registerLegacy = () => {
@@ -54,15 +53,14 @@ export function apply(ctx: Context): void {
         guide: [{ id: 'agent-browser', order: 25, title: () => '智能体浏览器', description: () => '查看并操作当前会话的网页' }],
       });
     };
-    // The Desktop provider owns a different Session page. Keep this legacy
-    // Playwright tab only in Web profiles where its Host route is absent.
-    void fetch('/api/workdsh-browser-session', {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'content-type': 'application/json' },
-      body: '{}', signal: controller.signal,
-    }).then(response => { if (response.status === 404) registerLegacy(); })
-      .catch(() => { if (!controller.signal.aborted) registerLegacy(); });
-    return () => { disposed = true; controller.abort(); unregister?.(); };
+    // The optional provider owns a different Session page. Read the official
+    // inventory rather than making a request to a route that may not exist.
+    void ctx.remote.pluginInventory.list().then(response => {
+      if (disposed || !response.ok) return;
+      const provider = response.value.entries.find(row => row.moduleName === 'workdsh-provider-browser-session');
+      if (!provider?.enabled) registerLegacy();
+    }).catch(() => { /* Unknown inventory is not evidence that a provider is absent. */ });
+    return () => { disposed = true; unregister?.(); };
   }, 'workdsh.agent-browser.tab');
   ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({ name: 'sidebar.right.pane.tab', key: agentBrowserKind }, AgentBrowserPage));
   ctx.effect(() => {

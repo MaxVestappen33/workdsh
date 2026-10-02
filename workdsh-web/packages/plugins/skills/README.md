@@ -1,21 +1,21 @@
 # 技能管理插件
 
-> GitHub 已发布制品及其历史兼容范围见[发布说明](../../../docs/RELEASES.md)。当前源码和本地 Web 预览使用 Harness **0.1.7-rc.2**；升级验证见 [rc.2 记录](../../../docs/DSH-0.1.7-UPGRADE-PLAN.md)。该记录不等于旧版 Desktop 安装包或 Windows/macOS 实机技能操作已验收。
+> 当前源码精确锁定 Harness **0.2.0-rc.2 / Cordis 4.0.4**；实际构建、安装与运行范围见[验收要求](../../../docs/ACCEPTANCE.md)。[历史发布说明](https://github.com/techflag/workdsh/releases)及旧探针不能证明本轮源码或 Desktop 安装包已验收。
 
-状态：**Skill 0.1 本地面向用户的技能市场与独立安装交付完成**。当前候选制品 `workdsh-plugin-skills@0.1.0-alpha.32`，尚未发布 npm。一个插件管理多个 Skill 业务对象；用户制作技能不需要发布 npm 包。
+状态：**Skill 0.1 开发候选，已提供本地技能管理和独立插件入口**。当前构建、安装和运行验收以[验收要求](../../../docs/ACCEPTANCE.md)为准。当前候选制品 `workdsh-plugin-skills@0.1.0-alpha.34`，尚未发布 npm。一个插件管理多个 Skill 业务对象；用户制作技能不需要发布 npm 包。
 
-本包提供标准 Host `apply/inject`、独立 Client `apply/inject`、`dsh.bundle` 配置 patch 和 `dsh.client` 浏览器产物。官方 Loader/Profile/Cordis 拥有加载及生命周期；不依赖 WorkDSH 总包或另一个插件框架。独立安装、默认组合、移除与重装见[实际验收](../../../docs/evidence/skills-standalone-package.md)。
+本包提供标准 Host `apply/inject`、独立 Client `apply/inject`、`dsh.bundle` 配置 patch 和 `dsh.client` 浏览器产物。官方 Loader/Profile/Cordis 拥有加载及生命周期；不依赖 WorkDSH 总包或另一个插件框架。旧候选的独立安装、默认组合、移除与重装过程见[历史记录](../../../docs/CONTRACTS.md)，不代替当前版本验收。
 
 - 模块版本线：**0.1**，Host、Client、资源和内置管理 Skill 共用版本。
-- 主任务：P1-03；本轮为 D04 前置交付修正，不实现专家业务。
+- 主任务：P1-03；任务编号用于开发追溯，不代表当前版本已经完成验收。
 - 边界：复用官方 Skill provider、工具和 Conversation；不重造执行器，导入不运行脚本。
 
 ## 安装和组合
 
-当前源码基线：Node 22.19+、Harness `0.1.7-rc.2`、Cordis `4.0.3`。从已配置这些依赖的官方 Web Profile 安装同次构建的本地 tgz；将以下路径替换为实际制品绝对路径：
+当前源码基线：Node 22.19+、Harness `0.2.0-rc.2`、Cordis `4.0.4`。从已配置这些依赖的官方 Web Profile 安装同次构建的本地 tgz；将以下路径替换为实际制品绝对路径：
 
 ```sh
-dsh plugin --profile <你的 Web Profile> add /absolute/path/workdsh-plugin-skills-0.1.0-alpha.32.tgz
+dsh plugin --profile <你的 Web Profile> add /absolute/path/workdsh-plugin-skills-0.1.0-alpha.34.tgz
 ```
 
 按官方流程停服修改组合，再重启该 Profile。卸载管理插件用官方 `dsh plugin --profile <Profile> remove workdsh-plugin-skills`；用户技能文件和管理数据保留，重装继续使用。插件移除与页面中“卸载某个技能对象”不同：后者进入可恢复回收站。当前未宣称完整运行中 CLI 热卸载。
@@ -33,11 +33,7 @@ corepack pnpm probe:browser
 
 产物内含所需 UI 代码和本地 DTO 声明，不要求运行时存在 `workdsh-ui` 或开发 workspace。React 由官方 renderer 共享；依赖的 Harness 服务明确声明，不把框架复制进包。
 
-可选：从本地市场镜像生成 WorkDSH 自有技能目录，页面据此展示“可安装”分区，并可用“＋”安装到官方共享技能根（默认 `$DSH_AGENTS_HOME/.workdsh-catalog`，可用 `WORKDSH_SKILL_CATALOG` 覆盖）：
-
-```sh
-node scripts/build-skill-catalog.mjs --source /path/to/skills-marketplace
-```
+技能页提供本地已安装技能管理和独立 SkillHub 浏览入口。目录浏览不自动安装技能；安装经过导入预检与用户确认。用户可显式选择已有的通用本地目录：个人运行设置 `WORKDSH_SKILL_CATALOG`，或由可信 Host 指定 `catalogRoot`。本地目录使用 `catalog.json`、`icons/` 与 `payloads/`；第三方内容的许可、依赖与兼容性由具体来源和安装校验决定。
 
 ## 公开服务与依赖
 
@@ -66,19 +62,19 @@ export function apply(ctx: Context) {
 
 全局技能库、搜索、完整详情、直接编辑、资源编辑、打开文件夹、启停、可恢复卸载、批量管理以及新增技能入口均保持原有业务服务。添加菜单提供查找、上传和创建：查找聚焦已安装目录，上传使用专用预检/确认弹框，创建预填原生 Conversation 的 `/workdsh-skill-creator`，不自动发送。
 
-技能页同时是一体化技能市场：真实分类标签来自本地目录元数据，未安装条目显示带品牌图标的卡片和“＋”直接安装，已安装条目显示开关与卡片菜单。安装仍走官方受管导入路径（全局名称锁、内容指纹复核、原子发布），超限条目如实显示安装限制，不提供第二套安装器。目录缺失或损坏时页面仅展示真实状态与诊断，不伪选空目录；图标通过认证 GET 路由返回，浏览器不直接阅读目录文件。「我安装的」入口进入独立安装页：返回链接回到市场、标题显示安装总数、提供批量管理与页内搜索，并与市场页共享同一卡片、菜单与批量逻辑。
+技能页默认展示已安装集合。只有显式选择通用本地目录时，才按实际元数据展示分类、图标及可安装条目；安装使用官方受管导入路径（全局名称锁、内容指纹复核、原子发布）。超限条目显示安装限制，目录缺失或损坏显示真实诊断，图标通过认证 GET 路由返回。「我安装的」入口提供安装总数、批量管理与页内搜索，复用同一卡片和菜单。
 
 管理请求与流式上传复用官方 Connection 认证 exact Fetch 扩展面；公开版本的外部 workspace Typert 生成问题仍记录为兼容项。插件撤销时取消 Client 请求、停止路由并排空在途请求；打开目录沿用原生 Session Remote。页面不持有第二套技能执行目录。
 
 内置 `workdsh-skill-creator` 使用官方 `defineTool` 调用同一个 Host 服务，经过私有草稿、校验、精确 revision 和确认发布。默认共享目标为 `$DSH_AGENTS_HOME/skills`，未配置时为 `~/.agents/skills`；只有明确选择 Harness Profile 范围时使用 `$DSH_HOME/skills`。不得覆盖无关技能。
 
-本包独立贡献能力中心侧栏入口和 Skill 页面，移除后这些贡献随插件消失；官方工作区、会话、原生 `/`、`@`、附件、模型和权限仍由 Harness 拥有。本地技能目录提供真实的分类、图标、中文名称与惰性负载，页面不显示假筛选；公共 SkillHub 服务、企业服务器与管理 Web 仍按 [ADR-0015](../../../docs/adr/0015-skill-control-plane-and-runtime-projection.md) 后置。
+本包独立贡献能力中心侧栏入口和 Skill 页面，移除后这些贡献随插件消失；官方工作区、会话、原生 `/`、`@`、附件、模型和权限仍由 Harness 拥有。显式选择的本地目录只提供数据，不成为默认市场或技能执行器。SkillHub 和第三方市场独立提供目录内容，不代表内置或审核全部技能；[ADR-0015](../../../docs/CONTRACTS.md) 的后期组织资产设想不构成当前交付承诺。
 
-开发前阅读[规则](../../../AGENTS.md)、[状态](../../../docs/STATUS.md)、[契约](../../../docs/CONTRACTS.md)、[团队设计](../../../docs/TEAM-DESIGN.md)和[ADR-0018](../../../docs/adr/0018-composable-feature-plugins-and-shared-skills.md)。
+开发前阅读[规则](../../../AGENTS.md)、[验收要求](../../../docs/ACCEPTANCE.md)、[契约](../../../docs/CONTRACTS.md)、[团队设计](../../../docs/CONTRACTS.md)和[ADR-0018](../../../docs/CONTRACTS.md)。
 
 ## 专业内容制作指南
 
-内置 `workdsh-ppt-design`、`workdsh-word-design`、`workdsh-excel-design`、`workdsh-web-design`，参考腾讯 / WorkBuddy 的产品化方法，由 WorkDSH 按当前工具重新编写。包含叙事、排版、公式审查、响应式与交付参考；不是腾讯 SDK、转换引擎或云服务。感谢相关产品提供的设计启发。指南不能扩充当前编辑器或工具能力，具体来源与边界见[适配说明](../../../docs/design/TENCENT-AUTHORING-ADAPTATION.md)。
+内置 `workdsh-ppt-design`、`workdsh-word-design`、`workdsh-excel-design`、`workdsh-web-design`，参考腾讯 / WorkBuddy 的产品化方法，由 WorkDSH 按当前工具重新编写。包含叙事、排版、公式审查、响应式与交付参考；不是腾讯 SDK、转换引擎或云服务。感谢相关产品提供的设计启发。指南不能扩充当前编辑器或工具能力，具体来源与边界见[适配说明](../../../docs/CONTRACTS.md)。
 
 创建指南使用 WorkDSH 独立命令，保留用户同名原版技能。多阶段创建要求更新原生任务进度；中断恢复先核对已有草稿与成果。
 
@@ -93,3 +89,9 @@ export function apply(ctx: Context) {
 内置 workdsh-skill-creator 接入用户提供的 WorkBuddy 完整创建方法及初始化、校验、ZIP 打包脚本（Apache-2.0，来源及修改见 resources/skills/workdsh-skill-creator/NOTICE.md）。带 references/scripts/assets 的技能在工作区草稿目录制作，导出 ZIP 后经现有导入预检和确认安装；单文件技能仍使用原草稿工具。需要 Python3 与实际执行工具；基础脚本校验不替代 Harness 解析或真实任务试用。
 
 页面与弹窗使用 Harness 原生主题语义颜色，跟随官方外观设置及系统明暗切换。
+
+## 显式 Host 数据目录
+
+可信 Host 装配可以使用 `new SkillManager(ctx, { dshHome, agentsHome, catalogRoot })`，并给官方 `dsh-skill-filesystem` 配置相同的 `dshHome` 和 `agentsHome`。未指定 catalogRoot 时默认不读取任何推荐目录；只有未指定 agentsHome 的个人运行可显式使用 WORKDSH_SKILL_CATALOG。指定 agentsHome 的账号运行不继承进程级目录配置。目录不能来自未验证的浏览器或模型输入。
+
+省略 options 保留个人版环境变量和 Home 解析。当前企业路线为独立账号进程，同一技能包使用该进程的独立 Home、Agents home 和官方 Skill provider；配置目录本身不提供执行沙箱。旧共享 Host 的成员 selector 与 scoped registry 装配已删除。管理 HTTP 端点与草稿工具使用本进程服务，按实际 Session/Agent 归属授权。账号进程、文件及工具边界的实际验证范围见[验收要求](../../../docs/ACCEPTANCE.md)。

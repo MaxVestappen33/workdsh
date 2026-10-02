@@ -1,16 +1,10 @@
-import { randomUUID } from 'node:crypto';
 import type { Context } from '@deepseek-ai/cordis';
 import type { ConnectionRpcResult, HostConnectionHandle } from '@deepseek-ai/dsh-client-connection';
-import type { ActorContext } from 'workdsh-contracts';
 
 export const libraryManagementPath = '/api/workdsh-library';
 const ok = <T>(value: T): ConnectionRpcResult<T> => ({ ok: true, value });
 const fail = (code: string, message: string): ConnectionRpcResult<never> => ({ ok: false, error: { code, message, details: {} } });
 const record = (value: unknown): Record<string, unknown> | undefined => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
-const actor = (ctx: Context): ActorContext => {
-  const profile = ctx.workdshIdentity.profile();
-  return { principalId: profile.principalId, organizationId: profile.organization.id, requestId: `library-ui-${randomUUID()}`, resolvedBy: profile.resolvedBy };
-};
 
 export function registerLibraryConnection(ctx: Context): void {
   const connection = (ctx as Context & { connection: HostConnectionHandle }).connection;
@@ -19,7 +13,7 @@ export function registerLibraryConnection(ctx: Context): void {
     fetch: async request => {
       try {
         const body = record(await request.json()); const endpoint = body?.endpoint; const payload = record(body?.payload) ?? {};
-        const current = actor(ctx); const manager = ctx.workdshLibrary;
+        const current = await ctx.workdshIdentity.resolve(undefined, request.signal); const manager = ctx.workdshLibrary;
         if (endpoint === 'space') return Response.json(ok(await manager.space(current, request.signal)));
         if (endpoint === 'list' && (payload.parentId === undefined || typeof payload.parentId === 'string')) return Response.json(ok(await manager.list(current, payload.parentId as string | undefined, request.signal)));
         if (endpoint === 'create-folder' && typeof payload.name === 'string' && (payload.parentId === undefined || typeof payload.parentId === 'string')) return Response.json(ok(await manager.createFolder(current, payload.name, payload.parentId as string | undefined, request.signal)));

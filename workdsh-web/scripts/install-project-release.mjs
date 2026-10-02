@@ -30,7 +30,7 @@ if (typeof expectedHarness !== 'string' || expectedHarness.length === 0) {
   throw new Error('Release manifest does not declare the required Harness version.');
 }
 const packages = new Map(manifest.packages.map(item => [item.name, item]));
-const installOrder = [
+const defaultInstallOrder = [
   'workdsh-provider-identity-local',
   'workdsh-provider-browser-session',
   'workdsh-plugin-audit',
@@ -39,12 +39,22 @@ const installOrder = [
   // The experts layer installs and activates the three official DSH Agent Team modules.
   'workdsh-plugin-experts',
   'workdsh-plugin-connectors',
-  'workdsh-plugin-activity',
-  'workdsh-plugin-office',
   'workdsh-plugin-library',
-  'workdsh-plugin-projects',
   'workdsh-bundle',
 ];
+
+const optionalFeatures = {
+  office:'workdsh-plugin-office',projects:'workdsh-plugin-projects',activity:'workdsh-plugin-activity',
+};
+const requested = value('--with','');
+if (typeof requested !== 'string') throw new Error('--with requires comma-separated feature names');
+const features = requested ? [...new Set(requested.split(','))] : [];
+if (features.some(name => !Object.hasOwn(optionalFeatures,name))) throw new Error('Only office, projects and activity may be explicitly selected; enterprise plugins are installed separately.');
+const installOrder = [...defaultInstallOrder.slice(0,-1),...features.map(name=>optionalFeatures[name]),defaultInstallOrder.at(-1)];
+// Fail before creating/updating a Profile if a future release changes the default boundary.
+if (manifest.installation?.defaultPackages && JSON.stringify(manifest.installation.defaultPackages)!==JSON.stringify(defaultInstallOrder))
+  throw new Error('Release default installation policy does not match this installer');
+console.log('Default features: experts, Skill, library and MCP. Optional: '+(features.join(', ')||'none'));
 
 for (const name of installOrder) {
   const item = packages.get(name);

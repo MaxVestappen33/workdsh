@@ -20,6 +20,7 @@
     "build/tray-icon.svg",
     "build/tray-icon*.png",
     "lib/workdsh-main.js",
+    "lib/connection-preload.cjs",
     "README.md",
     "README.zh.md",
     "THIRD_PARTY_NOTICES.md"
@@ -55,6 +56,7 @@
     "builder-util": "26.15.3",
     "electron": "43.3.0",
     "electron-builder": "26.15.7",
+    "js-yaml": "4.3.1",
     "sharp": "0.35.3",
     "tsdown": "0.22.2",
     "typescript": "6.0.3",
@@ -92,6 +94,7 @@
       "build/tray-icon.svg",
       "build/tray-icon*.png",
       "lib/workdsh-main.js",
+      "lib/connection-preload.cjs",
       "package.json",
       "!node_modules/**"
     ],
@@ -174,6 +177,10 @@
     },
     "extraResources": [
       {
+        "from": "build/deployment/workdsh-config.json",
+        "to": "workdsh-config.json"
+      },
+      {
         "from": "build/workdsh-runtime",
         "to": "workdsh-runtime",
         "filter": [
@@ -188,6 +195,7 @@
           "!profiles/workdsh/node_modules/**/*.pdb"
         ]
       }
-    ]
+    ],
+    "beforePack": "./scripts/prepare-deployment-config.ts"
   }
 }

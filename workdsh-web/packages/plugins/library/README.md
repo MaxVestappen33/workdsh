@@ -3,13 +3,13 @@
 状态：**实施中**。Alpha.1 已建立本地资料领域服务、WorkBuddy 式目录树与原内容工作区、对话固定修订引用和 Markdown/TXT 草稿发布流程。
 
 - 实现阶段：P1
-- 主任务：P1-06，详见 [开发计划](../../../docs/PLAN.md)
+- 主任务：P1-06，详见 [需求与范围](../../../docs/REQUIREMENTS.md)
 - 职责：本地资产与修订、目录树、确定性文本转换与检索、工具读写、成果关联；团队提供方可替换。
 - 边界：不复制 Harness 会话日志，HTML 不获 Host 权限。
 
 ## 开发前阅读
 
-[规则](../../../AGENTS.md)、[状态](../../../docs/STATUS.md)、[契约](../../../docs/CONTRACTS.md)、[团队设计](../../../docs/TEAM-DESIGN.md)。
+[规则](../../../AGENTS.md)、[验收要求](../../../docs/ACCEPTANCE.md)、[契约](../../../docs/CONTRACTS.md)、[团队设计](../../../docs/CONTRACTS.md)。
 
 所有业务操作遵守服务端主体和组织上下文；页面与 Agent 工具调用相同领域服务。可选功能接入通过公开契约与生命周期注入。
 
@@ -25,8 +25,14 @@
 
 ## 修订 6 的必做补充
 
-详见 [项目设计](../../../docs/PROJECT-DESIGN.md) 和 [官方依据](../../../docs/research/workbuddy-core-domains.md)。新增目录仍为规划占位；各自实现 PLAN 的 P1 补充项并验证 J01—J10 适用项。
+详见 [项目设计](../../../docs/ARCHITECTURE.md) 和 [官方依据](../../../docs/CONTRACTS.md)。新增目录仍为规划占位；各自实现 PLAN 的 P1 补充项并验证 J01—J10 适用项。
 
-实现前必须阅读 [ADR-0007](../../../docs/adr/0007-execution-and-transfer-boundaries.md)，完成相应 B/Q 边界用例；不可只用提示词或 UI 达成权限保障。
+实现前必须阅读 [ADR-0007](../../../docs/CONTRACTS.md)，完成相应 B/Q 边界用例；不可只用提示词或 UI 达成权限保障。
 
 页面及配置弹窗随 Harness 原生主题变化；文件类型图标与文档原文保留自身颜色。
+
+共享 Host 可以使用 `registerLibraryConnection(ctx, selector)` 的可选可信服务选择器：返回服务端建立的 actor、LibraryService 与 verify，路由执行前后核验，客户端 payload 不能选择成员。个人默认调用不传 selector。成员实例需要独立对象目录及存储 facility/backend；同一官方 facility 不允许重复 open 同名 domain，仅 isolate LibraryManager 不足以隔离。此入口只负责 HTTP 管理，Agent 工具和资料上下文仍需匹配成员服务后才能开放完整企业 Profile。
+
+### 可选 Host 成员服务选择
+
+公开 registerLibraryConnection、registerLibraryTools、registerLibraryContextInjection 接受可选可信选择器，返回服务端 actor、LibraryService 和 verify。工具与上下文使用实际 Agent 选择，不从模型参数读取主体；操作前后核验，拒绝不匹配的会话上下文。默认 apply 不传选择器，保持个人行为。企业装配必须提供隔离存储和可撤权身份；这些入口本身不是文件执行沙箱。

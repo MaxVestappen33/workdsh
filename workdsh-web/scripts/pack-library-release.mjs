@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
+const project = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
 const plugin = join(root, 'packages/plugins/library');
 const destination = join(root, '.artifacts/library-release');
 await rm(destination, { recursive: true, force: true });
@@ -26,7 +27,7 @@ const filename = `${manifest.name}-${manifest.version}.tgz`;
 const bytes = await readFile(join(destination, filename)); const sha256 = createHash('sha256').update(bytes).digest('hex');
 await writeFile(join(destination, 'SHA256SUMS.txt'), `${sha256}  ${filename}\n`);
 await writeFile(join(destination, 'release-manifest.json'), `${JSON.stringify({
-  name: manifest.name, version: manifest.version, harness: '0.1.7-rc.2', filename, sha256, bytes: bytes.length,
+  name: manifest.name, version: manifest.version, harness: project.devDependencies['@deepseek-ai/dsh'], filename, sha256, bytes: bytes.length,
   storage: manifest.workdshRelease.storage, formats: manifest.workdshRelease.formats,
   limitations: ['Local personal space only', 'Scanned PDF OCR is not included', 'DOCX/PPTX original preview requires the optional workdsh-plugin-office client'],
 }, null, 2)}\n`);

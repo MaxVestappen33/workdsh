@@ -4,20 +4,22 @@ import type {} from '@deepseek-ai/dsh-skill';
 import type {} from '@deepseek-ai/dsh-client-connection';
 import type {} from '@deepseek-ai/dsh-tools';
 import { professionalAuthoringSkills, skillCreatorContent, skillCreatorMeta } from './authoring/professional.js';
-import { SkillManager } from './services/manager.js';
+import { SkillManager, type SkillManagerOptions } from './services/manager.js';
 import { registerSkillManagementConnection } from './services/connection-api.js';
 import { registerSkillLifecycleTools } from './services/lifecycle-tools.js';
 
 export * from './services/manager.js';
 export * from './shared.js';
+export { registerSkillManagementConnection } from './services/connection-api.js';
+export { registerSkillLifecycleTools } from './services/lifecycle-tools.js';
 
 export const name = 'workdsh-plugin-skills';
 export const inject = ['skills', 'connection', 'tools'];
 
 export { skillCreatorContent } from './authoring/professional.js';
 
-export function applySkillsHost(ctx: Context): void {
-  new SkillManager(ctx);
+export function applySkillsHost(ctx: Context, options: SkillManagerOptions = {}): void {
+  new SkillManager(ctx, options);
   for (const skill of professionalAuthoringSkills) {
     ctx.effect(() => ctx.skills.register({
       ...skill,

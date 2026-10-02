@@ -1,19 +1,30 @@
 #!/usr/bin/env node
 
-import { existsSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { PRODUCT_PACKAGES } from './workdsh-package-boundary.mjs'
+import { CATALOG_PACKAGES, ENTERPRISE_PACKAGES, PRODUCT_PACKAGES } from './workdsh-package-boundary.mjs'
 
 const runtime = resolve(process.argv[2] ?? fileURLToPath(new URL('../build/workdsh-runtime', import.meta.url)))
-const profile = join(runtime, 'profiles', 'workdsh')
+const source = join(runtime, 'profiles', 'workdsh')
+const profile = resolve(process.argv[3] ?? source)
+const installedInProfile = profile === source
 const config = join(profile, '.workdsh-plugin-inventory-probe.yml')
 const expected = PRODUCT_PACKAGES
-const anchor = join(profile, 'node_modules', '@deepseek-ai', 'dsh', 'package.json')
+const anchor = join(source, 'profile-installation.json')
 if (!existsSync(anchor)) throw new Error(`Missing bundled DSH installation: ${anchor}`)
+const installation = JSON.parse(readFileSync(anchor, 'utf8'))
+for (const name of ENTERPRISE_PACKAGES) {
+  const shipped = JSON.parse(readFileSync(join(source, 'node_modules', name, 'package.json'), 'utf8'))
+  // Official PluginManager lists dependencies, not peers. Keep enterprise hidden
+  // until the enterprise member Profile explicitly selects its bundle.
+  if (installation.dependencies?.[name] !== undefined || installation.peerDependencies?.[name] !== shipped.version) {
+    throw new Error('Enterprise package must be installation-provided without a default personal plugin toggle: ' + name)
+  }
+}
 
 process.env.DSH_HOME = runtime
-const packages = join(profile, 'node_modules', '@deepseek-ai')
+const packages = join(source, 'node_modules', '@deepseek-ai')
 const { boot } = await import(pathToFileURL(join(packages, 'dsh-app-boot', 'lib', 'index.js')).href)
 const { default: PluginManager } = await import(pathToFileURL(join(packages, 'dsh-plugin-manager', 'lib', 'index.js')).href)
 
@@ -28,25 +39,24 @@ try {
     })
     root.loader.builtins.manager = PluginManager
   })
-  const bundles = (await ctx.pluginManager.listBundles()).filter(row => row.name.startsWith('workdsh-'))
+  const allBundles = await ctx.pluginManager.listBundles()
+  const bundles = allBundles.filter(row => row.name.startsWith('workdsh-'))
   const names = bundles.map(row => row.name).sort()
   if (JSON.stringify(names) !== JSON.stringify(expected)) {
     throw new Error(`Plugin manager exposes ${names.join(', ') || '(none)'}; expected ${expected.join(', ')}`)
   }
   for (const bundle of bundles) {
-    if (!bundle.enabled || !bundle.installed || bundle.error) {
+    if (!bundle.enabled || bundle.installed !== installedInProfile || bundle.removable || bundle.error) {
       throw new Error(`WorkDSH product bundle is inactive or invalid: ${bundle.name}: ${JSON.stringify(bundle)}`)
     }
   }
-  const skillHub = (await ctx.pluginManager.listBundles()).find(row => row.name === '@cocofhu/skillhub')
-  if (!skillHub?.enabled || !skillHub.installed || skillHub.error) {
-    throw new Error(`SkillHub DSH plugin is inactive or invalid: ${JSON.stringify(skillHub)}`)
+  for (const name of Object.keys(CATALOG_PACKAGES)) {
+    const bundle = allBundles.find(row => row.name === name)
+    if (!bundle?.enabled || bundle.installed !== installedInProfile || bundle.error) {
+      throw new Error(`Community catalog integration is inactive or invalid: ${name}: ${JSON.stringify(bundle)}`)
+    }
   }
-  const market = (await ctx.pluginManager.listBundles()).find(row => row.name === 'dshmarket')
-  if (!market?.enabled || !market.installed || market.error) {
-    throw new Error(`dshmarket DSH plugin is inactive or invalid: ${JSON.stringify(market)}`)
-  }
-  console.log(`Verified plugin manager exposes exactly five WorkDSH product bundles: ${names.join(', ')}`)
+  console.log(`Verified plugin manager exposes exactly four ${installedInProfile ? 'installed' : 'installation-provided'} WorkDSH product bundles: ${names.join(', ')}`)
 } finally {
   try {
     await ctx?.fiber.dispose()

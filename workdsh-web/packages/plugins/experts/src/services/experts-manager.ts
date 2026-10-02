@@ -197,6 +197,8 @@ function sanitizeFileName(fileName: string): string {
   return base || 'expert.zip';
 }
 
+export interface ExpertsManagerOptions { agentsHome?: string; includeDefaultSkillRoots?: boolean; }
+
 export class ExpertsManager extends Service implements ExpertsService {
   static inject = [
     'loader', 'storageDomain', 'agentPresets', 'sessionController',
@@ -219,11 +221,19 @@ export class ExpertsManager extends Service implements ExpertsService {
   private readonly importPreviews = new TtlStore<ImportPreviewRecord>(PLAN_TTL_MS);
   private readonly stagedImports = new TtlStore<StagedImport>(PLAN_TTL_MS);
   private readonly stagingRoot: string;
+  private readonly agentsHome: string;
+  private readonly includeDefaultSkillRoots?: boolean;
 
-  constructor(ctx: Context) {
+  constructor(ctx: Context, options: ExpertsManagerOptions = {}) {
     super(ctx, 'workdshExperts');
-    const agentsHome = resolve(process.env.DSH_AGENTS_HOME ?? join(homedir(), '.agents'));
+    const agentsHome = resolve(options.agentsHome ?? process.env.DSH_AGENTS_HOME ?? join(homedir(), '.agents'));
+    this.agentsHome = agentsHome;
+    this.includeDefaultSkillRoots = options.includeDefaultSkillRoots;
     this.stagingRoot = join(agentsHome, '.workdsh-state', 'experts', 'staging');
+  }
+
+  private compilePreset(input: Parameters<typeof compileExpertPreset>[1]) {
+    return compileExpertPreset(this.ctx, { ...input, ...(this.includeDefaultSkillRoots === false ? { includeDefaultSkillRoots: false } : {}) }, this.agentsHome);
   }
 
   async [Service.init](): Promise<void> {
@@ -236,7 +246,7 @@ export class ExpertsManager extends Service implements ExpertsService {
     this.preferences = domain.table('preferences');
     this.operations = domain.table('operations');
     for (const [, revision] of this.revisions.entries()) {
-      if (revision.compilerVersion === COMPILER_VERSION) await registerExpertPreset(this.ctx, revision.presetRevisionRef, revision.compositionDigest);
+      if (revision.compilerVersion === COMPILER_VERSION) await registerExpertPreset(this.ctx, revision.presetRevisionRef, revision.compositionDigest, this.agentsHome);
     }
     // Staged uploads are transient; best-effort cleanup when the plugin unloads.
     this.ctx.effect(() => () => { void rm(this.stagingRoot, { recursive: true, force: true }); }, 'workdshExperts.stagingCleanup');
@@ -388,7 +398,7 @@ export class ExpertsManager extends Service implements ExpertsService {
     const lockDigest = digestOf([]);
     const draftRevision = shortDigest({ seed: expertId, defDigest });
     const basePresetId = await this.resolveBasePreset(signal);
-    const compiled = await compileExpertPreset(this.ctx, { expertId, definition: normalized, snapshotDirs: [], basePresetId });
+    const compiled = await this.compilePreset({ expertId, definition: normalized, snapshotDirs: [], basePresetId });
     const revisionId = revisionIdFor(defDigest, lockDigest, compiled.presetId);
     const revision: ExpertRevision = {
       expertId, revisionId, definition: normalized, definitionDigest: defDigest,
@@ -447,7 +457,7 @@ export class ExpertsManager extends Service implements ExpertsService {
         for (const skill of source.dependencyLock) {
           snapshotDirs.push((await this.ctx.workdshSkills.retainRevision(skill, { domain: EXPERT_DOMAIN, id: source.expertId }, signal)).snapshotDir);
         }
-        const compiled = await compileExpertPreset(this.ctx, {
+        const compiled = await this.compilePreset({
           expertId: source.expertId,
           definition: source.definition,
           snapshotDirs,
@@ -480,7 +490,7 @@ export class ExpertsManager extends Service implements ExpertsService {
       for (const skill of revision.dependencyLock) {
         snapshotDirs.push((await this.ctx.workdshSkills.retainRevision(skill, { domain: EXPERT_DOMAIN, id: revision.expertId }, signal)).snapshotDir);
       }
-      const compiled = await compileExpertPreset(this.ctx, {
+      const compiled = await this.compilePreset({
         expertId: revision.expertId,
         definition: revision.definition,
         snapshotDirs,
@@ -569,7 +579,7 @@ export class ExpertsManager extends Service implements ExpertsService {
   private async computeReadiness(revision: ExpertRevision | undefined, actor: ActorContext, signal?: AbortSignal): Promise<ExpertReadiness> {
     if (!revision) return 'unknown';
     if (revision.definition.packageDocuments) {
-      try { await verifyPackageFiles(expertPresetDir(revision.presetRevisionRef), revision.definition.packageDocuments, revision.definition.packageAssets); }
+      try { await verifyPackageFiles(expertPresetDir(revision.presetRevisionRef, this.agentsHome), revision.definition.packageDocuments, revision.definition.packageAssets); }
       catch { return 'missing-dependency'; }
     }
     for (const ref of Object.values(revision.teamMembers ?? {})) {
@@ -1114,7 +1124,7 @@ export class ExpertsManager extends Service implements ExpertsService {
             });
             const dirs: string[] = [];
             for (const ref of lock) dirs.push((await this.ctx.workdshSkills.retainRevision(ref, { domain: EXPERT_DOMAIN, id: memberId }, signal)).snapshotDir);
-            const compiledMember = await compileExpertPreset(this.ctx, { expertId: memberId, definition: memberDefinition, snapshotDirs: dirs, basePresetId: await this.resolveBasePreset(signal) });
+            const compiledMember = await this.compilePreset({ expertId: memberId, definition: memberDefinition, snapshotDirs: dirs, basePresetId: await this.resolveBasePreset(signal) });
             const memberDigest = definitionDigest(memberDefinition);
             const lockDigest = digestOf(lock);
             const memberRevisionId = revisionIdFor(memberDigest, lockDigest, compiledMember.presetId);
@@ -1138,7 +1148,7 @@ export class ExpertsManager extends Service implements ExpertsService {
             snapshotDirs.push(retained.snapshotDir);
           }
           const basePresetId = await this.resolveBasePreset(signal);
-          const compiled = await compileExpertPreset(this.ctx, { expertId, definition: draft.definition, snapshotDirs, basePresetId, ...(draft.definition.team ? { teamMembers } : {}) });
+          const compiled = await this.compilePreset({ expertId, definition: draft.definition, snapshotDirs, basePresetId, ...(draft.definition.team ? { teamMembers } : {}) });
           const revisionId = revisionIdFor(validation.definitionDigest, validation.dependencyLockDigest, compiled.presetId);
           const now = new Date().toISOString();
           const revision: ExpertRevision = {
@@ -1587,8 +1597,8 @@ export class ExpertsManager extends Service implements ExpertsService {
   }
 
   private async verifyRevision(actor: ActorContext, revision: ExpertRevision, signal?: AbortSignal): Promise<void> {
-    if (revision.definition.packageDocuments) await verifyPackageFiles(expertPresetDir(revision.presetRevisionRef), revision.definition.packageDocuments, revision.definition.packageAssets);
-    if (sha256(await readExpertPreset(revision.presetRevisionRef)) !== revision.compositionDigest) {
+    if (revision.definition.packageDocuments) await verifyPackageFiles(expertPresetDir(revision.presetRevisionRef, this.agentsHome), revision.definition.packageDocuments, revision.definition.packageAssets);
+    if (sha256(await readExpertPreset(revision.presetRevisionRef, this.agentsHome)) !== revision.compositionDigest) {
       throw new ExpertsError('experts/conflict', '已发布专家 preset 已漂移。');
     }
     for (const ref of revision.dependencyLock) {

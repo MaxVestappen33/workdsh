@@ -2,7 +2,7 @@
 <h1 align="center">WorkDSH</h1>
 <p align="center"><strong>A WorkBuddy-style workspace where skills, experts, and plugins shape new workflows.</strong></p>
 <p align="center">WorkDSH brings material, experts, skills, and connectors into one workspace, with the SkillHub catalog and installable DSH community plugins.</p>
-<p align="center"><a href="#download-desktop">Download Desktop</a> · <a href="#from-material-to-deliverable">Explore the workflow</a> · <a href="docs/user-guide.en.md">User guide</a> · <a href="README.zh-CN.md">简体中文</a></p>
+<p align="center"><a href="#download-desktop">Download Desktop</a> · <a href="#from-material-to-deliverable">Explore the workflow</a> · <a href="#personal-and-enterprise-use">Personal and enterprise</a> · <a href="docs/user-guide.en.md">User guide</a> · <a href="README.zh-CN.md">简体中文</a></p>
 
 [![Desktop release](https://img.shields.io/badge/Desktop-2.0.6--alpha.1-176BFF)](https://github.com/techflag/workdsh/releases/tag/desktop-v2.0.6-alpha.1) [![GitHub stars](https://img.shields.io/github/stars/techflag/workdsh?label=stars)](https://github.com/techflag/workdsh) [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -56,6 +56,75 @@ WorkDSH connects two independently maintained catalogs: [SkillHub](https://skill
 
 <sub>The third-party dsh-market plugin supplies discovery and installation. The screenshot does not imply that catalog plugins are bundled with WorkDSH.</sub>
 
+## Personal and enterprise use
+
+WorkDSH supports personal use, Enterprise Web and Enterprise Desktop. Personal and enterprise modes use the complete official DSH interface and the same WorkDSH feature packages. [WorkDSH Admin](https://github.com/techflag/workdsh-admin) manages company accounts, organizations, permissions and internal model APIs.
+
+| Mode | Where the Agent and tools run | How to enter |
+| --- | --- | --- |
+| Personal Desktop | On your computer, using personal files and model settings. | Open the app and choose personal use. |
+| Enterprise Desktop | On the employee's computer, using local files and tools. | Install the company-provided desktop app and choose enterprise login. |
+| Enterprise Web | A separate account process on the company's ECS server. | Open the company Web address and sign in. |
+
+Desktop keeps personal and enterprise data and credentials in separate spaces. The enterprise account plugin is included in Desktop and activates only in enterprise mode; members do not need to install it separately. Collaboration, notifications and business applications remain independently installed plugins.
+
+### Enterprise login and account
+
+The company administrator presets the backend address in the Desktop package. Employees sign in with their own company accounts after installation. Enterprise Web uses the Web address provided by the administrator.
+
+![Desktop personal and enterprise entry](assets/screenshots/desktop-login.png)
+
+<sub>The enterprise screenshots in this section use demonstration accounts, organizations and local addresses. This sample data is not shipped with the app.</sub>
+
+After signing in, use **Settings → Enterprise account** to view your name, organization and role, or sign out.
+
+<details>
+<summary>See the enterprise account and sign-out entry</summary>
+
+![Enterprise Desktop account](assets/screenshots/enterprise-account.png)
+
+</details>
+
+Enterprise Desktop synchronizes visible user and assistant conversation text to the backend under the member's account. Thinking, tool traces and attachments are not uploaded as conversation text. Authorized administrators can read their organization's synchronized text through audited, read-only access.
+
+### Configure company models
+
+An administrator configures upstream model APIs, supplier keys, protocols and allowed model catalogs in WorkDSH Admin. Members receive an internal API address and access key, then use **Settings → Models → Custom model API**:
+
+| Field | What to enter |
+| --- | --- |
+| Provider ID and display name | For example, `company-api` and `Company models`. |
+| API address | The administrator's internal base URL, for example `https://enterprise.example/api/model-gateway/v1`. |
+| API protocol | The protocol supported by that internal endpoint. |
+| API key | The internal access key supplied by the administrator. |
+| Model catalog | Fetch available models, or add the allowed model IDs provided by the administrator. |
+
+Save the provider and select its model in the conversation. Personal model providers can coexist with the company provider. Real supplier keys stay on the server; company providers are configured through the official settings rather than automatically injected into DSH. Model requests go to the configured API independently of where the Agent runs.
+
+<details>
+<summary>See company model configuration in the official settings</summary>
+
+![Enterprise Desktop company model settings](assets/screenshots/company-model.png)
+
+</details>
+
+<details>
+<summary>See the Enterprise Web workspace, Skills and admin console</summary>
+
+Enterprise Web — conversation workspace:
+
+![Enterprise Web conversation workspace](assets/screenshots/enterprise-web.jpg)
+
+Enterprise Web — Skills:
+
+![Enterprise Web Skills](assets/screenshots/skills.jpg)
+
+WorkDSH Admin — organization overview:
+
+![WorkDSH Admin organization overview](assets/screenshots/admin-overview.jpg)
+
+</details>
+
 ## Download Desktop
 
 The planned desktop installer release is **2.0.6-alpha.1**. Its download links will become available after the [GitHub Release](https://github.com/techflag/workdsh/releases/tag/desktop-v2.0.6-alpha.1) is published:
@@ -68,6 +137,8 @@ The planned desktop installer release is **2.0.6-alpha.1**. Its download links w
 
 Desktop installers include Node.js and Python runtimes by default, so users do not need to install them separately. This is an **Alpha release**: end-to-end project document references, expert execution, and different Office formats are still being validated. The macOS DMGs are unsigned; download updates from [Releases](https://github.com/techflag/workdsh/releases). Start with the [user guide](docs/user-guide.en.md) and [FAQ](docs/faq.en.md).
 
+Enterprise Desktop uses a company-provided package that includes the enterprise entry. For existing downloads, available features are described in their corresponding release notes.
+
 ## Development and documentation
 
 Source ownership: [WorkDSH feature packages and Web](workdsh-web/README.md) · [Desktop carrier](dsh-plugin-desktop/README.md) · [Architecture](docs/architecture.en.md) · [All documentation](docs/README.en.md). Running from source requires Node.js 22.19+ or 24+, Corepack, and Yarn 4.18.0:
@@ -79,6 +150,20 @@ corepack yarn dev
 ```
 
 Run checks with `corepack yarn check`. On macOS or Windows, `corepack yarn release:pack` builds the Web Profile and Desktop package from the current commit. Once the Web package is published, use `corepack yarn release:pack:published` for the final installer. Both commands share the same [packaging script](scripts/package-desktop-release.mjs). [Contributing](CONTRIBUTING.en.md)
+
+### Enterprise Desktop packaging configuration
+
+After deploying [WorkDSH Admin](https://github.com/techflag/workdsh-admin), the company administrator provides the public backend address when packaging Desktop. The configuration file contains only the address, for example:
+
+```json
+{
+  "enterprise": {
+    "backendUrl": "https://enterprise.example"
+  }
+}
+```
+
+Set `WORKDSH_DEPLOYMENT_CONFIG` to this file. Packaging writes it to `workdsh-config.json` in application resources, and the employee entry uses the fixed address. Model API addresses and internal access keys are configured in the official model settings, outside the packaging configuration. See the [Desktop packaging instructions](dsh-plugin-desktop/README.md).
 
 ## Community and acknowledgements
 

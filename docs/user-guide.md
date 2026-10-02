@@ -6,13 +6,13 @@
 
 从 [GitHub Releases](https://github.com/techflag/workdsh/releases) 下载含实际安装文件的版本。Windows 使用 x64 Setup 或 Portable；macOS 根据电脑选择 Apple Silicon（arm64）或 Intel（x64）DMG。安装包自带 Electron、Node 和固定版本的 DSH Profile，普通用户无需安装 Node.js 或 Python。
 
-启动后，WorkDSH 在本机运行 Profile 中的官方 DSH 服务，并在应用窗口打开本机页面。项目、资料库、专家、技能与连接器由 WorkDSH Profile 提供。窗口关闭会结束 Windows 应用；macOS 遵循系统窗口生命周期。当前外壳不提供旧文档描述的托盘、多 Profile 选择或自动更新面板。
+启动后选择个人或企业使用方式。两种方式均在本机运行 Profile 中的官方 DSH 服务，并在应用窗口打开本机页面。默认功能为资料库、专家、技能和 MCP/连接器；企业账号插件随包供应，仅企业登录后启用。项目、WorkDSH Office、活动、协作和通知须显式安装外部插件。企业登录与公司包配置见[Desktop 使用说明](DESKTOP-PERSONAL-ENTERPRISE.md)。窗口关闭会结束 Windows 应用；macOS 遵循系统窗口生命周期。当前外壳不提供旧文档描述的托盘、多 Profile 选择或自动更新面板。
 
 ## 数据与插件
 
 运行数据位于本机应用数据目录下的 DSH home。安装包内的 Profile 提供固定版本依赖；桌面外壳不会把另一套 DSH npm 依赖安装到 `app.asar`。模型或外部工具可能按用户配置访问网络。
 
-WorkDSH 功能随所下载的版本一起更新。使用官方 DSH 插件机制添加第三方插件时，应以该版本的官方 DSH 文档和实际 Profile 为准；不要使用旧版 `desktopProfiles` 或 `desktopPnpm` 接口。项目和资料库中的内容请按产品界面管理。
+WorkDSH 功能随所下载的版本一起更新。使用官方 DSH 插件机制添加第三方插件时，应以该版本的官方 DSH 文档和实际 Profile 为准；不要使用旧版 `desktopProfiles` 或 `desktopPnpm` 接口。SkillHub 与 dshmarket 提供第三方目录；安装前应核对来源、许可、依赖与版本兼容性。资料库及显式安装的项目功能中的内容请按产品界面管理。
 
 ## 更新与排查
 

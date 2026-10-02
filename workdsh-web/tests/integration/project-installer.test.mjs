@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 
 const root = resolve(import.meta.dirname, '../..');
 const installer = join(root, 'scripts/install-project-release.mjs');
-const harnessVersion = '0.1.7-alpha.1';
+const harnessVersion = '0.2.0-rc.2';
 const packageNames = [
   'workdsh-provider-identity-local', 'workdsh-provider-browser-session', 'workdsh-plugin-audit', 'workdsh-plugin-access',
   'workdsh-plugin-skills', 'workdsh-plugin-experts', 'workdsh-plugin-connectors',
@@ -73,7 +73,9 @@ test('project installer initializes a new profile exactly once', async () => {
     const recorded = await calls(input);
     assert.deepEqual(recorded[0], ['--version']);
     assert.deepEqual(recorded[1], ['--profile', 'fresh', '--from-default-profile', 'web', '--dump-config']);
-    assert.equal(recorded.filter(args => args[0] === 'plugin').length, 13);
+    assert.equal(recorded.filter(args => args[0] === 'plugin').length, 10);
+    const added = recorded.flatMap(args => args[0] === 'plugin' ? args : []);
+    for (const optional of ['activity', 'office', 'projects']) assert.ok(!added.some(arg => arg.includes(`workdsh-plugin-${optional}-fixture.tgz`)));
     assert.ok(recorded.some(args => args.includes(`@deepseek-ai/dsh@${harnessVersion}`) && args.includes(`@deepseek-ai/dsh-deepseek-account@${harnessVersion}`)));
   } finally { await rm(input.home, { recursive: true, force: true }); }
 });
@@ -91,7 +93,9 @@ test('project installer upgrades an existing profile without reinitializing it',
     assert.deepEqual(recorded[1], ['--profile', 'existing', '--dump-config']);
     assert.ok(recorded.every(args => !args.includes('--from-default-profile')));
     assert.match(await readFile(join(profileDir, 'package.json'), 'utf8'), /preserve/);
-    assert.equal(recorded.filter(args => args[0] === 'plugin').length, 13);
+    assert.equal(recorded.filter(args => args[0] === 'plugin').length, 10);
+    const added = recorded.flatMap(args => args[0] === 'plugin' ? args : []);
+    for (const optional of ['activity', 'office', 'projects']) assert.ok(!added.some(arg => arg.includes(`workdsh-plugin-${optional}-fixture.tgz`)));
     assert.ok(recorded.some(args => args.includes(`@deepseek-ai/dsh@${harnessVersion}`) && args.includes(`@deepseek-ai/dsh-deepseek-account@${harnessVersion}`)));
   } finally { await rm(input.home, { recursive: true, force: true }); }
 });

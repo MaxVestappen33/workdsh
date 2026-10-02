@@ -66,9 +66,9 @@ function strings(value: unknown, limit: number): string[] {
 export class SkillCatalogStore {
   private cache?: { readonly signature: string; readonly catalog: LoadedCatalog; readonly icons: Map<string, { path: string; revision: string }> };
 
-  constructor(private readonly root: string) {}
+  constructor(private readonly root?: string) {}
 
-  get location(): string { return this.root; }
+  get location(): string | undefined { return this.root; }
 
   /** Catalog metadata for the given installed names plus live install state. */
   async summary(installed: ReadonlySet<string>): Promise<SkillCatalogSummary> {
@@ -143,7 +143,7 @@ export class SkillCatalogStore {
   async payloadPath(name: string): Promise<string | undefined> {
     const state = await this.load();
     const row = state.file?.entries.find(entry => entry.name === name);
-    if (!row || typeof row.payload !== 'string') return undefined;
+    if (!this.root || !row || typeof row.payload !== 'string') return undefined;
     const target = resolve(this.root, row.payload);
     if (!inside(this.root, target)) return undefined;
     try {
@@ -175,6 +175,7 @@ export class SkillCatalogStore {
   }
 
   private async load(): Promise<LoadedCatalog & { icons: Map<string, { path: string; revision: string }> }> {
+    if (!this.root) return { status: 'missing', diagnostics: [], icons: new Map() };
     const file = join(this.root, 'catalog.json');
     let signature = '';
     try {
@@ -215,6 +216,7 @@ export class SkillCatalogStore {
 
   private async resolveIcons(file: CatalogFile): Promise<Map<string, { path: string; revision: string }>> {
     const icons = new Map<string, { path: string; revision: string }>();
+    if (!this.root) return icons;
     for (const row of file.entries) {
       if (typeof row.icon !== 'string' || !row.icon.trim()) continue;
       const target = resolve(this.root, row.icon);

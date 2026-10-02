@@ -1,137 +1,137 @@
 import { validateAcceptance } from './validate-acceptance.mjs';
+import { spawnSync } from 'node:child_process';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
-import { dirname, resolve, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const failures = [];
-failures.push(...validateAcceptance(root).failures);
-const read = (name) => readFileSync(resolve(root, name), 'utf8');
-const requirePath = (name) => {
-  if (!existsSync(resolve(root, name))) failures.push(`Missing: ${name}`);
-};
-const documents = [
-  'docs/adr/0018-composable-feature-plugins-and-shared-skills.md',
-  'docs/evidence/skills-standalone-package.md',
-  'docs/adr/0017-expert-definition-and-runtime-binding.md',
-  'docs/design/experts/EXPERT-TEAMS.md',
-  'docs/design/experts/PRD.md',
-  'docs/design/experts/README.md',
-  'docs/design/experts/UX.md',
-  'docs/HARNESS-OFFICIAL-DEVELOPMENT.md',
-  'docs/MODULE-VERSIONS.md',
-  'docs/UI-DESIGN.md',
-  'docs/PLUGIN-DELIVERY.md', 'docs/adr/0006-plugin-delivery-order.md',
-  'docs/adr/0007-execution-and-transfer-boundaries.md',
-  'docs/adr/0010-immutable-preset-revisions.md',
-  'docs/adr/0011-use-official-storage-domains.md',
-  'docs/adr/0012-session-and-business-fact-boundaries.md',
-  'docs/DEPLOYMENT-AND-STORAGE.md',
-  'docs/ENTERPRISE-EDITION.md',
-  'AGENTS.md', 'README.md', 'docs/PLAN.md', 'docs/STATUS.md',
-  'docs/ARCHITECTURE.md', 'docs/CONTRACTS.md', 'docs/TEAM-DESIGN.md',
-  'docs/research/workbuddy-project-screens.md', 'docs/PROJECT-DESIGN.md', 'docs/research/workbuddy-core-domains.md',
-  'docs/ADMIN-DESIGN.md', 'docs/ACCEPTANCE.md', 'docs/DEVELOPMENT.md',
-  'docs/COMPATIBILITY.md', 'docs/adr/0001-plugin-and-object-model.md',
-  'docs/adr/0002-public-runtime-and-composition.md',
-  'docs/adr/0003-state-and-cross-plugin-services.md',
-  'docs/adr/0004-complete-scaffold-and-phases.md',
-  'docs/adr/0005-team-foundation-from-day-one.md',
+import { dirname, resolve, relative, isAbsolute } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+export const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+export const essentialDocuments = [
+  'AGENTS.md', 'README.md', 'README.zh-CN.md',
+  'docs/REQUIREMENTS.md', 'docs/ENTERPRISE-REQUIREMENTS.md',
+  'docs/ARCHITECTURE.md', 'docs/CONTRACTS.md', 'docs/ACCEPTANCE.md',
+  'docs/requirements.json', 'docs/modules.json', 'docs/acceptance.json',
+  'docs/FEATURE-DEVELOPMENT-CONTRACT.md', 'docs/HARNESS-OFFICIAL-DEVELOPMENT.md',
+  'docs/PLUGIN-DELIVERY.md', 'docs/EXTERNAL-PLUGINS.md',
 ];
-documents.forEach(requirePath);
-const officialStandard = read('docs/HARNESS-OFFICIAL-DEVELOPMENT.md');
-for (const required of ['sidebar.panellist', 'rightbar.session', 'ctx.slots.inject', 'peerDependencies', 'ctx.effect']) {
-  if (!officialStandard.includes(required)) failures.push(`Harness standard missing rule: ${required}`);
-}
-const modules = JSON.parse(read('docs/modules.json'));
-const ledger = read('docs/STATUS.md');
-const order = JSON.parse(read('docs/development-order.json'));
-const steps = new Map(order.steps.map((s) => [s.id, s]));
-if (order.activeSlice) {
-  const slice = order.activeSlice;
-  if (!slice.id || !slice.scope || !ledger.includes(`| ${slice.task} |`)) failures.push('Invalid approved feature slice');
-  if (!['in_progress', 'completed'].includes(slice.status)) failures.push('Invalid feature slice status');
-  requirePath(slice.decision);
-}
-if (steps.size !== order.steps.length) failures.push('Duplicate delivery step');
-if (order.steps.length !== 16) failures.push('Expected D00-D15 delivery steps');
-for (let i = 0; i < order.steps.length; i += 1) {
-  const step = order.steps[i];
-  const expected = `D${String(i).padStart(2, '0')}`;
-  if (step.id !== expected) failures.push(`Unexpected delivery order: ${step.id}`);
-  if (!['todo', 'in_progress', 'blocked', 'completed'].includes(step.status)) failures.push(`Invalid step status: ${step.id}`);
-  const required = i === 0 ? [] : [order.steps[i - 1].id];
-  if (JSON.stringify(step.dependsOn) !== JSON.stringify(required)) failures.push(`Invalid prerequisites: ${step.id}`);
-  for (const task of step.tasks) if (!ledger.includes(`| ${task} |`)) failures.push(`Missing delivery task: ${task}`);
-  if (step.status !== 'todo' && step.dependsOn.some((id) => steps.get(id)?.status !== 'completed')) failures.push(`Prerequisite incomplete: ${step.id}`);
-  if (step.status === 'completed' && !step.evidence.length) failures.push(`Missing delivery evidence: ${step.id}`);
-  for (const evidence of step.evidence) requirePath(evidence);
-}
-const nextStep = order.steps.find((s) => s.status !== 'completed');
-if (order.currentStep !== (nextStep?.id ?? null)) failures.push('currentStep must be first unfinished delivery step');
-if (order.steps.filter((s) => s.status === 'in_progress').length > 1) failures.push('Multiple active delivery steps');
-const seen = new Set();
-for (const entry of modules) {
-  if (seen.has(entry.path)) failures.push(`Duplicate module: ${entry.path}`);
-  seen.add(entry.path);
-  if (!/^(?:packages\/(?:(?:plugins|providers)\/)?|examples\/)[a-z][a-z0-9-]*$/.test(entry.path)) {
-    failures.push(`Invalid module path: ${entry.path}`); continue;
+
+/** Static source/contract integrity; does not infer product acceptance from build output. */
+export function validatePlan(base = root) {
+  const failures = [];
+  const read = name => readFileSync(resolve(base, name), 'utf8');
+  const requirePath = name => {
+    if (typeof name !== 'string' || isAbsolute(name) || relative(base, resolve(base, name)).startsWith('..')) {
+      failures.push(`Invalid repository path: ${name}`); return false;
+    }
+    if (!existsSync(resolve(base, name))) { failures.push(`Missing: ${name}`); return false; }
+    return true;
+  };
+  essentialDocuments.forEach(requirePath);
+  if (failures.length) return { failures, modules: [], documents: essentialDocuments };
+  const markdownFiles = directory => readdirSync(resolve(base, directory), { withFileTypes: true })
+    .flatMap(entry => {
+      const path = `${directory}/${entry.name}`;
+      return entry.isDirectory() ? markdownFiles(path) : (entry.name.endsWith('.md') ? [path] : []);
+    });
+  const documents = [...new Set([...essentialDocuments, ...markdownFiles('docs')])];
+  failures.push(...validateAcceptance(base).failures);
+  const officialStandard = read('docs/HARNESS-OFFICIAL-DEVELOPMENT.md');
+  for (const rule of ['sidebar.panellist', 'rightbar.session', 'ctx.slots.inject', 'peerDependencies', 'ctx.effect']) {
+    if (!officialStandard.includes(rule)) failures.push(`Harness standard missing rule: ${rule}`);
   }
-  if (!['planned', 'in_progress', 'implemented'].includes(entry.status)) failures.push(`Invalid status: ${entry.path}`);
-  requirePath(`${entry.path}/README.md`);
-  for (const sub of entry.directories) requirePath(`${entry.path}/${sub}`);
-  if (!ledger.includes(`| ${entry.task} |`)) failures.push(`Missing task: ${entry.task}`);
-  const manifestPath = `${entry.path}/package.json`;
-  if (entry.moduleVersion !== undefined && !/^\d+\.\d+$/.test(entry.moduleVersion)) failures.push(`Invalid module version: ${entry.path}`);
-  if (entry.moduleVersion && existsSync(resolve(root, manifestPath))) {
-    const manifest = JSON.parse(read(manifestPath));
-    const packageLine = String(manifest.version ?? '').split('.').slice(0, 2).join('.');
-    if (packageLine !== entry.moduleVersion) failures.push(`Module/package version mismatch: ${entry.path}`);
+  let modules, requirements;
+  try {
+    modules = JSON.parse(read('docs/modules.json'));
+    requirements = JSON.parse(read('docs/requirements.json'));
+  } catch (error) {
+    return { failures: [...failures, `Invalid contract JSON: ${error.message}`], modules: [], documents };
   }
-  if (entry.status === 'planned' && existsSync(resolve(root, manifestPath))) {
-    const manifest = JSON.parse(read(manifestPath));
-    if (manifest.dsh?.bundle || manifest.exports || manifest.main || manifest.bin) failures.push(`Planned module declares executable entry: ${entry.path}`);
+  if (!Array.isArray(modules)) return { failures: [...failures, 'Invalid module registry'], modules: [], documents };
+  if (requirements?.schemaVersion !== 1 || !Array.isArray(requirements.requirements)) {
+    return { failures: [...failures, 'Invalid requirement schema'], modules, documents };
   }
-}
-if (order.activeSlice && !modules.some((entry) => entry.task === order.activeSlice.task && entry.moduleVersion)) {
-  failures.push(`Active slice has no module version: ${order.activeSlice.task}`);
-}
-for (const category of ['plugins', 'providers']) {
-  requirePath(`packages/${category}/README.md`);
-  if (existsSync(resolve(root, `packages/${category}/package.json`))) failures.push(`${category} category must not be a workspace package`);
-}
-for (const base of ['packages', 'packages/plugins', 'packages/providers', 'examples']) {
-  for (const item of readdirSync(resolve(root, base), { withFileTypes: true })) {
-    if (base === 'packages' && ['plugins', 'providers'].includes(item.name)) continue;
-    if (item.isDirectory() && !seen.has(`${base}/${item.name}`)) failures.push(`Unregistered module: ${base}/${item.name}`);
+  const requirementIds = new Set();
+  const describedRequirements = new Set([...read('docs/REQUIREMENTS.md').matchAll(/^\| (R\d+) \|/gm)].map(match => match[1]));
+  const entryPoints = new Set(['personal-web', 'personal-desktop', 'enterprise-web', 'enterprise-desktop']);
+  const deliveries = new Set(['default', 'optional', 'external', 'infrastructure', 'mode-specific', 'planned']);
+  for (const item of requirements.requirements) {
+    if (!item || typeof item !== 'object') { failures.push('Invalid requirement'); continue; }
+    if (!/^R\d+$/.test(item.id)) failures.push(`Invalid requirement id: ${item.id}`);
+    if (requirementIds.has(item.id)) failures.push(`Duplicate requirement: ${item.id}`);
+    requirementIds.add(item.id);
+    if (!describedRequirements.has(item.id)) failures.push(`Missing requirement description: ${item.id}`);
+    for (const field of ['title', 'sourceOwner', 'dataBoundary', 'contract']) {
+      if (typeof item[field] !== 'string' || !item[field].trim()) failures.push(`Missing requirement ${field}: ${item.id}`);
+    }
+    requirePath(item.sourceOwner);
+    if (!deliveries.has(item.delivery)) failures.push(`Invalid requirement delivery: ${item.id}`);
+    if (!Array.isArray(item.entryPoints) || !item.entryPoints.length || item.entryPoints.some(point => !entryPoints.has(point))) {
+      failures.push(`Invalid supported entry points: ${item.id}`);
+    }
+    for (const field of ['checks', 'acceptance']) {
+      if (!Array.isArray(item[field]) || !item[field].length) failures.push(`Missing requirement ${field}: ${item.id}`);
+      else if (new Set(item[field]).size !== item[field].length) failures.push(`Duplicate requirement ${field}: ${item.id}`);
+    }
+    for (const check of Array.isArray(item.checks) ? item.checks : []) requirePath(check);
   }
-}
-for (const id of ['P0-05', 'P1-09', 'P1-10', 'P1-11', 'P2-01', 'P3-06']) {
-  if (!ledger.includes(`| ${id} |`)) failures.push(`Required milestone missing: ${id}`);
-}
-for (let i = 1; i <= 13; i += 1) {
-  const id = `T${String(i).padStart(2, '0')}`;
-  if (!read('docs/ACCEPTANCE.md').includes(`${id}：`)) failures.push(`Team acceptance missing: ${id}`);
-}
-for (let i = 1; i <= 10; i += 1) {
-  const id = `J${String(i).padStart(2, '0')}`;
-  if (!read('docs/ACCEPTANCE.md').includes(`${id}：`)) failures.push(`Project acceptance missing: ${id}`);
-}
-for (let i = 1; i <= 10; i += 1) {
-  const id = `UI${String(i).padStart(2, '0')}`;
-  if (!read('docs/ACCEPTANCE.md').includes(`| ${id} |`)) failures.push(`Project UI acceptance missing: ${id}`);
-}
-for (const name of [...documents, 'packages/plugins/README.md', 'packages/providers/README.md', ...modules.map((m) => `${m.path}/README.md`)]) {
-  if (!existsSync(resolve(root, name))) continue;
-  for (const match of read(name).matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) {
-    const target = match[1].split('#')[0];
-    if (!target || /^[a-z]+:/i.test(target)) continue;
-    const destination = resolve(root, dirname(name), decodeURIComponent(target));
-    if (!existsSync(destination)) failures.push(`Broken link in ${name}: ${relative(root, destination)}`);
+  for (const id of describedRequirements) if (!requirementIds.has(id)) failures.push(`Unmapped requirement: ${id}`);
+
+  const seen = new Set();
+  for (const entry of modules) {
+    if (!entry || typeof entry !== 'object') { failures.push('Invalid module'); continue; }
+    if (seen.has(entry.path)) failures.push(`Duplicate module: ${entry.path}`);
+    seen.add(entry.path);
+    if (!/^(?:packages\/(?:(?:plugins|providers)\/)?|examples\/)[a-z][a-z0-9-]*$/.test(entry.path)) {
+      failures.push(`Invalid module path: ${entry.path}`); continue;
+    }
+    if (!['planned', 'in_progress', 'implemented'].includes(entry.status)) failures.push(`Invalid status: ${entry.path}`);
+    if (!Array.isArray(entry.requirements) || !entry.requirements.length) failures.push(`Missing module requirements: ${entry.path}`);
+    else for (const id of entry.requirements) if (!requirementIds.has(id)) failures.push(`Unknown module requirement: ${entry.path}: ${id}`);
+    requirePath(`${entry.path}/README.md`);
+    if (!Array.isArray(entry.directories)) failures.push(`Invalid module directories: ${entry.path}`);
+    else for (const sub of entry.directories) requirePath(`${entry.path}/${sub}`);
+    const manifestPath = `${entry.path}/package.json`;
+    if (entry.moduleVersion !== undefined && !/^\d+\.\d+$/.test(entry.moduleVersion)) failures.push(`Invalid module version: ${entry.path}`);
+    if (existsSync(resolve(base, manifestPath))) {
+      const manifest = JSON.parse(read(manifestPath));
+      const packageLine = String(manifest.version ?? '').split('.').slice(0, 2).join('.');
+      if (entry.moduleVersion && packageLine !== entry.moduleVersion) failures.push(`Module/package version mismatch: ${entry.path}`);
+      if (entry.status === 'planned' && (manifest.dsh || manifest.exports || manifest.main || manifest.bin)) {
+        failures.push(`Planned module declares executable entry: ${entry.path}`);
+      }
+    }
   }
+  for (const category of ['plugins', 'providers']) {
+    requirePath(`packages/${category}/README.md`);
+    if (existsSync(resolve(base, `packages/${category}/package.json`))) failures.push(`${category} category must not be a workspace package`);
+  }
+  for (const directory of ['packages', 'packages/plugins', 'packages/providers', 'examples']) {
+    if (!requirePath(directory)) continue;
+    for (const item of readdirSync(resolve(base, directory), { withFileTypes: true })) {
+      if (directory === 'packages' && ['plugins', 'providers'].includes(item.name)) continue;
+      if (!item.isDirectory() || seen.has(`${directory}/${item.name}`)) continue;
+      const localPrototype = directory === 'examples' && spawnSync('git',
+        ['check-ignore', '-q', '--', `${directory}/${item.name}`], { cwd: base }).status === 0;
+      if (!localPrototype) failures.push(`Unregistered module: ${directory}/${item.name}`);
+    }
+  }
+  for (const name of [...documents, 'packages/plugins/README.md', 'packages/providers/README.md', ...modules.filter(item => item?.path).map(item => `${item.path}/README.md`)]) {
+    if (!existsSync(resolve(base, name)) || !name.endsWith('.md')) continue;
+    for (const match of read(name).matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) {
+      const target = match[1].split('#')[0];
+      if (!target || /^[a-z]+:/i.test(target)) continue;
+      const destination = resolve(base, dirname(name), decodeURIComponent(target));
+      if (!existsSync(destination)) failures.push(`Broken link in ${name}: ${relative(base, destination)}`);
+    }
+  }
+  return { failures, modules, documents, requirements: requirements.requirements };
 }
-if (failures.length) {
-  process.stderr.write(failures.join('\n') + '\n'); process.exitCode = 1;
-} else {
-  process.stdout.write(`PASS: ${modules.length} modules; ${documents.length} documents; task references, team acceptance and relative links checked.\n`);
-  process.stdout.write('Planning/scaffold integrity only; product and Harness integration remain unverified.\n');
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const result = validatePlan();
+  if (result.failures.length) {
+    process.stderr.write(result.failures.join('\n') + '\n'); process.exitCode = 1;
+  } else {
+    process.stdout.write(`PASS: ${result.modules.length} modules; ${result.requirements.length} requirements; ${result.documents.length} documents; source ownership, delivery, acceptance mappings and relative links checked.\n`);
+    process.stdout.write('Static contract integrity only; product, model, GUI and packaged-runtime acceptance are separate gates.\n');
+  }
 }

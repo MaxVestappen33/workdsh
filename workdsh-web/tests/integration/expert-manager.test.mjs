@@ -18,6 +18,7 @@ import * as filesystem from '@deepseek-ai/dsh-skill-filesystem';
 import { AccessManager } from '../../packages/plugins/access/dist/index.js';
 import { AuditJournal } from '../../packages/plugins/audit/dist/index.js';
 import { SkillManager } from '../../packages/plugins/skills/dist/index.js';
+import { registerExpertsConnection } from '../../packages/plugins/experts/dist/services/connection-api.js';
 import { ExpertsManager } from '../../packages/plugins/experts/dist/index.js';
 import { registerExpertExecutionGuard } from '../../packages/plugins/experts/dist/runtime/execution-guard.js';
 import { COMPILER_VERSION, compileExpertPreset, expertPersonaConfig, expertPresetDir, readExpertPreset } from '../../packages/plugins/experts/dist/runtime/preset-compiler.js';
@@ -936,4 +937,84 @@ test('0.1.7 legacy directory expert stays immutable, blocks execution, and can b
    assert.deepEqual(cold.experts.revisionsTable().get(keys.revision(expertId,legacy.revisionId)),legacy);
   } finally {await cold.cleanup();}
  } finally {await h.cleanup();}
+});
+
+/** The process owns one fixed member; live admission must survive its async verification. */
+function fixedMemberAdmission(ctx) {
+  let active = true; let epoch = 0; let principalId = 'owner-a'; let organizationId = 'organization-a';
+  let verificationHook; const evidence = [];
+  const revoke = () => { active = false; epoch++; };
+  ctx.workdshIdentity.resolve = async (request, signal) => {
+    signal?.throwIfAborted(); evidence.push(request);
+    const admittedEpoch = epoch; const verified = { principalId, organizationId };
+    // The real process provider awaits the backend account response before admission.
+    await Promise.resolve(); verificationHook?.(); signal?.throwIfAborted();
+    if (!active || admittedEpoch !== epoch) throw Error('Expired fixed-member admission');
+    if (verified.principalId !== 'owner-a' || verified.organizationId !== 'organization-a') throw Error('Fixed member identity mismatch');
+    return { ...actor(verified.principalId, verified.organizationId), ...(request?.sessionId ? { sessionId: request.sessionId } : {}) };
+  };
+  return {
+    evidence, revoke,
+    restore() { active = true; epoch++; principalId = 'owner-a'; organizationId = 'organization-a'; verificationHook = undefined; },
+    foreign() { principalId = 'owner-b'; organizationId = 'organization-b'; epoch++; },
+    revokeDuringVerification() { verificationHook = revoke; },
+  };
+}
+
+test('expert tools use live fixed-member admission and deny expiry or foreign identities', async () => {
+  const h = await boot();
+  try {
+    h.ctx.provide('systemPrompt', { tools() {}, section() {}, getSectionOrder() { return 0; } });
+    await h.ctx.plugin(Tools);
+    const member = fixedMemberAdmission(h.ctx);
+    const agent = { id: 'member-session' };
+    registerExpertManagementTools(h.ctx);
+    const run = () => h.ctx.tools.execute({ callId: 'member-list', name: 'workdsh_expert_list', arguments: {}, agent, signal: new AbortController().signal });
+    assert.equal((await run()).isError, false);
+    member.revoke(); const expired = await run(); assert.equal(expired.isError, true); assert.match(expired.error.message, /Expired/);
+    member.restore(); member.foreign(); const foreign = await run(); assert.equal(foreign.isError, true); assert.match(foreign.error.message, /identity mismatch/);
+    member.restore(); member.revokeDuringVerification(); const revoked = await run(); assert.equal(revoked.isError, true); assert.match(revoked.error.message, /Expired/);
+    member.restore(); assert.equal((await run()).isError, false);
+    assert.ok(member.evidence.every(request => request.sessionId === agent.id), 'only the official calling Agent supplies the Session evidence');
+  } finally { await h.cleanup(); }
+});
+
+test('expert page routes reject expired, foreign or revoked live admission without returning data', async () => {
+  const h = await boot();
+  try {
+    const routes = new Map(); const member = fixedMemberAdmission(h.ctx);
+    h.ctx.provide('connection', { fetch: { register(route) { routes.set(route.path, route); return async () => routes.delete(route.path); } } });
+    registerExpertsConnection(h.ctx);
+    const call = async () => {
+      const response = await routes.get('/api/workdsh-experts').fetch(new Request('http://localhost/api/workdsh-experts', {
+        method: 'POST', body: JSON.stringify({ endpoint: 'list', payload: {}, principalId: 'forged' }),
+      }));
+      return response.json();
+    };
+    const allowed = await call(); assert.equal(allowed.ok, true); assert.ok(Array.isArray(allowed.value.items));
+    const assertDenied = result => { assert.equal(result.ok, false); assert.equal(result.error.code, 'experts/internal'); assert.equal('value' in result, false); };
+    member.revoke(); assertDenied(await call());
+    member.restore(); member.foreign(); assertDenied(await call());
+    member.restore(); member.revokeDuringVerification(); assertDenied(await call());
+    member.restore(); assert.equal((await call()).ok, true);
+    assert.ok(member.evidence.every(request => request === undefined), 'browser actor fields do not become trusted identity evidence');
+    await h.cleanup(); assert.equal(routes.size, 0);
+  } finally { await h.cleanup(); }
+});
+
+test('expert execution guard admits ordinary unbound tasks only through live fixed-member identity', async () => {
+  const h = await boot();
+  try {
+    await h.ctx.plugin(SystemPrompt);
+    const member = fixedMemberAdmission(h.ctx);
+    const agent = { id: 'member-ordinary', ctx: h.ctx, session: { header: {} } };
+    registerExpertExecutionGuard(h.ctx, { agentsHome: h.agentsHome });
+    const run = () => h.ctx.waterfall('agent/pre-step', { agent, signal: new AbortController().signal }, async () => ({ kind: 'enter' }));
+    assert.equal((await run()).kind, 'enter');
+    member.revoke(); await assert.rejects(run(), /Expired/);
+    member.restore(); member.foreign(); await assert.rejects(run(), /identity mismatch/);
+    member.restore(); member.revokeDuringVerification(); await assert.rejects(run(), /Expired/);
+    member.restore(); assert.equal((await run()).kind, 'enter');
+    assert.ok(member.evidence.every(request => request.sessionId === agent.id));
+  } finally { await h.cleanup(); }
 });

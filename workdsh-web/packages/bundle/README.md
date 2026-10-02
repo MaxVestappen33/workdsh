@@ -1,17 +1,17 @@
 # 默认组合包
 
-> GitHub 模块制品与兼容矩阵：[发布说明](../../docs/RELEASES.md)。当前验证 Harness **0.1.6-alpha.2 Web**；内置 **0.1.2-rc.1** 的旧桌面入口缺失尚未修复，本包不包含该兼容修复。
+> GitHub 模块制品与兼容矩阵：[发布说明](https://github.com/techflag/workdsh/releases)。当前验证 Harness **0.1.6-alpha.2 Web**；内置 **0.1.2-rc.1** 的旧桌面入口缺失尚未修复，本包不包含该兼容修复。
 
 状态：**P0 实现中，含 P1 展示切片**。当前包含安装/生命周期探针、公共侧栏、全局技能目录和真实新任务入口；完整产品组合尚未实现。
 
 - 实现阶段：P0
-- 主任务：P0-02，详见 [开发计划](../../docs/PLAN.md)
+- 主任务：P0-02，详见 [需求与范围](../../docs/REQUIREMENTS.md)
 - 职责：组合各功能插件，预构建 tgz 可安装。
 - 边界：不实现 Agent loop 或私有启动器。
 
 ## 开发前阅读
 
-[规则](../../AGENTS.md)、[状态](../../docs/STATUS.md)、[契约](../../docs/CONTRACTS.md)、[团队设计](../../docs/TEAM-DESIGN.md)。
+[规则](../../AGENTS.md)、[验收要求](../../docs/ACCEPTANCE.md)、[契约](../../docs/CONTRACTS.md)、[团队设计](../../docs/CONTRACTS.md)。
 
 所有业务操作遵守服务端主体和组织上下文；页面与 Agent 工具调用相同领域服务。可选功能接入通过公开契约与生命周期注入。
 

@@ -1,28 +1,43 @@
 /** Minimal Electron carrier for the bundled WorkDSH release profile. */
 
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
 import {
-  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
   readFileSync,
-  readlinkSync,
-  symlinkSync,
-  unlinkSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { syncBundledCompatibility } from './runtime-compatibility.ts'
+import { connectionEntryHtml, enterpriseLoginHtml } from './connection-entry.ts'
+import { connectionPartition, enterpriseConnection, type DesktopConnection } from './connection-mode.ts'
+import { parseDeploymentConfig } from './deployment-config.ts'
+import { EnterpriseLogin, startEnterpriseAuthority, type Authority } from './enterprise-auth.ts'
+import { desktopEnterprisePatch, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher } from './local-runtime.ts'
+import { cleanOwnedProcessTree, stopOwnedProcess } from './owned-process.ts'
 
 const PROFILE_NAME = 'workdsh'
 const READY_PATTERN = /dsh web:\s+(http:\/\/127\.0\.0\.1:\d+\/?\?token=[^\s]+)/u
 
 let runtime: ChildProcess | undefined
+let runtimeStarting = false
 let window: BrowserWindow | undefined
 let quitting = false
+let switching = false
+let quitRequested = false
+let returnRequested = false
+let installer: ChildProcess | undefined
+const enterpriseWindows = new Set<BrowserWindow>()
+let enterprisePortal = process.env.WORKDSH_ENTERPRISE_PORTAL ?? ''
+let managedBackend: string | undefined
+let entrySurface = false
+let pendingConnection: ReturnType<typeof enterpriseConnection> | undefined
+let enterprise: { login: EnterpriseLogin, root: string, home: string, deviceId: string, authority?: Authority, authFile?: string } | undefined
+let verifyTimer: ReturnType<typeof setInterval> | undefined
+let verifying = false
 
 function bundledProfileDirectory(): string {
   const overridden = process.env.WORKDSH_BUNDLED_PROFILE
@@ -94,44 +109,7 @@ function startBrowserWorker(request: { port: number, profile: string }): void {
   })
 }
 
-function materializeRuntimeProfile(home: string): string {
-  const source = bundledProfileDirectory()
-  const target = join(home, 'profiles', PROFILE_NAME)
-  const marker = join(target, '.workdsh-desktop-runtime')
-  const sourceModules = join(source, 'node_modules')
-  const targetModules = join(target, 'node_modules')
-  if (!existsSync(sourceModules)) {
-    throw new Error(`Bundled WorkDSH runtime is incomplete: ${sourceModules}`)
-  }
-  const dsh = JSON.parse(readFileSync(join(sourceModules, '@deepseek-ai', 'dsh', 'package.json'), 'utf8')) as { version: string }
-  const bundle = JSON.parse(readFileSync(join(sourceModules, 'workdsh-bundle', 'package.json'), 'utf8')) as { version: string }
-  const runtimeVersion = `${bundle.version}+dsh-${dsh.version}`
-  mkdirSync(target, { recursive: true })
-  for (const name of ['package.json', 'cordis.yml', 'cordis.patch.yml', 'pnpm-lock.yaml', 'pnpm-workspace.yaml']) {
-    const from = join(source, name)
-    if (existsSync(from)) cpSync(from, join(target, name), { force: true })
-  }
-  const installedVersion = existsSync(marker) ? readFileSync(marker, 'utf8').trim() : undefined
-  if (existsSync(targetModules) && installedVersion !== runtimeVersion) {
-    const stat = lstatSync(targetModules)
-    if (!stat.isSymbolicLink()) {
-      throw new Error(
-        `WorkDSH cannot replace the existing unmanaged runtime at ${targetModules}. `
-        + 'Move that directory, then reopen WorkDSH.',
-      )
-    }
-    readlinkSync(targetModules)
-    unlinkSync(targetModules)
-  }
-  if (!existsSync(targetModules)) {
-    symlinkSync(sourceModules, targetModules, process.platform === 'win32' ? 'junction' : 'dir')
-  }
-  syncBundledCompatibility(source, target, runtimeVersion)
-  writeFileSync(marker, `${runtimeVersion}\n`, 'utf8')
-  return target
-}
-
-function openWindow(url: string): void {
+function openWindow(url: string, connection: DesktopConnection = { mode: 'personal' }, carrier = false): void {
   const icon = fileURLToPath(new URL('../build/app-icon.png', import.meta.url))
   window = new BrowserWindow({
     width: 1440,
@@ -146,72 +124,310 @@ function openWindow(url: string): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      ...(carrier ? { preload: fileURLToPath(new URL('./connection-preload.cjs', import.meta.url)) } : {}),
+      ...(connectionPartition(connection) === undefined ? {} : { partition: connectionPartition(connection)! }),
     },
   })
+  const page = window
+  entrySurface = carrier
   window.on('page-title-updated', event => {
     event.preventDefault()
-    window?.setTitle('WorkDSH')
+    page.setTitle('WorkDSH')
   })
+  if (connection.mode === 'enterprise') enterpriseWindows.add(page)
   window.webContents.setWindowOpenHandler(({ url: target }) => {
     if (target.startsWith('https://') || target.startsWith('http://')) void shell.openExternal(target)
     return { action: 'deny' }
   })
-  void window.loadURL(url).then(() => window?.show())
-  window.on('closed', () => { window = undefined })
+  if (!carrier) {
+    const origin = new URL(url).origin
+    page.webContents.on('will-navigate', (event, target) => {
+      try { if (new URL(target).origin === origin) return } catch { /* invalid navigation is refused */ }
+      event.preventDefault()
+    })
+  }
+  void page.loadURL(url).then(() => { if (!page.isDestroyed()) page.show() }).catch(() => {
+    if (!page.isDestroyed()) dialog.showErrorBox('无法打开工作区', '请检查企业地址、网络或本地运行状态。')
+  })
+  page.on('closed', () => { enterpriseWindows.delete(page); if (window === page) window = undefined })
 }
 
-function startRuntime(home: string, profileDir: string): void {
-  const cli = join(profileDir, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
-  if (!existsSync(cli)) throw new Error(`Bundled WorkDSH launcher is missing: ${cli}`)
+function runtimeEnvironment(home: string): NodeJS.ProcessEnv {
+  return {
+    ...(enterprise ? enterpriseEnvironment(enterprise.root, bundledNodeExecutable(), process.env) : process.env),
+    DSH_HOME: home,
+    DSH_AGENTS_HOME: enterprise ? join(enterprise.root, 'agents') : join(home, 'agents'),
+    DSH_BUNDLED_PRIMARY_RUNTIME: bundledPrimaryRuntime(),
+    DSH_ELECTRON_EXECUTABLE: process.execPath,
+    ELECTRON_RUN_AS_NODE: undefined,
+  }
+}
+
+async function officialCommand(home: string, args: string[], timeoutMs = 240_000): Promise<void> {
+  const executable = bundledNodeExecutable()
+  const launcher = officialLauncher(bundledProfileDirectory(), home, executable, join(bundledPrimaryRuntime(), 'dependencies', 'pnpm', 'bin', 'pnpm.cjs'))
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(executable, [launcher, ...args], { env: runtimeEnvironment(home), cwd: home, detached: process.platform !== 'win32', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+    installer = child
+    let settled = false
+    const timer = setTimeout(() => { void stopOwnedProcess(child).then(() => finish(new Error('官方插件安装超时，请检查网络后重试')), finish) }, timeoutMs)
+    function finish(error?: Error): void {
+      if (settled) return
+      settled = true; clearTimeout(timer)
+      if (installer === child) installer = undefined
+      void cleanOwnedProcessTree(child).then(() => error ? reject(error) : resolve(), reject)
+    }
+    child.stdout.on('data', () => {})
+    child.stderr.on('data', () => {})
+    child.once('error', () => finish(new Error('无法启动官方插件安装工具')))
+    child.once('exit', code => finish(quitRequested ? new Error('插件安装已取消') : code === 0 ? undefined : new Error(`官方插件操作失败 (${code})；请核对插件版本和网络`)))
+  })
+}
+
+async function prepareProfile(home: string): Promise<string> {
+  const source = bundledProfileDirectory()
+  const result = materializeRuntimeProfile(source, home)
+  if (result.changed) {
+    await officialCommand(home, ['plugin', '--profile', PROFILE_NAME, 'install'])
+    markProfileUpdated(source, result.profile)
+  }
+  return result.profile
+}
+
+function startRuntime(home: string, connection: DesktopConnection, patches: string[] = []): void {
+  if (quitRequested) throw new Error('启动已取消')
   const executable = bundledNodeExecutable()
   if (!existsSync(executable)) throw new Error(`Bundled Node.js runtime is missing: ${executable}`)
-  const child = spawn(executable, [cli, '--profile', PROFILE_NAME, '--no-open'], {
-    env: {
-      ...process.env,
-      DSH_HOME: home,
-      DSH_AGENTS_HOME: join(home, 'agents'),
-      DSH_BUNDLED_PRIMARY_RUNTIME: bundledPrimaryRuntime(),
-      DSH_ELECTRON_EXECUTABLE: process.execPath,
-      ELECTRON_RUN_AS_NODE: undefined,
-    },
+  const basePatch = join(bundledProfileDirectory(), 'cordis.patch.yml')
+  const layers = [...(existsSync(basePatch) ? [basePatch] : []), ...patches]
+  const launcher = officialHostLauncher(bundledProfileDirectory(), home, executable, join(bundledPrimaryRuntime(), 'dependencies', 'pnpm', 'bin', 'pnpm.cjs'), layers)
+  const child = spawn(executable, [launcher, '--no-open'], {
+    env: runtimeEnvironment(home),
+    cwd: enterprise ? join(enterprise.root, 'workspace') : home,
+    detached: process.platform !== 'win32',
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   })
   runtime = child
+  runtimeStarting = true
   let ready = false
   let output = ''
   const consume = (chunk: Buffer): void => {
     const text = chunk.toString('utf8')
-    process.stderr.write(text)
-    if (ready) return
+    process.stderr.write(text.replace(/\?token=[^\s]+/gu, '?token=[redacted]'))
+    if (ready || switching || runtime !== child) return
     output = `${output}${text}`.slice(-16_384)
     const match = READY_PATTERN.exec(output)
     if (match?.[1] !== undefined) {
       ready = true
-      openWindow(match[1])
+      runtimeStarting = false
+      openWindow(match[1], connection)
     }
   }
   child.stdout.on('data', consume)
-  child.stderr.on('data', chunk => process.stderr.write(chunk))
+  child.stderr.on('data', chunk => process.stderr.write(chunk.toString().replace(/\?token=[^\s]+/gu, '?token=[redacted]')))
   child.once('error', cause => {
-    if (!quitting) throw cause
+    if (!quitting && runtime === child) { dialog.showErrorBox('启动失败', cause.message); app.quit() }
   })
   child.once('exit', code => {
-    runtime = undefined
-    if (!quitting && code !== 0) app.quit()
+    if (runtime !== child) return
+    void cleanOwnedProcessTree(child).then(() => {
+      if (runtime === child) { runtime = undefined; runtimeStarting = false }
+      if (!quitting && !switching) {
+        dialog.showErrorBox('本机运行已停止', ready ? `官方 DSH 进程已退出 (${code})` : '官方 DSH 未能完成启动，请检查插件版本和 Profile 配置')
+        void returnToEntry()
+      }
+    }).catch(() => dialog.showErrorBox('进程清理失败', '本机工具进程停止尚未确认，请退出后检查。'))
   })
+  const readyTimeout = setTimeout(() => { if (!ready && runtime === child) { dialog.showErrorBox('启动超时', '官方 DSH 尚未就绪，已停止本机进程'); void returnToEntry() } }, 90_000)
+  child.once('exit', () => clearTimeout(readyTimeout))
 }
 
 function stopRuntime(): void {
   quitting = true
-  if (runtime !== undefined && runtime.exitCode === null) runtime.kill('SIGTERM')
+  if (runtime !== undefined) void cleanOwnedProcessTree(runtime)
   runtime = undefined
+  runtimeStarting = false
+}
+
+async function leaveWorkspace(): Promise<void> {
+  const page = window
+  if (verifyTimer) { clearInterval(verifyTimer); verifyTimer = undefined }
+  const session = enterprise
+  // Shut admission before waiting for any graceful process exit.
+  await session?.authority?.close()
+  session?.login.cancelRequests()
+  const child = runtime
+  if (child) { await stopOwnedProcess(child); if (runtime === child) { runtime = undefined; runtimeStarting = false } }
+  enterprise = undefined
+  if (session) {
+    if (session.authFile) rmSync(session.authFile, { force: true })
+    const revoked = await session.login.logout()
+    if (!revoked) dialog.showErrorBox('本机已退出', '本机企业运行和登录已停止；后台连接失败，远端撤销尚未确认。')
+    if (page && !page.isDestroyed()) {
+      await page.webContents.session.closeAllConnections()
+      await page.webContents.session.clearStorageData()
+      await page.webContents.session.clearCache()
+    }
+  }
+  for (const enterprisePage of [...enterpriseWindows]) if (!enterprisePage.isDestroyed()) enterprisePage.destroy()
+  enterpriseWindows.clear()
+  if (page && !page.isDestroyed()) page.destroy()
+  pendingConnection = undefined; entrySurface = false
+}
+
+async function returnToEntry(): Promise<void> {
+  if (quitting) return
+  if (switching) { returnRequested = true; return }
+  switching = true
+  try { await leaveWorkspace(); showConnectionEntry() }
+  catch (error) { dialog.showErrorBox('暂时无法切换', error instanceof Error ? error.message : '请稍后重试') }
+  finally { endSwitch() }
+}
+
+function endSwitch(): void {
+  switching = false
+  if (quitRequested) app.quit()
+  else if (returnRequested) { returnRequested = false; void returnToEntry() }
+}
+
+function savedBackendFile(): string { return join(app.getPath('userData'), 'enterprise-backend.json') }
+function rememberBackend(backend: string): void {
+  if (managedBackend) return
+  mkdirSync(app.getPath('userData'), { recursive: true })
+  writeFileSync(savedBackendFile(), JSON.stringify({ backend }), { mode: 0o600 })
+}
+
+function showConnectionEntry(): void {
+  openWindow('data:text/html;charset=utf-8,' + encodeURIComponent(connectionEntryHtml(enterprisePortal, managedBackend !== undefined)), { mode: 'personal' }, true)
+  connectEntryNavigation(window!)
+}
+
+function connectEntryNavigation(entry: BrowserWindow): void {
+  entry.webContents.on('will-navigate', (event, target) => {
+    event.preventDefault()
+    if (switching || window !== entry || !entrySurface) return
+    void (async () => {
+      switching = true
+      try {
+        const command = new URL(target)
+        if (command.protocol !== 'workdsh:') return
+        if (command.hostname === 'enterprise') {
+          if (enterprise) throw new Error('请先退出当前企业账号再修改后台地址')
+          const connection = enterpriseConnection(managedBackend ?? command.searchParams.get('portal') ?? '')
+          pendingConnection = connection
+          enterprisePortal = connection.portalOrigin
+          rememberBackend(enterprisePortal)
+          entry.destroy()
+          openWindow('data:text/html;charset=utf-8,' + encodeURIComponent(enterpriseLoginHtml(enterprisePortal)), { mode: 'personal' }, true)
+                  connectEntryNavigation(window!)
+        } else if (command.hostname === 'personal') {
+          if (enterprise) await leaveWorkspace()
+          const home = runtimeHome()
+          await prepareProfile(home)
+          entry.destroy(); entrySurface = false
+          startRuntime(home, { mode: 'personal' })
+        } else if (command.hostname === 'entry') {
+          await leaveWorkspace(); showConnectionEntry()
+        }
+      } catch (error) {
+        dialog.showErrorBox('无法进入', error instanceof Error ? error.message : '请检查入口配置')
+        if (!window) showConnectionEntry()
+      } finally { endSwitch() }
+    })()
+  })
+}
+
+function requireBundledEnterprisePlugin(home: string): void {
+  const profile = join(home, 'profiles', PROFILE_NAME)
+  const manifest = JSON.parse(readFileSync(join(profile, 'package.json'), 'utf8')) as { dependencies?: Record<string, string>, optionalDependencies?: Record<string, string>, peerDependencies?: Record<string, string> }
+  const name = 'workdsh-provider-identity-enterprise'
+  if ([manifest.dependencies, manifest.optionalDependencies, manifest.peerDependencies].some(dependencies => dependencies && Object.hasOwn(dependencies, name))
+    || lstatSync(join(profile, 'node_modules', name), { throwIfNoEntry: false })) {
+    throw new Error('企业账号由安装包内置提供，成员 Profile 不允许覆盖同名插件；请移除手动安装的企业账号插件后重试')
+  }
+  const pkg = join(bundledProfileDirectory(), 'node_modules', 'workdsh-provider-identity-enterprise', 'package.json')
+  if (!existsSync(pkg)) throw new Error('安装包缺少内置企业账号插件，请使用完整的当前版本安装包')
+  const installed = JSON.parse(readFileSync(pkg, 'utf8')) as { exports?: Record<string, unknown>, peerDependencies?: Record<string, string> }
+  const official = JSON.parse(readFileSync(join(bundledProfileDirectory(), 'node_modules', '@deepseek-ai', 'dsh', 'package.json'), 'utf8')) as { version: string }
+  if (installed.exports?.['./desktop'] === undefined || installed.peerDependencies?.['@deepseek-ai/dsh'] !== official.version) {
+    throw new Error('内置企业账号插件与官方 DSH 版本不一致，请更新完整安装包')
+  }
+}
+
+async function activateEnterprise(): Promise<void> {
+  const session = enterprise
+  if (!session) throw new Error('请重新登录企业账号')
+  await session.login.verify()
+  if (quitRequested) throw new Error('启动已取消')
+  requireBundledEnterprisePlugin(session.home)
+  const manifest = join(session.home, 'profiles', PROFILE_NAME, 'package.json')
+  const selected = JSON.parse(readFileSync(manifest, 'utf8')) as { dsh?: { profile?: { bundles?: string[] } } }
+  selected.dsh ??= {}; selected.dsh.profile ??= {}; selected.dsh.profile.bundles ??= []
+  const bundles = selected.dsh.profile.bundles
+  // Disable personal identity at composition, rather than allow an identity fallback.
+  selected.dsh.profile.bundles = bundles.filter(name => name !== 'workdsh-provider-identity-local')
+  if (!selected.dsh.profile.bundles.includes('workdsh-provider-identity-enterprise')) selected.dsh.profile.bundles.push('workdsh-provider-identity-enterprise')
+  writeFileSync(manifest, JSON.stringify(selected, null, 2) + '\n', { mode: 0o600 })
+  session.authority = await startEnterpriseAuthority(session.login, session.deviceId, () => { void returnToEntry() }, () => { void returnToEntry() })
+  // Record before writing either file, so a partial patch failure is also cleaned.
+  session.authFile = join(session.home, 'enterprise-auth.json')
+  const patch = desktopEnterprisePatch(session.home, session.authority, session.login.actor, session.login.backendUrl, session.deviceId)
+  session.authFile = patch.authFile
+  const connection: DesktopConnection = { mode: 'enterprise', portalOrigin: session.login.backendUrl, organizationId: session.login.actor.organizationId, principalId: session.login.actor.id }
+  window?.destroy(); entrySurface = false
+  startRuntime(session.home, connection, [patch.patch])
+  verifyTimer = setInterval(() => {
+    if (verifying || switching) return
+    verifying = true
+    void session.login.verify().catch(() => {
+      dialog.showErrorBox('企业认证不可用', '企业账号已过期、被撤销或后台不可达。本机企业运行将停止，请重新登录。')
+      void returnToEntry()
+    }).finally(() => { verifying = false })
+  }, 30_000)
+}
+
+function installLoginHandlers(): void {
+  ipcMain.handle('workdsh:enterprise-login', async (event, input: unknown) => {
+    if (!entrySurface || event.sender !== window?.webContents || switching || !pendingConnection || enterprise) return { error: '此页面不能发起企业登录' }
+    switching = true
+    let admittedLogin: EnterpriseLogin | undefined
+    try {
+      const value = input as { account?: unknown, password?: unknown }
+      if (!value || typeof value.account !== 'string' || typeof value.password !== 'string') throw new Error('请输入账号和密码')
+      const login = await EnterpriseLogin.login(pendingConnection.portalOrigin, value.account, value.password)
+      admittedLogin = login
+      const space = enterpriseSpace(app.getPath('userData'), login.backendUrl, login.actor)
+      enterprise = { login, ...space }
+      await prepareProfile(space.home)
+      await activateEnterprise()
+      return {}
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '企业登录失败'
+      if (enterprise) { await leaveWorkspace(); showConnectionEntry(); dialog.showErrorBox('无法进入企业', message) }
+      else if (admittedLogin && !await admittedLogin.logout()) dialog.showErrorBox('企业启动未完成', '本机未进入企业运行；后台连接失败，远端登录撤销尚未确认。')
+      return { error: message }
+    } finally { endSwitch() }
+  })
+}
+
+function installConnectionMenu(): void {
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    ...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : []),
+    { label: '工作区', submenu: [{ label: '退出并切换使用方式', click: () => { void returnToEntry() } }] },
+    { role: 'editMenu' }, { role: 'viewMenu' }, { role: 'windowMenu' },
+  ]))
 }
 
 const worker = browserWorkerRequest()
 if (worker !== undefined) {
   startBrowserWorker(worker)
 } else {
+const desktopUserData = process.env.WORKDSH_DESKTOP_USER_DATA
+if (desktopUserData) {
+  if (!isAbsolute(desktopUserData)) throw new Error('Desktop user data override must be absolute')
+  app.setPath('userData', desktopUserData)
+}
 app.setName('WorkDSH')
 if (!app.requestSingleInstanceLock()) {
   app.quit()
@@ -221,11 +437,29 @@ if (!app.requestSingleInstanceLock()) {
     if (window.isMinimized()) window.restore()
     window.focus()
   })
-  app.on('before-quit', stopRuntime)
+  app.on('before-quit', event => {
+    if (quitting) { stopRuntime(); return }
+    event.preventDefault()
+    if (switching) {
+      quitRequested = true
+      if (installer) void stopOwnedProcess(installer).catch(() => dialog.showErrorBox('进程清理失败', '插件安装进程停止尚未确认，请稍后检查。'))
+      return
+    }
+    switching = true
+    void leaveWorkspace().then(() => {
+      quitting = true
+      app.quit()
+    }).catch(error => {
+      dialog.showErrorBox('暂时无法退出', error instanceof Error ? error.message : '请稍后重试')
+    }).finally(() => { switching = false })
+  })
   app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') app.quit()
+    if (process.platform !== 'darwin' && !switching) app.quit()
   })
   app.on('activate', () => {
+    // The entry closes before the official Host is ready. Activating the app
+    // during that window must not relaunch and cancel the pending workspace.
+    if (switching || runtimeStarting || installer || quitting || quitRequested) return
     if (window === undefined) {
       // A healthy runtime always owns a window. Relaunching keeps the profile
       // lifecycle simple after the last macOS window was closed.
@@ -234,9 +468,17 @@ if (!app.requestSingleInstanceLock()) {
     }
   })
   void app.whenReady().then(() => {
-    const home = runtimeHome()
-    const profile = materializeRuntimeProfile(home)
-    startRuntime(home, profile)
+    const deploymentFile = join(process.resourcesPath ?? '', 'workdsh-config.json')
+    if (existsSync(deploymentFile)) {
+      managedBackend = parseDeploymentConfig(JSON.parse(readFileSync(deploymentFile, 'utf8'))).enterprise?.backendUrl
+      if (managedBackend) enterprisePortal = managedBackend
+    }
+    if (!enterprisePortal && existsSync(savedBackendFile())) {
+      try { enterprisePortal = enterpriseConnection(JSON.parse(readFileSync(savedBackendFile(), 'utf8')).backend).portalOrigin } catch { /* stale invalid preference is not trusted */ }
+    }
+    installConnectionMenu()
+    installLoginHandlers()
+    showConnectionEntry()
   }).catch(cause => {
     process.stderr.write(`WorkDSH failed to start: ${cause instanceof Error ? cause.stack ?? cause.message : String(cause)}\n`)
     app.quit()

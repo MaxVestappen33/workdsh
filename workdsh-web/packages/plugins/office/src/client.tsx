@@ -64,7 +64,8 @@ export function apply(ctx: Context): void {
       id: "workdsh-office",
       extensions: wordOnlyRelease ? ["docx"] : ["xlsx", "docx", "pptx"],
       title: () => "Office 浏览器编辑",
-      priority: "builtin",
+      binaryExtensions: wordOnlyRelease ? ["docx"] : ["xlsx", "docx", "pptx"],
+      priority: "extension",
       loading: "bytes-complete",
     }),
   );

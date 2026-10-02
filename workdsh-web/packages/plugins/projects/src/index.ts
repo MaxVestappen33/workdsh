@@ -8,12 +8,13 @@ import { registerDeliverableAttribution } from './runtime/deliverable-attributio
 export * from './services/project-manager.js'; export * from './storage/domain.js';
 export const name='workdsh-plugin-projects';
 export const inject=['storageDomain','connection','workdshIdentity'];
-export async function apply(ctx:Context){
+export interface ProjectOptions { readonly workspaceRoot?: string; }
+export async function apply(ctx:Context,options:ProjectOptions={}){
   await ctx.plugin(ProjectManager);
   await ctx.plugin({
     name:'workdsh-projects-integration',
     inject:[...inject,'systemPrompt','workdshProjects','workspaceController'],
-    apply(integration:Context){registerProjectConnection(integration);registerProjectContextInjection(integration);},
+    apply(integration:Context){registerProjectConnection(integration,options.workspaceRoot);registerProjectContextInjection(integration);},
   });
   await ctx.plugin({
     name:'workdsh-projects-attribution',

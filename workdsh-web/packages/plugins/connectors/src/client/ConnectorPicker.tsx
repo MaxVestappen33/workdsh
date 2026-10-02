@@ -15,10 +15,8 @@ const css = `${modalCss}
 
 type Props = PropsRuntime<'conversation.input.left'> & { management: ConnectorManagementClient; openManagement: () => void };
 
-export function ConnectorPicker({ management, openManagement, sessionId, useSession }: Props) {
+export function ConnectorPicker({ management, openManagement, sessionId }: Props) {
   const root = useRef<HTMLDivElement>(null);
-  const initializedBlankSession = useRef<string | undefined>(undefined);
-  const blankSession = useSession(snapshot => snapshot.blank);
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<readonly ConnectorSummary[]>([]);
   const [selectedIds, setSelectedIds] = useState<readonly string[]>([]);
@@ -32,20 +30,14 @@ export function ConnectorPicker({ management, openManagement, sessionId, useSess
     setRows(nextRows); setSelectedIds(nextSelection);
   }, [management, sessionId]);
   useEffect(() => {
-    const initialize = async () => {
-      if (blankSession && initializedBlankSession.current !== String(sessionId)) {
-        initializedBlankSession.current = String(sessionId);
-        setSelectedIds([]);
-        await management.setSelection(String(sessionId), []).catch(() => []);
-      }
-      await refresh();
-    };
-    void initialize();
+    // Missing persisted selection already means none; opening an existing blank
+    // Session must not erase the user's explicit choice.
+    void refresh();
     const timer = window.setInterval(() => { if (!document.hidden) void refresh(); }, 5_000);
     const visible = () => { if (!document.hidden) void refresh(); };
     document.addEventListener('visibilitychange', visible);
     return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', visible); };
-  }, [blankSession, management, refresh, sessionId]);
+  }, [management, refresh, sessionId]);
   useEffect(() => { if (open) void refresh(); }, [open, refresh]);
   useEffect(() => {
     if (!open) return;

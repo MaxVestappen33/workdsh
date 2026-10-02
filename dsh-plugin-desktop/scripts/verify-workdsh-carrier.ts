@@ -5,7 +5,9 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { extractFile, listPackage } from '@electron/asar'
 import { DSH_VERSION } from './runtime-version.mjs'
-import { PRODUCT_PACKAGES } from './workdsh-package-boundary.mjs'
+import { ENTERPRISE_PACKAGES, PRODUCT_PACKAGES, RELEASE_PACKAGES } from './workdsh-package-boundary.mjs'
+import { verifyDefaultComposition, verifyDefaultProfile, verifyInstalledDshVersions, verifyOfficialWebPackages, verifyProfileRelease, verifyReleaseArchives } from './verify-profile-release.mjs'
+import { parseDeploymentConfig } from '../src/deployment-config.ts'
 
 interface PackContext {
   appOutDir: string
@@ -22,9 +24,14 @@ export async function afterPack(context: PackContext): Promise<void> {
     ? join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`, 'Contents', 'Resources')
     : join(context.appOutDir, 'resources')
   const archive = join(resources, 'app.asar')
+  const packagedDeployment = readFileSync(join(resources, 'workdsh-config.json'))
+  const generatedDeployment = readFileSync(fileURLToPath(new URL('../build/deployment/workdsh-config.json', import.meta.url)))
+  parseDeploymentConfig(JSON.parse(packagedDeployment.toString('utf8')) as unknown)
+  if (!packagedDeployment.equals(generatedDeployment)) throw new Error('Packaged deployment configuration differs from this build')
   if (!existsSync(archive)) throw new Error(`Missing Electron carrier: ${archive}`)
   const entries = listPackage(archive, { isPack: false }).map(normalizeAsarEntry)
   if (!entries.includes('lib/workdsh-main.js')) throw new Error('Electron carrier has no WorkDSH entry point')
+  if (!entries.includes('lib/connection-preload.cjs')) throw new Error('Electron carrier has no isolated connection preload')
   if (entries.some(entry => entry.startsWith('node_modules/'))) {
     throw new Error('Electron carrier contains duplicate node_modules; Harness must come only from the bundled Profile')
   }
@@ -42,6 +49,7 @@ export async function afterPack(context: PackContext): Promise<void> {
   }
   const primary = JSON.parse(readFileSync(join(runtime, 'primary-runtime', 'runtime.json'), 'utf8')) as {
     desktopVersion?: string
+    pnpm?: string
   }
   if (primary.desktopVersion !== DSH_VERSION) {
     throw new Error(`Bundled primary runtime is ${String(primary.desktopVersion)}, expected ${DSH_VERSION}`)
@@ -49,26 +57,40 @@ export async function afterPack(context: PackContext): Promise<void> {
   const profile = join(runtime, 'profiles', 'workdsh')
   const cache = join(runtime, 'package-cache')
   const release = JSON.parse(readFileSync(join(cache, 'release-manifest.json'), 'utf8')) as {
-    packages: Array<{ name: string; filename: string }>
+    packages: Array<{ name: string; version: string; filename: string; sha256: string }>
   }
+  verifyProfileRelease(release, DSH_VERSION, RELEASE_PACKAGES)
+  verifyReleaseArchives(release, cache)
+  verifyOfficialWebPackages(release, profile)
   const profileManifest = JSON.parse(readFileSync(join(profile, 'package.json'), 'utf8')) as {
     dependencies?: Record<string, string>
     optionalDependencies?: Record<string, string>
     dsh?: { profile?: { bundles?: string[] } }
+  }
+  verifyDefaultProfile(profileManifest)
+  const installation = JSON.parse(readFileSync(join(profile, 'profile-installation.json'), 'utf8')) as { dependencies?: Record<string, string>; peerDependencies?: Record<string, string>; optionalDependencies?: Record<string, string> }
+  if (JSON.stringify(installation.dependencies) !== JSON.stringify(profileManifest.dependencies) || installation.optionalDependencies !== undefined) {
+    throw new Error('Installation anchor is not derived from the one default Profile manifest')
+  }
+  for (const name of Object.keys(profileManifest.optionalDependencies ?? {})) {
+    const version = JSON.parse(readFileSync(join(profile, 'node_modules', name, 'package.json'), 'utf8')).version as string
+    if (installation.peerDependencies?.[name] !== version) throw new Error('Installation infrastructure/enterprise peer differs from installed archive: ' + name)
   }
   const productPackages = new Set(PRODUCT_PACKAGES)
   const selected = profileManifest.dsh?.profile?.bundles ?? []
   const selectedWorkdsh = selected.filter(name => name.startsWith('workdsh-'))
   const directWorkdsh = Object.keys(profileManifest.dependencies ?? {}).filter(name => name.startsWith('workdsh-'))
   if (selectedWorkdsh.length !== productPackages.size || selectedWorkdsh.some(name => !productPackages.has(name))) {
-    throw new Error(`Desktop must select exactly five WorkDSH product bundles, found ${selectedWorkdsh.join(', ')}`)
+    throw new Error(`Desktop must select exactly four WorkDSH product bundles, found ${selectedWorkdsh.join(', ')}`)
   }
   if (directWorkdsh.length !== productPackages.size || directWorkdsh.some(name => !productPackages.has(name))) {
-    throw new Error(`Desktop must directly install exactly five WorkDSH product bundles, found ${directWorkdsh.join(', ')}`)
+    throw new Error(`Desktop must directly install exactly four WorkDSH product bundles, found ${directWorkdsh.join(', ')}`)
   }
   const lockfile = readFileSync(join(profile, 'pnpm-lock.yaml'), 'utf8')
   for (const item of release.packages) {
     if (!existsSync(join(cache, item.filename))) throw new Error(`Bundled plugin archive is missing: ${item.filename}`)
+    const installed = JSON.parse(readFileSync(join(profile, 'node_modules', item.name, 'package.json'), 'utf8')) as { version?: string; exports?: Record<string, unknown>; peerDependencies?: Record<string, string> }
+    if (installed.version !== item.version) throw new Error(`Bundled owned version mismatch: ${item.name}`)
     if (!productPackages.has(item.name) && Object.hasOwn(profileManifest.dependencies ?? {}, item.name)) {
       throw new Error(`Internal WorkDSH service is a direct product dependency: ${item.name}`)
     }
@@ -76,9 +98,13 @@ export async function afterPack(context: PackContext): Promise<void> {
     if (dependencies?.[item.name]?.replaceAll('\\', '/') !== `file:../../package-cache/${item.filename}`) {
       throw new Error(`Bundled ${item.name} must use a portable archive path in its expected dependency section`)
     }
+    if (ENTERPRISE_PACKAGES.includes(item.name) && (!installed.exports?.['./desktop'] || installed.peerDependencies?.['@deepseek-ai/dsh'] !== DSH_VERSION)) {
+      throw new Error(`Shipped ${item.name} has no compatible Desktop enterprise entry`)
+    }
   }
   const patch = readFileSync(join(profile, 'cordis.patch.yml'), 'utf8')
-  for (const name of release.packages.map(item => item.name).filter(name => !productPackages.has(name))) {
+  verifyDefaultComposition(patch)
+  for (const name of release.packages.map(item => item.name).filter(name => !productPackages.has(name) && !ENTERPRISE_PACKAGES.includes(name))) {
     if (name === 'workdsh-provider-browser-session') continue // inserted by the bundle patch
     if (!patch.includes(`name: ${name}`)) throw new Error(`Internal WorkDSH service is missing from Profile patch: ${name}`)
   }
@@ -87,15 +113,15 @@ export async function afterPack(context: PackContext): Promise<void> {
   }
   const packages = join(runtime, 'profiles', 'workdsh', 'node_modules', '@deepseek-ai')
   const names = readdirSync(packages).filter(name => name === 'dsh' || name.startsWith('dsh-'))
-  if (names.length === 0) throw new Error('Bundled WorkDSH Profile has no Harness packages')
-  for (const name of names) {
-    const pkg = JSON.parse(readFileSync(join(packages, name, 'package.json'), 'utf8')) as { version?: string }
-    if (pkg.version !== DSH_VERSION) {
-      throw new Error(`Bundled ${name} is ${String(pkg.version)}, expected ${DSH_VERSION}`)
-    }
-  }
+  const instances = verifyInstalledDshVersions(profile, DSH_VERSION)
   const node = join(runtime, 'primary-runtime', 'dependencies', 'node', 'bin',
     context.electronPlatformName === 'win32' ? 'node.exe' : 'node')
+  const pnpm = join(runtime, 'primary-runtime', 'dependencies', 'pnpm', 'bin', 'pnpm.cjs')
+  if (primary.pnpm !== '11.7.0' || !existsSync(pnpm)) throw new Error('Packaged official pnpm CLI is missing or has another version')
+  const packageManager = spawnSync(node, [pnpm, '--version'], { encoding: 'utf8', timeout: 30_000 })
+  if (packageManager.error || packageManager.status !== 0 || packageManager.stdout.trim() !== primary.pnpm) {
+    throw new Error('Packaged official pnpm JavaScript CLI cannot run with its bundled Node')
+  }
   const inventoryCheck = fileURLToPath(new URL('./verify-product-plugin-inventory.mjs', import.meta.url))
   const inventory = spawnSync(node, [inventoryCheck, runtime], {
     encoding: 'utf8',
@@ -105,7 +131,7 @@ export async function afterPack(context: PackContext): Promise<void> {
     throw new Error(`Packaged WorkDSH plugin inventory check failed: ${String(inventory.error ?? inventory.stderr)}`)
   }
   process.stdout.write(inventory.stdout)
-  console.log(`Verified thin Electron carrier and ${names.length} Harness ${DSH_VERSION} packages`)
+  console.log(`Verified thin Electron carrier and ${names.length} root / ${instances} total Harness ${DSH_VERSION} package instances`)
 }
 
 export default afterPack

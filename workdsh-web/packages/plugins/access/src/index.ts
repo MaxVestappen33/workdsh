@@ -383,11 +383,15 @@ export interface ToolAccessBridgeConfig {
   readonly isolation?: RuntimeBindingRequest['isolation'];
   /** Personal profiles may bind an unowned Session on its first official Agent tool call. */
   readonly autoBindPersonalSessions?: boolean;
+  /** Opt-in only for a dedicated, fixed-member Host; never a shared multi-user runtime. */
+  readonly autoBindFixedMemberSessions?: boolean;
 }
 
 export interface SessionAccessBridgeConfig {
   readonly runtimeId?: string;
   readonly isolation?: RuntimeBindingRequest['isolation'];
+  /** Only a fixed-member process may adopt native Sessions from its own controller. */
+  readonly autoBindFixedMemberSessions?: boolean;
 }
 
 /** Trusted Host ingress for WorkDSH Session creation and resume. */
@@ -396,7 +400,7 @@ export class SessionAccessBridge extends Service {
   private readonly runtimeId: string;
   private readonly isolation: RuntimeBindingRequest['isolation'];
 
-  constructor(ctx: Context, config: SessionAccessBridgeConfig = {}) {
+  constructor(ctx: Context, private readonly config: SessionAccessBridgeConfig = {}) {
     super(ctx, 'workdshSessionAccess');
     this.runtimeId = config.runtimeId ?? `workdsh-session-runtime-${randomUUID()}`;
     this.isolation = config.isolation ?? 'local-trusted';
@@ -437,6 +441,59 @@ export class SessionAccessBridge extends Service {
     } catch (error) {
       await this.audit(actor, 'session.create', 'failed', errorCode(error, 'session/create-failed'));
       throw error;
+    }
+  }
+
+  /** Private enterprise Session reads never inherit admin or material-sharing grants. */
+  async inspect(sessionId: SessionId, signal?: AbortSignal): Promise<Awaited<ReturnType<Context['sessionController']['inspect']>>> {
+    signal?.throwIfAborted();
+    const actor = await this.ctx.workdshIdentity.resolve({ sessionId: String(sessionId) }, signal);
+    const personal = this.ctx.workdshIdentity.profile().organization.kind === 'personal';
+    const unbound = !this.ctx.workdshAccess.sessionOwner(String(sessionId));
+    if (!personal && !(unbound && this.canBindFixedMemberSession(actor))) {
+      this.assertPrivateSessionOwner(actor, String(sessionId));
+    }
+    const result = await this.ctx.sessionController.inspect(sessionId, signal);
+    signal?.throwIfAborted();
+    if (!personal) {
+      const current = await this.ctx.workdshIdentity.resolve({ sessionId: String(sessionId) }, signal);
+      if (current.principalId !== actor.principalId || current.organizationId !== actor.organizationId) throw new ApiSessionNotFound('Session not found');
+      if (unbound) {
+        if (!this.canBindFixedMemberSession(current)) throw new ApiSessionNotFound('Session not found');
+        await this.ctx.workdshAccess.bindSession(current, { sessionId: String(sessionId) }, signal);
+      }
+      this.assertPrivateSessionOwner(current, String(sessionId));
+    }
+    return result;
+  }
+
+  async list(request: Parameters<Context['sessionController']['list']>[0], signal: AbortSignal): Promise<Awaited<ReturnType<Context['sessionController']['list']>>> {
+    signal.throwIfAborted();
+    const actor = await this.ctx.workdshIdentity.resolve(undefined, signal);
+    const personal = this.ctx.workdshIdentity.profile().organization.kind === 'personal';
+    const result = await this.ctx.sessionController.list(request, signal);
+    signal.throwIfAborted();
+    if (personal) return result;
+    const current = await this.ctx.workdshIdentity.resolve(undefined, signal);
+    if (current.principalId !== actor.principalId || current.organizationId !== actor.organizationId) throw new ApiSessionNotFound('Session not found');
+    return { items: result.items.filter(item => {
+      const owner = this.ctx.workdshAccess.sessionOwner(String(item.sessionId));
+      return owner?.organizationId === actor.organizationId && owner.ownerPrincipalId === actor.principalId;
+    }) };
+  }
+
+  private canBindFixedMemberSession(actor: ActorContext): boolean {
+    if (!this.config.autoBindFixedMemberSessions || !['workdsh-enterprise-process', 'workdsh-enterprise-desktop'].includes(this.ctx.workdshIdentity.id)) return false;
+    const profile = this.ctx.workdshIdentity.profile();
+    return profile.organization.kind === 'team'
+      && profile.principalId === actor.principalId
+      && profile.organization.id === actor.organizationId;
+  }
+
+  private assertPrivateSessionOwner(actor: ActorContext, sessionId: string): void {
+    const owner = this.ctx.workdshAccess.sessionOwner(sessionId);
+    if (!owner || owner.organizationId !== actor.organizationId || owner.ownerPrincipalId !== actor.principalId) {
+      throw new ApiSessionNotFound('Session not found');
     }
   }
 
@@ -499,6 +556,7 @@ export class ToolAccessBridge extends Service {
   private readonly runtimeId: string;
   private readonly isolation: RuntimeBindingRequest['isolation'];
   private readonly autoBindPersonalSessions: boolean;
+  private readonly autoBindFixedMemberSessions: boolean;
   private readonly authorized = new Map<ToolExecutionToken, ToolAuthorizationState>();
   private resultAuditTail: Promise<void> = Promise.resolve();
 
@@ -507,6 +565,7 @@ export class ToolAccessBridge extends Service {
     this.runtimeId = config.runtimeId ?? `workdsh-runtime-${randomUUID()}`;
     this.isolation = config.isolation ?? 'local-trusted';
     this.autoBindPersonalSessions = config.autoBindPersonalSessions ?? true;
+    this.autoBindFixedMemberSessions = config.autoBindFixedMemberSessions ?? false;
     ctx.on('tools/pre-execute', async (exec, next) => this.authorizeTool(exec, next));
     ctx.on('tools/result', (exec, result) => {
       this.observeResult(exec, result);
@@ -529,8 +588,7 @@ export class ToolAccessBridge extends Service {
       actor = await this.ctx.workdshIdentity.resolve({ sessionId }, exec.signal);
       if (!this.ctx.workdshAccess.sessionOwner(sessionId)) {
         const profile = this.ctx.workdshIdentity.profile();
-        if (!this.autoBindPersonalSessions
-          || profile.organization.kind !== 'personal'
+        if (!(this.autoBindFixedMemberSessions || (this.autoBindPersonalSessions && profile.organization.kind === 'personal'))
           || profile.principalId !== actor.principalId
           || profile.organization.id !== actor.organizationId) {
           throw new GovernanceContractError('access/runtime-unbound', 'Session has no trusted owner binding.');

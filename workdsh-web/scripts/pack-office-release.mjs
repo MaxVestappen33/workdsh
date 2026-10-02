@@ -5,6 +5,7 @@ import {createHash} from "node:crypto";
 import {fileURLToPath} from "node:url";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const project = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
 const plugin = join(root, "packages/plugins/office");
 const destination = join(root, ".artifacts/office-release");
 await rm(destination, {recursive: true, force: true});
@@ -32,7 +33,7 @@ await writeFile(join(destination, "release-manifest.json"), JSON.stringify({
   name: manifest.name,
   version: manifest.version,
   scope: manifest.workdshRelease.scope,
-  harness: "0.1.7-rc.2",
+  harness: project.devDependencies['@deepseek-ai/dsh'],
   filename,
   sha256,
   bytes: bytes.length,

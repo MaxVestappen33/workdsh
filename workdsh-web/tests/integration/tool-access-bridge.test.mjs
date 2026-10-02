@@ -28,14 +28,14 @@ const membershipDirectory = new Map([
   }],
 ]);
 
-function createIdentity(selectedBySession) {
+function createIdentity(selectedBySession, kind = 'personal') {
   let request = 0;
   return {
     id: 'test-session-identity',
     profile() {
       return {
         principalId: 'owner-a', principalKind: 'human', resolvedBy: this.id,
-        organization: { id: 'personal-owner', kind: 'personal', name: 'Owner profile', revision: 'organization-1' },
+        organization: { id: 'personal-owner', kind, name: 'Owner profile', revision: 'organization-1' },
         membership: membershipDirectory.get('personal-owner:owner-a'),
       };
     },
@@ -84,7 +84,7 @@ async function boot(root, selectedBySession, config = {}) {
   const ctx = new Context();
   try {
     ctx.provide('systemPrompt', { tools() {}, section() {}, getSectionOrder() { return 0; } });
-    ctx.provide('workdshIdentity', createIdentity(selectedBySession));
+    ctx.provide('workdshIdentity', createIdentity(selectedBySession, config.identityKind));
     await ctx.plugin(Storage);
     await ctx.plugin(JsonStorage, { root });
     await ctx.plugin(StorageDomain, { backend: 'json' });
@@ -265,5 +265,104 @@ test('trusted Session ingress binds before create, preserves retry ownership and
   } finally {
     if (ctx) await ctx.fiber.dispose();
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+
+test('fixed-member team Host explicitly binds native Sessions but rejects another member', async () => {
+  const root=await mkdtemp(join(tmpdir(),'workdsh-fixed-member-'));let ctx;
+  const selected=new Map([['native-owner',['owner-a','personal-owner']],['native-other',['member-a','personal-owner']]]);
+  try {
+    ctx=await boot(root,selected,{identityKind:'team'});registerFixtures(ctx,{executed:0});
+    assert.equal((await execute(ctx,'native-owner')).isError,true);
+    await ctx.fiber.dispose();ctx=undefined;
+    ctx=await boot(root,selected,{identityKind:'team',autoBindFixedMemberSessions:true});registerFixtures(ctx,{executed:0});
+    assert.equal((await execute(ctx,'native-owner')).isError,false);
+    assert.equal(ctx.workdshAccess.sessionOwner('native-owner').ownerPrincipalId,'owner-a');
+    assert.equal((await execute(ctx,'native-other')).isError,true);
+    assert.equal(ctx.workdshAccess.sessionOwner('native-other'),undefined);
+  }finally{if(ctx)await ctx.fiber.dispose();await rm(root,{recursive:true,force:true});}
+});
+
+test('enterprise Session listing and cold reads hide foreign and unbound sessions even for organization owner', async()=>{
+ const root=await mkdtemp(join(tmpdir(),'workdsh-session-read-'));let ctx;
+ const selected=new Map();const inspected=[];
+ try {
+  ctx=await boot(root,selected,{identityKind:'team',autoBindPersonalSessions:false});
+  const actor=id=>({principalId:id,organizationId:'personal-owner',requestId:'read-'+id,resolvedBy:'test'});
+  await ctx.workdshAccess.bindSession(actor('owner-a'),{sessionId:'session-own'});
+  await ctx.workdshAccess.bindSession(actor('member-a'),{sessionId:'session-foreign'});
+  ctx.provide('sessionController',{
+   async list(){return {items:['session-own','session-foreign','session-legacy'].map(sessionId=>({sessionId,title:sessionId}))}},
+   async inspect(sessionId){inspected.push(sessionId);return {meta:{id:sessionId},events:[]}},
+  });
+  await ctx.plugin(SessionAccessBridge,{runtimeId:'enterprise-read'});
+  assert.deepEqual((await ctx.workdshSessionAccess.list({},new AbortController().signal)).items.map(x=>x.sessionId),['session-own']);
+  await ctx.workdshSessionAccess.inspect('session-own');
+  for(const id of ['session-foreign','session-legacy','session-missing'])await assert.rejects(()=>ctx.workdshSessionAccess.inspect(id),ApiSessionNotFound);
+  assert.deepEqual(inspected,['session-own'],'denial must happen before native persistence reads');
+  selected.set('session-own',['owner-b','organization-b']);
+  await assert.rejects(()=>ctx.workdshSessionAccess.inspect('session-own'),ApiSessionNotFound);
+ }finally{if(ctx)await ctx.fiber.dispose();await rm(root,{recursive:true,force:true})}
+});
+
+test('personal Session reads retain native listing and unbound historical inspection',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'workdsh-personal-read-'));let ctx;
+ try{ctx=await boot(root,new Map());const value={items:[{sessionId:'legacy-personal'}]},history={meta:{id:'legacy-personal'},events:[]};
+ ctx.provide('sessionController',{async list(){return value},async inspect(){return history}});
+ await ctx.plugin(SessionAccessBridge);
+ assert.equal(await ctx.workdshSessionAccess.list({},new AbortController().signal),value);
+ assert.equal(await ctx.workdshSessionAccess.inspect('legacy-personal'),history);
+ }finally{if(ctx)await ctx.fiber.dispose();await rm(root,{recursive:true,force:true})}
+});
+
+
+test('fixed-member Session inspection binds a native empty Session and rejects foreign, missing and revoked reads', async () => {
+ for (const fixedIdentityId of ['workdsh-enterprise-process', 'workdsh-enterprise-desktop']) {
+  const root = await mkdtemp(join(tmpdir(), 'workdsh-native-session-read-'));
+  const selected = new Map(); const inspected = []; let ctx; let active = true;
+  try {
+    ctx = await boot(root, selected, { identityKind: 'team', autoBindPersonalSessions: false });
+    ctx.workdshIdentity.id = fixedIdentityId;
+    const resolve = ctx.workdshIdentity.resolve.bind(ctx.workdshIdentity);
+    ctx.workdshIdentity.resolve = async (...args) => { if (!active) throw Error('member revoked'); return resolve(...args); };
+    await ctx.workdshAccess.bindSession({ principalId: 'member-a', organizationId: 'personal-owner', requestId: 'foreign', resolvedBy: 'test' }, { sessionId: 'foreign' });
+    ctx.provide('sessionController', { async inspect(sessionId) {
+      inspected.push(sessionId);
+      if (sessionId === 'missing') throw new ApiSessionNotFound('missing');
+      if (sessionId === 'revoked-during-read') active = false;
+      if (sessionId === 'changed-during-read') selected.set(sessionId, ['member-a', 'personal-owner']);
+      return { meta: { id: sessionId }, events: [] };
+    } });
+    await ctx.plugin(SessionAccessBridge, { autoBindFixedMemberSessions: true });
+    assert.equal((await ctx.workdshSessionAccess.inspect('new-empty')).events.length, 0);
+    assert.equal(ctx.workdshAccess.sessionOwner('new-empty').ownerPrincipalId, 'owner-a');
+    await assert.rejects(ctx.workdshSessionAccess.inspect('foreign'), ApiSessionNotFound);
+    assert.deepEqual(inspected, ['new-empty'], 'foreign ownership is refused before loading history');
+    await assert.rejects(ctx.workdshSessionAccess.inspect('missing'), ApiSessionNotFound);
+    assert.equal(ctx.workdshAccess.sessionOwner('missing'), undefined);
+    selected.set('wrong-member', ['member-a', 'personal-owner']);
+    await assert.rejects(ctx.workdshSessionAccess.inspect('wrong-member'), ApiSessionNotFound);
+    assert.ok(!inspected.includes('wrong-member'));
+    await assert.rejects(ctx.workdshSessionAccess.inspect('changed-during-read'), ApiSessionNotFound);
+    assert.equal(ctx.workdshAccess.sessionOwner('changed-during-read'), undefined);
+    await assert.rejects(ctx.workdshSessionAccess.inspect('revoked-during-read'), /member revoked/);
+    assert.equal(ctx.workdshAccess.sessionOwner('revoked-during-read'), undefined);
+    await assert.rejects(ctx.workdshSessionAccess.inspect('new-empty'), /member revoked/);
+  } finally { if (ctx) await ctx.fiber.dispose(); await rm(root, { recursive: true, force: true }); }
+ }
+});
+
+test('native Session adoption requires both an explicit switch and a trusted fixed-member identity provider', async () => {
+  for (const [processIdentity, enabled] of [[true, false], [false, true]]) {
+    const root = await mkdtemp(join(tmpdir(), 'workdsh-session-bind-opt-in-')); let ctx; let reads = 0;
+    try {
+      ctx = await boot(root, new Map(), { identityKind: 'team', autoBindPersonalSessions: false });
+      if (processIdentity) ctx.workdshIdentity.id = 'workdsh-enterprise-process';
+      ctx.provide('sessionController', { async inspect() { reads++; return { events: [] }; } });
+      await ctx.plugin(SessionAccessBridge, { autoBindFixedMemberSessions: enabled });
+      await assert.rejects(ctx.workdshSessionAccess.inspect('unbound'), ApiSessionNotFound);
+      assert.equal(reads, 0); assert.equal(ctx.workdshAccess.sessionOwner('unbound'), undefined);
+    } finally { if (ctx) await ctx.fiber.dispose(); await rm(root, { recursive: true, force: true }); }
   }
 });

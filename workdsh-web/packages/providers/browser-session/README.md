@@ -8,4 +8,4 @@
 
 模块已有基于官方 `sidebar.right.pane.tab` 的 Client 组件，按当前 Session 拉取同页 JPEG 并把点击、键盘和滚动送回 Host；仅在浏览器工具实际使用后尝试自动打开。组件已构建，但尚未装入默认 bundle，也未做浏览器实机视觉/交互验收。用户明确要求 Desktop 不额外打包浏览器。Desktop 已有隔离 worker 入口，可复用 Electron 自带 Chromium；本模块新增 `electronExecutable` 路径按 Session 启动该 worker，并保留 Web 的外部浏览器路径。开发态 Electron worker 与 Playwright 连通、导航和点击探针通过，安装包尚未验证。正式接入前还须验证取消/恢复、并发工具调用、真实 HTTP Connection 准入、不同视口与键盘输入，以及 Windows/macOS 安装包内的 worker 启动。现阶段不得将其描述为已完成的浏览器侧栏体验。
 
-官方能力复用记录与探针结果见 [rc.2 升级记录](../../../docs/DSH-0.1.7-UPGRADE-PLAN.md)。
+当前源码精确锁定官方 DSH `0.2.0-rc.2` / Cordis `4.0.4`；当前实际运行与验收见[验收要求](../../../docs/ACCEPTANCE.md)。上述旧探针不能代替本轮源码、浏览器实机和 Desktop 安装包验收。

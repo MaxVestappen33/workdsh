@@ -21,9 +21,9 @@ Word 预览版 `0.1.0-alpha.2`（表格/图片增量；历史文本预览版为 
 
 新原生文档：AI 调用 `content_open` 新建即自动打开当前会话右侧、`content_edit` 分批提交后页面自动更新；`content_present` 仅用于再次展示；用户点击“编辑”后直接在正文修改，完成编辑后 AI 用 `content_read` 获取最新内容。`content_capabilities` 列出已实现操作。Host/页面共享有修订和幂等收据的工作副本，不需要子智能体或外部 MCP。只接受可信 Session 绑定及同工作区授权。
 
-普通文档写作由本插件通过 Harness `systemPrompt.section` 提供默认实时写作引导：先打开文档再分批写入，已有编辑器提供默认字体/层级样式；不替换专家 persona 或修改用户 Skill。短报告真实模型验证及范围见[U2证据](../../../docs/evidence/office-natural-writing-u2.md)。
+普通文档写作由本插件通过 Harness `systemPrompt.section` 提供默认实时写作引导：先打开文档再分批写入，已有编辑器提供默认字体/层级样式；不替换专家 persona 或修改用户 Skill。短报告真实模型验证及范围见U2证据。
 
-早期 U1 尚未接入 DOCX 导入与导出；当前候选已经提供浏览器 DOCX 工作副本导入和 `content_export`，保留已支持的文字、表格及图片。完整文件保真仍未完成。早期范围见[U1 历史证据](../../../docs/evidence/office-live-u1.md)。
+早期 U1 尚未接入 DOCX 导入与导出；当前候选已经提供浏览器 DOCX 工作副本导入和 `content_export`，保留已支持的文字、表格及图片。完整文件保真仍未完成。早期范围见U1 历史证据。
 
 | 格式 | 当前能力 | 当前限制 |
 | --- | --- | --- |
@@ -63,7 +63,7 @@ corepack pnpm preview:install
 
 ### 原生文档常用排版
 
-支持字体/字号、颜色/高亮、标题1—6、对齐、行距/缩进、项目符号与编号列表（最多六级）、撤销重做、全选/清除格式、段内文字查找替换、缩放。人工和 AI 使用同一套语义样式，保存重开与浏览器 DOCX 下载保留上述格式。候选 alpha.2 增加表格行列、合并拆分、列宽拖动与图片上传/缩放/对齐，工具栏单行横向滚动；不等同于 Word 完整功能，页眉页脚、分页和完整 DOCX 保真迁移尚待后续。见[工具栏证据](../../../docs/evidence/office-document-toolbar-u2.md)。
+支持字体/字号、颜色/高亮、标题1—6、对齐、行距/缩进、项目符号与编号列表（最多六级）、撤销重做、全选/清除格式、段内文字查找替换、缩放。人工和 AI 使用同一套语义样式，保存重开与浏览器 DOCX 下载保留上述格式。候选 alpha.2 增加表格行列、合并拆分、列宽拖动与图片上传/缩放/对齐，工具栏单行横向滚动；不等同于 Word 完整功能，页眉页脚、分页和完整 DOCX 保真迁移尚待后续。见工具栏证据。
 
 工具栏现已复用 Tiptap 官方 MIT UI Components 的 Toolbar/ToolbarGroup、Button 和 SVG（锁定来源及适配差异见 src/live/tiptap-ui/SOURCE.md），44px 单行，窄栏横向滚动。未引入收费 DOCX 模板；文档格式操作继续使用同一实时保存服务。
 
@@ -138,3 +138,5 @@ Full experimental Office package for Harness 0.1.6-alpha.1 Web. Includes the cur
 ### 长任务导出与背景资源
 
 超过96KiB的导出文件统一分块经过官方bash审批/沙箱链，不将整个PPTX Base64放入单个命令参数。最终核对SHA并原子落盘，拒绝覆盖冲突目标；中途失败不展示成功交付卡片。保存基于当前PPTX重新绑定已知blob媒体句柄，再判断页面变更，避免临时URL变化触发背景重复打包。未知媒体引用应重新读取或提供实际嵌入图片。
+
+文件预览以官方 extension 优先级注册，Office 二进制格式明确列入 binaryExtensions；已安装插件时默认使用浏览器编辑，官方内置预览仍可在渲染器选项中选择。文件授权读取与会话隔离由官方 owner 保持。

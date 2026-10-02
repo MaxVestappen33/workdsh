@@ -26,7 +26,9 @@ const withPptSkills=process.argv.includes("--with-ppt-skills");
 const packageRoundtrip = process.argv.includes("--package-roundtrip");
 const inputOnly = process.argv.includes("--input-only") || packageRoundtrip;
 const realRich = process.argv.includes("--real-rich");
-const realModel = process.argv.includes("--real-model") || realRich;
+const realOnly = process.argv.includes("--real-only");
+const realModel = process.argv.includes("--real-model") || realRich || realOnly;
+if (realOnly && (pdfMode || pptMode || inputOnly)) throw new Error("--real-only is a dedicated Word generation/sharing probe");
 const artifacts = join(
   root,
   pdfMode ? realModel ? ".artifacts/office-pdf-live-real" : ".artifacts/office-pdf-live" : pptMode ? realModel ? withPptSkills ? ".artifacts/office-ppt-live-real-skills" : ".artifacts/office-ppt-live-real" : ".artifacts/office-ppt-live" : inputOnly ? ".artifacts/office-input" : realModel ? ".artifacts/office-live-real" : ".artifacts/office-live",
@@ -243,6 +245,7 @@ try {
           inject: [
             "@deepseek-ai/dsh-client-ui-sidebar-right",
             "@deepseek-ai/dsh-api-session-controller",
+            "@deepseek-ai/dsh-client-ui-workspace",
           ],
         },
       },
@@ -256,7 +259,7 @@ try {
     join(fixture, "index.js"),
     `
 import {assembleContextFor} from '@deepseek-ai/dsh-agent';
-export const inject=['connection','workdshSessionAccess','tools','systemPrompt','workdshIdentity'${realModel ? ", 'workdshOfficeContent'" : ""}];
+export const inject=['connection','workdshSessionAccess','tools','systemPrompt','workdshIdentity','sessionController'${realModel ? ", 'workdshOfficeContent'" : ""}];
 export function apply(ctx){ctx.effect(()=>ctx.connection.fetch.register({path:'/api/office-live-probe',methods:['POST'],requestBody:'buffered',async fetch(request){try{
  const r=await request.json();let value;
  if(r.action==='create'){value=await ctx.workdshSessionAccess.create({workspaceId:${JSON.stringify(workspaceId)}});}
@@ -274,7 +277,8 @@ export function apply(ctx){ctx.effect(()=>ctx.connection.fetch.register({path:'/
   if(!resolved.agent)throw Error('agent unavailable');
   const actor=await ctx.workdshIdentity.resolve({sessionId:r.sessionId},request.signal);
   const docs=await ctx.workdshOfficeContent.list(actor,request.signal);
-  value={status:resolved.agent.status,deliveries:resolved.agent.session.snapshotEvents().filter(e=>e.type==='deliverables/presented'),trace:resolved.agent.session.snapshotEvents().filter(e=>['tool/call','step/start','turn/end'].includes(e.type)).map(e=>({type:e.type,time:e.time,name:e.type==='tool/call'?e.data.name:undefined})),documents:await Promise.all(docs.map(d=>ctx.workdshOfficeContent.read(actor,d.documentId,request.signal)))};
+  const inspected=await ctx.sessionController.inspect(r.sessionId,request.signal);
+  value={events:inspected.events.filter(e=>['user/message','assistant/message','deliverables/presented'].includes(e.type)),status:resolved.agent.status,deliveries:inspected.events.filter(e=>e.type==='deliverables/presented'),trace:inspected.events.filter(e=>['tool/call','step/start','turn/end'].includes(e.type)).map(e=>({type:e.type,time:e.time,name:e.type==='tool/call'?e.data.name:undefined})),documents:await Promise.all(docs.map(d=>ctx.workdshOfficeContent.read(actor,d.documentId,request.signal)))};
  }else if(r.action==='guide'){
   const resolved=await ctx.workdshSessionAccess.resolveAgent(r.sessionId,request.signal);
   const assembly=await ctx.systemPrompt.assemble(assembleContextFor(resolved.agent,request.signal));
@@ -298,7 +302,7 @@ export function apply(ctx){ctx.effect(()=>ctx.connection.fetch.register({path:'/
   );
   await writeFile(
     join(fixture, "client.js"),
-    `window.__ModuleLoader__.load({id:'workdsh-office-live-probe',factory:function(){return {inject:['sidebarRight','sessions','documentPreviews','sidebarRightTabs'],apply:function(ctx){ctx.effect(function(){window.officeLiveProbe={uninstallOffice:async function(){let found=false;for(const [plugin,runtime] of ctx.registry.entries()){if(runtime.name==='workdsh-office-client'){await Promise.all([...runtime.fibers].map(f=>f.dispose()));found=true;break}}if(!found)throw Error('Office Client not found');return {preview:ctx.documentPreviews.getSnapshot().some(d=>d.id==='workdsh-office'),tab:!!ctx.sidebarRightTabs.get('workdsh-office-live')}},open:async function(sid){await ctx.sessions.refresh();ctx.sessions.open(sid)},file:function(sid,address){ctx.sidebarRight.openResourceIn(sid,address)},collapse:function(){if(ctx.sidebarRight.isExpanded())ctx.sidebarRight.toggleExpanded()},tab:function(sid,id){ctx.sidebarRight.openTabIn(sid,'workdsh-office-live',{params:{documentId:id}})}};return function(){delete window.officeLiveProbe}})}}}});`,
+    `window.__ModuleLoader__.load({id:'workdsh-office-live-probe',factory:function(){return {inject:['sidebarRight','sessions','uiWorkspace','documentPreviews','sidebarRightTabs'],apply:function(ctx){ctx.effect(function(){window.officeLiveProbe={uninstallOffice:async function(){let found=false;for(const [plugin,runtime] of ctx.registry.entries()){if(runtime.name==='workdsh-office-client'){await Promise.all([...runtime.fibers].map(f=>f.dispose()));found=true;break}}if(!found)throw Error('Office Client not found');return {preview:ctx.documentPreviews.getSnapshot().some(d=>d.id==='workdsh-office'),tab:!!ctx.sidebarRightTabs.get('workdsh-office-live')}},open:async function(sid){await ctx.sessions.refresh();ctx.uiWorkspace.openSession(sid)},file:function(sid,address){ctx.sidebarRight.openResourceIn(sid,address)},collapse:function(){if(ctx.sidebarRight.isExpanded())ctx.sidebarRight.toggleExpanded()},tab:function(sid,id){ctx.sidebarRight.openTabIn(sid,'workdsh-office-live',{params:{documentId:id}})}};return function(){delete window.officeLiveProbe}})}}}});`,
   );
   await command(pnpm, ["pack", "--pack-destination", artifacts], fixture);
   tarballs.push(join(artifacts, "workdsh-office-live-probe-0.0.0.tgz"));
@@ -537,6 +541,7 @@ export function apply(ctx){ctx.effect(()=>ctx.connection.fetch.register({path:'/
 
 
   } else {
+  if (!realOnly) {
   // Creation itself must request presentation; do not depend on content_present.
   const body = page.getByRole("textbox", { name: "文档正文" });
   await expect(body).toBeVisible({ timeout: 20000 });
@@ -976,7 +981,10 @@ export function apply(ctx){ctx.effect(()=>ctx.connection.fetch.register({path:'/
   await expect(page.getByRole("region", {name:"DOCX文档编辑"}).getByLabel("文档正文")).toContainText("DOCX导入后直接编辑",{timeout:20000});
   await page.screenshot({path:join(artifacts,"docx-import-toolbar.png")});
   pass("DOCX file preview opens the same Tiptap Toolbar; human edits persist and export; original bytes and original preview remain available");
+  }
   if (realModel) {
+    const officeRequire = createRequire(new URL("../packages/plugins/office/package.json", import.meta.url));
+    const JSZip = officeRequire("jszip");
     const real = await api(host, { action: "create" });
     await page.evaluate(
       (sid) => window.officeLiveProbe.open(sid),
@@ -994,7 +1002,7 @@ export function apply(ctx){ctx.effect(()=>ctx.connection.fetch.register({path:'/
       sessionId: real.sessionId,
       messageId: randomUUID(),
       prompt:
-        realRich ? "请写一份门店经营分析报告，约200字，包含分析目标、问题分析和行动建议。没有实际数据的地方标明待确认。请在文档中插入一个两列三行表格，表头为问题、行动，列出排队时间和库存管理两项；并插入下面提供的PNG资料图片，图片160×100像素，居中，替代文字为门店分析资料图。请完成文档并交付Word文件。图片资料：data:image/png;base64," + suppliedPng : "请写一份门店经营分析报告，约200字，包含分析目标、问题分析和行动建议。没有实际数据的地方标明待确认。",
+        realRich ? "请写一份门店经营分析报告，约200字，包含分析目标、问题分析和行动建议。没有实际数据的地方标明待确认。请在文档中插入一个两列三行表格，表头为问题、行动，列出排队时间和库存管理两项；并插入下面提供的PNG资料图片，图片160×100像素，居中，替代文字为门店分析资料图。请完成文档并交付Word文件。图片资料：data:image/png;base64," + suppliedPng : "请写一份门店经营分析报告，约200字，包含分析目标、问题分析和行动建议。没有实际数据的地方标明待确认。请完成文档并交付 Word 文件。",
     });
     const samples = [];
     let state;
@@ -1064,6 +1072,13 @@ export function apply(ctx){ctx.effect(()=>ctx.connection.fetch.register({path:'/
     assert.ok(calls.some(e => e.name === "content_export"), "Real model must export completed document");
     assert.ok(state.deliveries?.length, "Official present must persist the delivery event");
     const delivery = state.deliveries.at(-1).data.files[0];
+    if (realOnly) {
+    const { materialSnapshot } = await import('../packages/plugins/enterprise-collaboration/dist/material-snapshot.js');
+    const sharedSnapshot = materialSnapshot(state.events);
+    assert.ok(sharedSnapshot.generated.some(file => file.path === delivery.path), 'Actual model-exported file must be offered for sharing');
+    assert.match(sharedSnapshot.context, /门店/);
+    pass('Enterprise snapshot recognizes the actual model-produced official delivery without guessing paths');
+    }
     const exported = await readFile(join(workspace, delivery.path));
     const exportedZip = await JSZip.loadAsync(exported);
     const exportedXml = await exportedZip.file("word/document.xml").async("string");

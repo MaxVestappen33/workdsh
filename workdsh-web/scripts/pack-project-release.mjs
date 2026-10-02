@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { copyFile, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -40,7 +40,9 @@ let sourceDirty = false;
 try {
   // Desktop package checks regenerate a tracked Windows icon. Web release
   // cleanliness covers the Web source and the DSH version inputs it consumes.
-  execFileSync('git', ['diff', '--quiet', '--ignore-submodules=dirty', 'HEAD', '--', 'workdsh-web', 'upstream.json', 'deepseek-harness'], { cwd: root, stdio: 'ignore' });
+  const repositoryRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: root, encoding: 'utf8' }).trim();
+  const webPath = relative(repositoryRoot, root);
+  execFileSync('git', ['diff', '--quiet', '--ignore-submodules=dirty', 'HEAD', '--', webPath || '.', 'upstream.json', 'deepseek-harness'], { cwd: repositoryRoot, stdio: 'ignore' });
 } catch (error) {
   if (error.status !== 1) throw error;
   sourceDirty = true;
@@ -68,11 +70,17 @@ await writeFile(join(destination, 'release-manifest.json'), JSON.stringify({
   channel: 'github-release',
   sourceCommit,
   sourceDirty,
-  harness: '0.1.7-rc.2',
+  harness: project.devDependencies['@deepseek-ai/dsh'],
   node: process.version,
   packageManager: project.packageManager,
   runtimeOverrides: Object.fromEntries(Object.entries(project.pnpm.overrides).filter(([name]) => name.startsWith('@deepseek-ai/'))),
   packages,
+  installation: {
+    defaultPackages: ['workdsh-provider-identity-local','workdsh-provider-browser-session','workdsh-plugin-audit','workdsh-plugin-access','workdsh-plugin-skills','workdsh-plugin-experts','workdsh-plugin-connectors','workdsh-plugin-library','workdsh-bundle'],
+    optionalPackages: ['workdsh-plugin-office','workdsh-plugin-projects','workdsh-plugin-activity'],
+    enterprisePackages: 'Separate artifacts; not included in this personal collection',
+    preservesPreviouslyInstalledOptionalPackages: true,
+  },
   verified: ['Package checksums generated; CI validates build, types, DSH version alignment and integration tests'],
   limitations: [
     'alpha preview; package APIs and stored data may change',

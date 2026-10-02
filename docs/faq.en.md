@@ -20,7 +20,7 @@ No. The repository pins an unmodified upstream submodule. The Electron carrier s
 
 ## Where are data and plugins?
 
-DSH home is under local application data. Projects, library, experts, skills, and connectors belong to the WorkDSH Profile. Community Market and Fabric currently remain design documents. Whether an external model receives data depends on user configuration.
+DSH home is under local application data. Library, experts, skills and MCP/connectors ship by default. The enterprise account plugin ships with the runtime and activates only after enterprise login. Other owned features require explicit external plugin installation. SkillHub and dshmarket provide third-party skill and plugin catalogs; catalog entries are not all preinstalled. Whether an external model receives data depends on user configuration.
 
 ## How do I update?
 

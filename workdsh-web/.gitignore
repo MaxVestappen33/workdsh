@@ -14,7 +14,19 @@ tmp/
 .env.*
 !.env.example
 # Internal design, plans, acceptance records and evidence stay local.
-/docs/
+/docs/*
+!/docs/REQUIREMENTS.md
+!/docs/ENTERPRISE-REQUIREMENTS.md
+!/docs/ARCHITECTURE.md
+!/docs/CONTRACTS.md
+!/docs/ACCEPTANCE.md
+!/docs/FEATURE-DEVELOPMENT-CONTRACT.md
+!/docs/HARNESS-OFFICIAL-DEVELOPMENT.md
+!/docs/PLUGIN-DELIVERY.md
+!/docs/EXTERNAL-PLUGINS.md
+!/docs/requirements.json
+!/docs/modules.json
+!/docs/acceptance.json
 /.qoder/
 **/__pycache__/
 *.py[cod]

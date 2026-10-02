@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { Icon } from 'workdsh-ui';
+import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client';
 import type { LibraryComposerReference } from 'workdsh-contracts/library';
 import type { Context } from '@deepseek-ai/cordis';
 import type {} from '@deepseek-ai/dsh-client-connection/client';
@@ -143,6 +145,7 @@ export function apply(ctx: Context): void {
       order: -20,
       inject: () => ({ management, focusProject }),
     }, ProjectLineageChip));
+  ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({name:'sidebar.panellist',id:'workdsh-projects',label:'项目',order:20}, () => <Icon name="project" />));
   ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'workdsh-projects', inject: () => ({ management, startTask, openTask, focusProject, goHome: () => ctx.layout.selectPanel('workdsh-projects' as Parameters<typeof ctx.layout.selectPanel>[0]) }) }, ProjectsPanel));
   ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'workdsh-project-detail', inject: () => ({ management, startTask, openTask, detail: true, focusProject, goHome: () => ctx.layout.selectPanel('workdsh-projects' as Parameters<typeof ctx.layout.selectPanel>[0]) }) }, ProjectsPanel));
 }

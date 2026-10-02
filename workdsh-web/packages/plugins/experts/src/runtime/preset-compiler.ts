@@ -45,6 +45,8 @@ export interface CompileInput {
   /** Absolute managed snapshot directories, one per retained Skill revision. */
   readonly snapshotDirs: readonly string[];
   readonly basePresetId: string;
+  /** Server composition can forbid all default project/user roots. Omission preserves personal behavior. */
+  readonly includeDefaultSkillRoots?: boolean;
   readonly packageRoot?: string;
   readonly teamMembers?: Readonly<Record<string, ExpertRevisionRef>>;
 }
@@ -66,6 +68,7 @@ export function presetIdFor(input: CompileInput): string {
     base: input.basePresetId,
     definition: input.definition,
     snapshotDirs: [...input.snapshotDirs].sort(),
+    ...(input.includeDefaultSkillRoots === false ? { includeDefaultSkillRoots: false } : {}),
     ...(input.teamMembers ? { teamMembers: input.teamMembers } : {}),
   });
   return `wd-exp-${kebab(input.expertId)}-${digest}`;
@@ -75,24 +78,24 @@ export function presetIdFor(input: CompileInput): string {
  * Compile (or reuse) the immutable preset directory for one expert revision.
  * Idempotent: an existing directory whose composition digest matches is reused.
  */
-export function expertPresetDir(presetId: string): string {
+export function expertPresetDir(presetId: string, agentsHome?: string): string {
   if (!/^wd-exp-[a-z0-9-]+$/.test(presetId)) throw new Error('experts/invalid-preset-id');
-  return join(process.env.DSH_AGENTS_HOME ?? join(homedir(), '.agents'), '.workdsh-state', 'experts', 'presets', presetId);
+  return join(agentsHome ?? process.env.DSH_AGENTS_HOME ?? join(homedir(), '.agents'), '.workdsh-state', 'experts', 'presets', presetId);
 }
 
 const registrations = new WeakMap<Context, Map<string, Promise<void>>>();
 
 /** Restore only the frozen declaration; never recompile an existing revision against a new base. */
-export async function readExpertPreset(presetId: string): Promise<string> {
-  try { return await readFile(join(expertPresetDir(presetId), 'preset.json'), 'utf8'); }
+export async function readExpertPreset(presetId: string, agentsHome?: string): Promise<string> {
+  try { return await readFile(join(expertPresetDir(presetId, agentsHome), 'preset.json'), 'utf8'); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw Object.assign(new Error('此专家为旧目录预设，请重新发布后创建新任务；历史任务不会自动换用新组合。'), { code: 'experts/preset-broken' });
     throw error;
   }
 }
 
-export async function registerExpertPreset(ctx: Context, presetId: string, expectedDigest: string): Promise<void> {
-  const text = await readExpertPreset(presetId);
+export async function registerExpertPreset(ctx: Context, presetId: string, expectedDigest: string, agentsHome?: string): Promise<void> {
+  const text = await readExpertPreset(presetId, agentsHome);
   if (sha256(text) !== expectedDigest) throw Object.assign(new Error('专家预设内容已变化，请重新发布。'), { code: 'experts/preset-drift' });
   let pending = registrations.get(ctx);
   if (!pending) { pending = new Map(); registrations.set(ctx, pending); }
@@ -106,9 +109,9 @@ export async function registerExpertPreset(ctx: Context, presetId: string, expec
   await pending.get(presetId);
 }
 
-export async function compileExpertPreset(ctx: Context, input: CompileInput): Promise<CompiledPreset> {
+export async function compileExpertPreset(ctx: Context, input: CompileInput, agentsHome?: string): Promise<CompiledPreset> {
   const presetId = presetIdFor(input);
-  const presetDir = expertPresetDir(presetId);
+  const presetDir = expertPresetDir(presetId, agentsHome);
   const files = input.definition.packageDocuments ?? {};
   const assets = input.definition.packageAssets ?? {};
   validateResources(files, assets);
@@ -118,7 +121,7 @@ export async function compileExpertPreset(ctx: Context, input: CompileInput): Pr
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
     if (manifest.inputDigest !== inputDigest) throw Object.assign(new Error('专家预设内容已变化，请重新发布。'), { code: 'experts/preset-drift' });
     await verifyPackageFiles(presetDir, files, assets);
-    await registerExpertPreset(ctx, presetId, manifest.compositionDigest);
+    await registerExpertPreset(ctx, presetId, manifest.compositionDigest, agentsHome);
     return { presetId, presetDir, compositionDigest: manifest.compositionDigest, created: false };
   } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
 
@@ -129,7 +132,7 @@ export async function compileExpertPreset(ctx: Context, input: CompileInput): Pr
   const rootsInPackage = Object.keys(files).filter(path => /^skills\/[a-z][a-z0-9-]+\/SKILL\.md$/.test(path)).map(path => join(presetDir, 'expert-package', path.slice(0, -9)));
   const packageRoot = Object.keys(files).length || Object.keys(assets).length ? join(presetDir, 'expert-package') : undefined;
   const persona = expertPersonaConfig({ ...input, packageRoot });
-  const skillConfig = { includeDefaultRoots: true, watch: false, customSkillDirs: [...input.snapshotDirs, ...rootsInPackage].sort() };
+  const skillConfig = { includeDefaultRoots: input.includeDefaultSkillRoots !== false, watch: false, customSkillDirs: [...input.snapshotDirs, ...rootsInPackage].sort() };
   const rows = [...plugins];
   for (const [name, config] of [[PERSONA_MODULE, persona], [SKILL_FS_MODULE, skillConfig]] as const) {
     const index = rows.findIndex(row => row.name === name);
@@ -161,9 +164,9 @@ export async function compileExpertPreset(ctx: Context, input: CompileInput): Pr
     catch (error) {
       if (!['EEXIST', 'ENOTEMPTY'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
       // Another publisher won; validate its immutable result instead of overwriting it.
-      return await compileExpertPreset(ctx, input);
+      return await compileExpertPreset(ctx, input, agentsHome);
     }
-    await registerExpertPreset(ctx, presetId, compositionDigest);
+    await registerExpertPreset(ctx, presetId, compositionDigest, agentsHome);
     return { presetId, presetDir, compositionDigest, created: true };
   } finally { await rm(staging, { recursive: true, force: true }); }
 }
@@ -175,6 +178,7 @@ function renderComposition(input: CompileInput): string {
     prefix: compilePersonaPrefix(input.definition),
     suffix: compilePersonaSuffix(input.definition),
     snapshotDirs: [...input.snapshotDirs].sort(),
+    ...(input.includeDefaultSkillRoots === false ? { includeDefaultSkillRoots: false } : {}),
     packageDocuments: input.definition.packageDocuments ?? null,
     ...(input.definition.packageAssets ? { packageAssets: input.definition.packageAssets } : {}),
     teamMembers: input.teamMembers ?? null,

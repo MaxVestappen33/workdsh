@@ -15,6 +15,11 @@ if (target === undefined || !['win-x64', 'mac-arm64', 'mac-x64'].includes(target
   throw new Error(`Unsupported WorkDSH primary runtime target: ${target ?? process.platform}`)
 }
 const output = join(desktopRoot, 'build', 'workdsh-runtime')
+const profile = join(output, 'profiles', 'workdsh')
+const profileMarker = join(profile, '.workdsh-desktop-release.json')
+if (!existsSync(profileMarker) || JSON.parse(readFileSync(profileMarker, 'utf8')).harness !== DSH_VERSION) {
+  throw new Error('Prepare and verify the target WorkDSH Profile before its primary runtime')
+}
 const cache = join(desktopRoot, 'build', '.workdsh-primary-runtime-cache')
 const corepack = process.platform === 'win32' ? 'corepack.cmd' : 'corepack'
 const preparationTimeout = 12 * 60_000
@@ -41,7 +46,8 @@ if (manifest.desktopVersion !== DSH_VERSION || manifest.platform !== process.pla
   || manifest.arch !== target.slice(4)) {
   throw new Error(`Official primary runtime metadata does not match ${target} / ${DSH_VERSION}`)
 }
-const profile = join(output, 'profiles', 'workdsh')
+const runtimePnpm = join(output, 'primary-runtime', 'dependencies', 'pnpm', 'bin', 'pnpm.cjs')
+if (manifest.pnpm !== '11.7.0' || !existsSync(runtimePnpm)) throw new Error('Official primary runtime must carry its pinned pnpm 11.7.0 JavaScript CLI')
 const packagePath = join(profile, 'package.json')
 if (!existsSync(packagePath)) throw new Error('WorkDSH release profile must be prepared first')
 const profilePackage = JSON.parse(readFileSync(packagePath, 'utf8'))
@@ -50,14 +56,9 @@ const packages = [
   '@deepseek-ai/dsh-skill-office',
 ]
 if (packages.some(name => profilePackage.dependencies?.[name] !== DSH_VERSION
-  || !existsSync(join(profile, 'node_modules', name, 'package.json')))) {
-  const pnpm = process.platform === 'win32' ? 'npx.cmd' : 'npx'
-  const install = spawnSync(pnpm, [
-    '--yes', 'pnpm@11.8.0', '--dir', profile, 'add', '--save-exact',
-    ...packages.map(name => `${name}@${DSH_VERSION}`),
-  ], { env: process.env, stdio: 'inherit', shell: process.platform === 'win32' })
-  if (install.error) throw install.error
-  if (install.status !== 0) throw new Error(`Official Office plugins failed to install: ${install.status}`)
+  || !existsSync(join(profile, 'node_modules', name, 'package.json'))
+  || JSON.parse(readFileSync(join(profile, 'node_modules', name, 'package.json'), 'utf8')).version !== DSH_VERSION)) {
+  throw new Error('Prepare the complete official Office/workspace dependency graph before its primary runtime; primary preparation must not change the installation manifest')
 }
 const patch = `# Official DeepSeek Harness Desktop workspace dependencies and Office skills.\n- insert:\n    - id: workspace-dependencies\n      name: '@deepseek-ai/dsh-tool-workspace-dependencies'\n      config:\n        source: !!js "process.env.DSH_BUNDLED_PRIMARY_RUNTIME"\n        root: !!js "process.getBuiltinModule('node:path').join(process.env.DSH_HOME, 'dsh-runtimes', 'dsh-primary-runtime')"\n    - id: skill-office\n      name: '@deepseek-ai/dsh-skill-office'\n      config:\n        assetRoot: !!js "process.getBuiltinModule('node:path').join(process.env.DSH_BUNDLED_PRIMARY_RUNTIME, '..', 'office-skills')"\n        node: !!js "process.getBuiltinModule('node:path').join(process.env.DSH_BUNDLED_PRIMARY_RUNTIME, 'dependencies', 'node', 'bin', process.platform === 'win32' ? 'node.exe' : 'node')"\n`
 const patchPath = join(profile, 'cordis.patch.yml')
