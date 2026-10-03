@@ -12,7 +12,7 @@ The Windows sandbox has no weaker automatic provider fallback. A broken runner t
 
 ## Decision
 
-The desktop package publishes `dsh-plugin-desktop/windows-pwsh-sandbox` as a Host subpath of the existing package. It is not a second npm package. The Windows desktop profile verifies that the `pwsh-sandbox` row still names the expected upstream provider, preserves its platform gate and configuration, disables that row, and inserts the desktop subpath. Compatibility and advanced presentation modes use the same Host profile and therefore receive the same execution adapter.
+The desktop package publishes `apps/desktop/windows-pwsh-sandbox` as a Host subpath of the existing package. It is not a second npm package. The Windows desktop profile verifies that the `pwsh-sandbox` row still names the expected upstream provider, preserves its platform gate and configuration, disables that row, and inserts the desktop subpath. Compatibility and advanced presentation modes use the same Host profile and therefore receive the same execution adapter.
 
 `DesktopWindowsPwshSandbox` extends the upstream `SandboxPwshExecutor` and uses its protected argv execution methods. It changes an invocation only when the platform is Windows, the Host is Electron, the executable equals `process.execPath`, and the next argument equals the resolved upstream Windows ACL runner. The rewritten argv inserts a private desktop trampoline between the executable and upstream runner. Direct PowerShell execution, including the explicit `danger-full-access` path, is passed through unchanged.
 

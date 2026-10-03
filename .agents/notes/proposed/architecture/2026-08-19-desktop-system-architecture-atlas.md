@@ -293,17 +293,17 @@ Headless gates prove build, types, logic, Loader behavior, and packaged closure.
 
 ## Evidence entry points
 
-- `dsh-plugin-desktop/src/main.ts`
-- `dsh-plugin-desktop/src/electron-runtime.ts`
-- `dsh-plugin-desktop/src/electron-shell-generation.ts`
-- `dsh-plugin-desktop/src/electron-platform.ts`
-- `dsh-plugin-desktop/src/profile-manager.ts`
-- `dsh-plugin-desktop/src/install-recovery.ts`
-- `dsh-plugin-desktop/src/lifecycle-events.ts`
-- `dsh-plugin-desktop/src/renderer-health.ts`
-- `dsh-plugin-desktop/src/startup-generation.ts`
-- `dsh-plugin-desktop/src/runtime.ts`
-- `dsh-plugin-desktop/cordis.patch.yml`
+- `apps/desktop/src/main.ts`
+- `apps/desktop/src/electron-runtime.ts`
+- `apps/desktop/src/electron-shell-generation.ts`
+- `apps/desktop/src/electron-platform.ts`
+- `apps/desktop/src/profile-manager.ts`
+- `apps/desktop/src/install-recovery.ts`
+- `apps/desktop/src/lifecycle-events.ts`
+- `apps/desktop/src/renderer-health.ts`
+- `apps/desktop/src/startup-generation.ts`
+- `apps/desktop/src/runtime.ts`
+- `apps/desktop/cordis.patch.yml`
 - `dsh-community-market/src/install/service.ts`
 - `dsh-community-market/src/host/routes.ts`
 - `.agents/notes/implemented/architecture/`

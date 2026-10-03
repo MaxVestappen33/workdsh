@@ -1,0 +1,100 @@
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, expect, it } from 'vitest'
+import { desktopEnterprisePatch, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher } from '../src/local-runtime.ts'
+
+const roots: string[] = []
+afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
+function fixture() {
+  const root = mkdtempSync(join(tmpdir(), 'desktop-profile-')); roots.push(root)
+  const source = join(root, 'bundle', 'profiles', 'workdsh'), home = join(root, 'home')
+  mkdirSync(join(source, 'node_modules/@deepseek-ai/dsh/lib'), { recursive: true })
+  mkdirSync(join(source, 'node_modules/pnpm/bin'), { recursive: true })
+  writeFileSync(join(source, 'node_modules/@deepseek-ai/dsh/package.json'), JSON.stringify({ version: '0.2.0-rc.2' }))
+  writeFileSync(join(source, 'node_modules/@deepseek-ai/dsh/lib/bin.js'), '')
+  writeFileSync(join(source, 'node_modules/@deepseek-ai/dsh/lib/profile-boot.js'), '')
+  mkdirSync(join(source, 'node_modules/@deepseek-ai/dsh-app-boot/lib'), { recursive: true })
+  writeFileSync(join(source, 'node_modules/@deepseek-ai/dsh-app-boot/lib/index.js'), '')
+  writeFileSync(join(source, 'node_modules/pnpm/bin/pnpm.cjs'), '')
+  const base = { dependencies: { '@deepseek-ai/dsh': '0.2.0-rc.2', 'workdsh-plugin-skills': '1.0.0' }, dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', 'workdsh-plugin-skills'] } } }
+  writeFileSync(join(source, 'package.json'), JSON.stringify(base))
+  writeFileSync(join(source, 'profile-installation.json'), JSON.stringify(base))
+  return { root, source, home, base }
+}
+it('uses official installation anchoring without a shared writable module symlink, and preserves user changes', () => {
+  const { source, home, base } = fixture()
+  const first = materializeRuntimeProfile(source, home)
+  expect(existsSync(join(first.profile, 'node_modules'))).toBe(false)
+  const manifest = join(first.profile, 'package.json')
+  expect(JSON.parse(readFileSync(manifest, 'utf8')).dependencies).toEqual({})
+  const user = { ...JSON.parse(readFileSync(manifest, 'utf8')), dependencies: { 'user-plugin': 'file:custom.tgz' } }
+  writeFileSync(manifest, JSON.stringify(user)); writeFileSync(join(first.profile, 'cordis.patch.yml'), '# user configuration\n[]\n')
+  const lock = join(first.profile, 'pnpm-lock.yaml'); writeFileSync(lock, 'user lock')
+  materializeRuntimeProfile(source, home)
+  expect(readFileSync(manifest, 'utf8')).toBe(JSON.stringify(user))
+  expect(readFileSync(lock, 'utf8')).toBe('user lock')
+  expect(readFileSync(join(first.profile, 'cordis.patch.yml'), 'utf8')).toContain('user configuration')
+  base.dependencies['workdsh-plugin-skills'] = '1.0.1'; writeFileSync(join(source, 'package.json'), JSON.stringify(base))
+  expect(materializeRuntimeProfile(source, home).changed).toBe(false)
+  expect(JSON.parse(readFileSync(manifest, 'utf8')).dependencies).toEqual({ 'user-plugin': 'file:custom.tgz' })
+  markProfileUpdated(source, first.profile)
+  expect(materializeRuntimeProfile(source, home).changed).toBe(false)
+})
+it('isolates account/backend directories, device records and credential/skill environments', () => {
+  const { root } = fixture()
+  const actor = { id: 'A', organizationId: 'org', organizationName: 'Company', email: 'a@test', displayName: 'A', role: 'MEMBER' as const, mustChangePassword: false }
+  const a = enterpriseSpace(root, 'https://company.test', actor)
+  expect(enterpriseSpace(root, 'https://company.test', actor).deviceId).toBe(a.deviceId)
+  expect(enterpriseSpace(root, 'https://other.test', actor).root).not.toBe(a.root)
+  expect(enterpriseSpace(root, 'https://company.test', { ...actor, id: 'B' }).root).not.toBe(a.root)
+  const env = enterpriseEnvironment(a.root, '/runtime/node', { PATH: '/usr/bin', DEEPSEEK_API_KEY: 'personal', DSH_AGENTS_HOME: '/personal/skills', NODE_OPTIONS: '--inspect', WORKDSH_SERVICE_KEY: 'server' })
+  expect(env.DEEPSEEK_API_KEY).toBeUndefined(); expect(env.WORKDSH_SERVICE_KEY).toBeUndefined(); expect(env.NODE_OPTIONS).toBeUndefined()
+  expect(env.DSH_AGENTS_HOME).toBe(join(a.root, 'agents')); expect(env.HOME).toBe(join(a.root, 'home'))
+  const bridge = desktopEnterprisePatch(a.home, { url: 'http://127.0.0.1:12345', key: 'capability', close: async () => {} }, actor, 'https://company.test', a.deviceId)
+  expect(readFileSync(bridge.patch, 'utf8')).toContain('workdsh-provider-identity-enterprise/desktop')
+  expect(readFileSync(bridge.patch, 'utf8')).not.toContain('id: workdsh-identity-enterprise\n  disabled: true')
+  expect(readFileSync(bridge.patch, 'utf8')).not.toContain('capability')
+  expect(JSON.parse(readFileSync(bridge.authFile, 'utf8')).principalId).toBe('A')
+})
+it('delegates startup and plugin installation to official runCli using one packaged Node and pnpm', () => {
+  const { source, home } = fixture(); materializeRuntimeProfile(source, home)
+  const launcher = readFileSync(officialLauncher(source, home, '/runtime/node', join(source, 'node_modules/pnpm/bin/pnpm.cjs')), 'utf8')
+  expect(launcher).toContain('runCli({ manageDesktopProfile: true, packageManager:'); expect(launcher).toContain(JSON.stringify(join(source, 'node_modules/pnpm/bin/pnpm.cjs')))
+  expect(launcher).not.toContain('token'); expect(launcher).not.toContain('createHost')
+  const host = readFileSync(officialHostLauncher(source, home, '/runtime/node', join(source, 'node_modules/pnpm/bin/pnpm.cjs'), ['/user/patch.yml']), 'utf8')
+  expect(host).toContain('runProfile({ environment: loadLayeredEnv')
+  expect(host).toContain('resolvedProfile: { profile, installAnchor }')
+  expect(host).toContain(JSON.stringify(join(source, 'profile-installation.json')))
+  expect(host).toContain('patchFiles: ["/user/patch.yml"]')
+})
+it('keeps user install policies while updating the product-owned official version overrides', () => {
+  const { source, home } = fixture()
+  writeFileSync(join(source, 'pnpm-workspace.yaml'), 'autoInstallPeers: true\noverrides:\n  "@deepseek-ai/dsh": "0.2.0-rc.2"\nstrictPeerDependencies: false\n')
+  const { profile } = materializeRuntimeProfile(source, home)
+  const policy = join(profile, 'pnpm-workspace.yaml')
+  expect(readFileSync(policy, 'utf8')).toContain('autoInstallPeers: false')
+  expect(readFileSync(join(source, 'pnpm-workspace.yaml'), 'utf8')).toContain('autoInstallPeers: true')
+  mkdirSync(join(profile, 'node_modules'))
+  writeFileSync(policy, 'overrides:\n  "@deepseek-ai/dsh": "0.1.7-rc.2"\n  "user-lib": "1.0.0"\nstrictPeerDependencies: true\n')
+  expect(materializeRuntimeProfile(source, home).changed).toBe(true)
+  expect(readFileSync(policy, 'utf8')).toContain("'@deepseek-ai/dsh': 0.2.0-rc.2")
+  expect(readFileSync(policy, 'utf8')).toContain('user-lib: 1.0.0')
+  expect(readFileSync(policy, 'utf8')).toContain('strictPeerDependencies: true')
+  markProfileUpdated(source, profile)
+  expect(materializeRuntimeProfile(source, home).changed).toBe(false)
+})
+it('retries a failed version-policy installation after restart until official installation succeeds', () => {
+  const { source, home } = fixture()
+  const policy = join(source, 'pnpm-workspace.yaml')
+  writeFileSync(policy, 'overrides:\n  "@deepseek-ai/dsh": "0.2.0-rc.1"\n')
+  const { profile } = materializeRuntimeProfile(source, home)
+  mkdirSync(join(profile, 'node_modules'))
+  writeFileSync(policy, 'overrides:\n  "@deepseek-ai/dsh": "0.2.0-rc.2"\n')
+  expect(materializeRuntimeProfile(source, home).changed).toBe(true)
+  // The policy file is already current, but the preceding install failed and was never marked successful.
+  expect(materializeRuntimeProfile(source, home).changed).toBe(true)
+  expect(materializeRuntimeProfile(source, home).changed).toBe(true)
+  markProfileUpdated(source, profile)
+  expect(materializeRuntimeProfile(source, home).changed).toBe(false)
+})

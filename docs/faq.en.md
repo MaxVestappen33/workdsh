@@ -16,11 +16,11 @@ Ordinary users do not. The installer includes a pinned runtime and DSH Profile. 
 
 ## Is official Harness modified?
 
-No. The repository pins an unmodified upstream submodule. The Electron carrier starts that DSH Profile, and WorkDSH features are composed by Profile packages.
+No. The repository pins official published packages and Desktop release archives, without building official source. The Electron carrier starts that DSH Profile, and WorkDSH features are composed by Profile packages.
 
 ## Where are data and plugins?
 
-DSH home is under local application data. Projects, library, experts, skills, and connectors belong to the WorkDSH Profile. Community Market and Fabric currently remain design documents. Whether an external model receives data depends on user configuration.
+DSH home is under local application data. Library, experts, skills and MCP/connectors ship by default. The enterprise account plugin ships with the runtime and activates only after enterprise login. Other owned features require explicit external plugin installation. SkillHub and dshmarket provide third-party skill and plugin catalogs; catalog entries are not all preinstalled. Whether an external model receives data depends on user configuration.
 
 ## How do I update?
 

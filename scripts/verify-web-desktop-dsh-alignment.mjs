@@ -3,7 +3,7 @@ import { join, relative, resolve } from 'node:path'
 
 const root = resolve(import.meta.dirname, '..')
 const expected = JSON.parse(readFileSync(join(root, 'upstream.json'), 'utf8')).version
-const webRoot = join(root, 'workdsh-web')
+const webRoot = join(root, 'apps/web')
 const dependencyFields = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']
 const mismatches = []
 let checked = 0
@@ -34,7 +34,7 @@ function visit(directory) {
 }
 
 checkManifest(join(webRoot, 'package.json'))
-visit(join(webRoot, 'packages'))
+visit(join(root, 'packages'))
 visit(join(webRoot, 'examples'))
 if (checked === 0) throw new Error('No Web DSH dependencies found; alignment check is incomplete')
 if (mismatches.length > 0) {

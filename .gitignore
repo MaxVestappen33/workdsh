@@ -9,10 +9,32 @@ node_modules/
 *.tsbuildinfo
 .build/
 
-dsh-plugin-desktop/dist/
-dsh-plugin-desktop/lib/
+apps/desktop/dist/
+apps/desktop/lib/
 dsh-community-market/lib/
 
 .env.yarn
 /dist/
 /.test-harness/
+
+# Verified official binary release cache (generated, never source).
+apps/desktop/build/official-release-cache/
+
+/apps/desktop/lib/
+/apps/desktop/dist/
+/apps/desktop/build/official-release-cache/
+
+/packages/**/dist/
+/packages/**/lib/
+/packages/**/__pycache__/
+/packages/plugins/office/src/presentation/native-react/native.css
+
+# Local caches and development evidence are not release content.
+/.artifacts/
+/.idea/
+/.playwright-mcp/
+/.pnpm-store/
+/.qoder/
+/.test-runtime/
+/scripts/__pycache__/
+**/.playwright-mcp/

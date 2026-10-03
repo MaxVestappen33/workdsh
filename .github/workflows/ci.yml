@@ -30,9 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          # GitHub's pull-request merge ref can retain the base branch's
-          # submodule gitlink when the PR advances it to a descendant. Check
-          # out the actual PR head so pinned submodules match upstream.json.
+          # Check the actual PR head to validate its locked official releases.
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
@@ -63,8 +61,8 @@ jobs:
             git diff --check "$BASE_SHA" "$HEAD_SHA"
             product="$(git diff --name-only -z "$BASE_SHA" "$HEAD_SHA" | node scripts/classify-ci-changes.mjs)"
             changed_paths="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
-            if [[ -n "$changed_paths" ]] && grep -q '^workdsh-web/' <<< "$changed_paths"; then web=true; else web=false; fi
-            if [[ -n "$changed_paths" ]] && grep -qv '^workdsh-web/' <<< "$changed_paths"; then desktop=true; else desktop=false; fi
+            if [[ -n "$changed_paths" ]] && grep -Eq '^(apps/web/|packages/|profiles/)' <<< "$changed_paths"; then web=true; else web=false; fi
+            if [[ -n "$changed_paths" ]] && grep -qv '^apps/web/' <<< "$changed_paths"; then desktop=true; else desktop=false; fi
           fi
           echo "product=$product" >> "$GITHUB_OUTPUT"
           echo "desktop=$desktop" >> "$GITHUB_OUTPUT"
@@ -84,7 +82,6 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-          submodules: recursive
       - uses: actions/setup-node@v6
         if: needs.changes.outputs.product == 'true'
         with:
@@ -115,23 +112,41 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Checkout the backend integration contract
+        uses: actions/checkout@v6
+        with:
+          repository: techflag/workdsh-admin
+          ref: 2459c9b8f26cadad3565f0d6d5eadb8a1659b861
+          path: workdsh-admin
+          persist-credentials: false
       - uses: actions/setup-node@v6
         with:
           node-version: 22.23.2
       - run: corepack enable
-      - working-directory: workdsh-web
+      - working-directory: apps/web
         run: pnpm install --frozen-lockfile
-      - working-directory: workdsh-web
-        run: pnpm build
-      - working-directory: workdsh-web
-        run: pnpm typecheck
-      - working-directory: workdsh-web
+      - name: Build shared and enterprise packages
+        working-directory: apps/web
+        run: |
+          pnpm build
+          pnpm --filter workdsh-provider-identity-enterprise build
+          pnpm --filter workdsh-plugin-enterprise-collaboration build
+      - name: Check shared and enterprise types
+        working-directory: apps/web
+        run: |
+          pnpm typecheck
+          pnpm --filter workdsh-provider-identity-enterprise typecheck
+          pnpm --filter workdsh-plugin-enterprise-collaboration typecheck
+      - working-directory: apps/web
         run: pnpm check:versions
       - name: Install browser for Web integration tests
-        working-directory: workdsh-web
+        working-directory: apps/web
         run: pnpm exec playwright install --with-deps chromium
-      - working-directory: workdsh-web
+      - working-directory: apps/web
         run: pnpm test:integration
+      - name: Enterprise desktop identity and collaboration tests
+        working-directory: apps/web
+        run: node --test ../../packages/providers/identity-enterprise/tests/*.test.mjs ../../packages/plugins/enterprise-collaboration/tests/*.test.mjs
 
   # Windows-only logic and unsigned NSIS build on a real Windows runner:
   # updates, window options, pwsh sandbox, volume diagnostics, and packaging.
@@ -145,7 +160,6 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-          submodules: recursive
       - uses: actions/setup-node@v6
         with:
           node-version: 22.23.2
@@ -159,14 +173,14 @@ jobs:
           key: yarn-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('yarn.lock', '.yarnrc.yml') }}
       - name: Package Windows through the single release script
         timeout-minutes: 60
-        run: node scripts/package-desktop-release.mjs --source=${{ github.ref_type == 'tag' && 'published' || 'local' }}
+        run: node scripts/package-desktop-release.mjs --source=local
       - name: Report unpacked Windows footprint
-        run: node dsh-plugin-desktop/scripts/report-package-footprint.mjs dsh-plugin-desktop/dist/win-unpacked dsh-plugin-desktop/dist/windows-footprint.json
+        run: node apps/desktop/scripts/report-package-footprint.mjs apps/desktop/dist/win-unpacked apps/desktop/dist/windows-footprint.json
       - name: Upload Windows footprint report
         uses: actions/upload-artifact@v4
         with:
           name: desktop-footprint-windows-x64
-          path: dsh-plugin-desktop/dist/windows-footprint.json
+          path: apps/desktop/dist/windows-footprint.json
           if-no-files-found: error
           retention-days: 14
       - name: Upload Windows installer
@@ -174,8 +188,8 @@ jobs:
         with:
           name: dsh-plugin-desktop-windows-x64
           path: |
-            dsh-plugin-desktop/dist/*.exe
-            dsh-plugin-desktop/dist/*.blockmap
+            apps/desktop/dist/*.exe
+            apps/desktop/dist/*.blockmap
           if-no-files-found: error
           retention-days: 14
 
@@ -197,7 +211,6 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-          submodules: recursive
       - uses: actions/setup-node@v6
         with:
           node-version: 22.23.2
@@ -213,62 +226,82 @@ jobs:
         timeout-minutes: 55
         env:
           WORKDSH_MAC_ARCH: ${{ matrix.arch }}
-        run: node scripts/package-desktop-release.mjs --source=${{ github.ref_type == 'tag' && 'published' || 'local' }}
+        run: node scripts/package-desktop-release.mjs --source=local
       - name: Upload macOS architecture DMG
         uses: actions/upload-artifact@v4
         with:
           name: dsh-plugin-desktop-macos-${{ matrix.arch }}
           path: |
-            dsh-plugin-desktop/dist/mac-smoke/${{ matrix.arch }}/*.dmg
-            dsh-plugin-desktop/dist/mac-smoke/${{ matrix.arch }}/*.dmg.blockmap
+            apps/desktop/dist/mac-smoke/${{ matrix.arch }}/*.dmg
+            apps/desktop/dist/mac-smoke/${{ matrix.arch }}/*.dmg.blockmap
           if-no-files-found: error
           retention-days: 14
 
-  # Upstream toolchain smoke: the portable-shell scripts must resolve the
-  # pinned submodule's own Yarn/pnpm release on Windows.
-  upstream-command-windows:
-    needs: changes
-    if: needs.changes.outputs.desktop == 'true'
-    runs-on: windows-latest
+  enterprise-plugin:
+    needs: [changes, check]
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch' || needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-          submodules: recursive
       - uses: actions/setup-node@v6
         with:
           node-version: 22.23.2
       - run: corepack enable
-      - run: yarn check:layout
-      - run: yarn upstream:version
+      - working-directory: apps/web
+        run: pnpm install --frozen-lockfile
+      - working-directory: apps/web
+        run: pnpm build
+      - name: Build independent enterprise connection download
+        working-directory: apps/web
+        run: node scripts/pack-enterprise-connection.mjs ../../output/enterprise-plugin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: workdsh-enterprise-plugin
+          path: output/enterprise-plugin/*
+          if-no-files-found: error
 
   publish-desktop-release:
     if: github.ref_type == 'tag' && startsWith(github.ref_name, 'desktop-v')
-    needs: [check, desktop-windows, desktop-macos, upstream-command-windows]
+    needs: [check, desktop-windows, desktop-macos, enterprise-plugin]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v6
         with:
-          submodules: recursive
           persist-credentials: false
       - uses: actions/setup-node@v6
         with:
           node-version: 22.23.2
+      - name: Require release commit on main
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor HEAD origin/main
       - name: Require one DSH version before publication
         run: node scripts/verify-desktop-dsh-alignment.mjs
       - name: Require release tag to match Desktop package version
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          node -e "const version = require('./dsh-plugin-desktop/package.json').version; if (process.env.TAG !== 'desktop-v' + version) { throw new Error('Release tag does not match Desktop package version: ' + process.env.TAG + ' != desktop-v' + version) }"
+          node -e "const version = require('./apps/desktop/package.json').version; if (process.env.TAG !== 'desktop-v' + version) { throw new Error('Release tag does not match Desktop package version: ' + process.env.TAG + ' != desktop-v' + version) }"
       - name: Download desktop packages
         uses: actions/download-artifact@v5
         with:
           pattern: dsh-plugin-desktop-*
           path: staging
+      - name: Download enterprise plugin
+        uses: actions/download-artifact@v5
+        with:
+          name: workdsh-enterprise-plugin
+          path: enterprise-assets
+      - name: Verify enterprise plugin provenance and download integrity
+        env:
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: |
+          node --input-type=module -e "import fs from 'node:fs';import crypto from 'node:crypto';const m=JSON.parse(fs.readFileSync('enterprise-assets/enterprise-plugin-manifest.json'));const p=JSON.parse(fs.readFileSync('packages/enterprise-connection/package.json'));if(m.sourceCommit!==process.env.EXPECTED_COMMIT||m.name!==p.name||m.version!==p.version||m.dshVersion!==p.peerDependencies['@deepseek-ai/dsh']||m.filename!==p.name+'-'+p.version+'.tgz')throw Error('Enterprise plugin provenance mismatch');const b=fs.readFileSync('enterprise-assets/'+m.filename);if(b.length!==m.bytes||crypto.createHash('sha256').update(b).digest('hex')!==m.sha256)throw Error('Enterprise plugin archive mismatch');"
       - name: Prepare uniquely named release assets
         shell: bash
         run: |
@@ -279,6 +312,7 @@ jobs:
             name="$(basename "$file")"
             cp "$file" "release-assets/${artifact}--${name}"
           done < <(find staging -type f -print0)
+          cp enterprise-assets/* release-assets/
           (cd release-assets && sha256sum -- * > SHA256SUMS)
       - name: Publish GitHub prerelease
         env:
@@ -292,7 +326,8 @@ jobs:
 
           - 技能页接入 SkillHub 目录，可查看技能图标、来源、版本与安装入口；本地技能仍可单独管理。
           - 现有插件页可直接发现 DSH 社区插件，并打开第三方 dsh-market 目录进行搜索和安装。
-          - Desktop 使用锁定的官方 DSH 0.1.7-rc.2 Profile；内置 Node.js 和 Python，不额外打包浏览器。
+          - Desktop 使用与源码锁一致的官方 DSH Profile；内置 Node.js 和 Python，不额外打包浏览器。
+          - 企业连接作为独立 tgz 附件下载，在个人空间“插件 → 添加插件”输入下载文件的完整路径安装，再进入“设置 → 企业账号 → 连接企业”；无需第三方市场。基础安装包不预装企业插件。
           - 提供 Windows x64 安装包，以及 macOS Intel x64、Apple Silicon arm64 未签名 DMG。
 
           SkillHub 和 dsh-market 是独立第三方来源；目录内容并非全部预装或经 WorkDSH 审核。安装前请检查许可、依赖和版本兼容性。本次为 Alpha 预发布，升级前请备份本地配置和数据。所有文件的 SHA-256 见 `SHA256SUMS`。

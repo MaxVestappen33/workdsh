@@ -8,7 +8,7 @@
     "node": "^22.19.0 || >=24.0.0"
   },
   "workspaces": [
-    "dsh-plugin-desktop"
+    "apps/desktop"
   ],
   "resolutions": {
     "app-builder-lib@npm:26.15.7": "patch:app-builder-lib@npm%3A26.15.7#./patches/app-builder-lib@26.15.7.patch"
@@ -30,7 +30,7 @@
     "check:desktop-dsh-alignment": "node scripts/verify-desktop-dsh-alignment.mjs",
     "check:web-dsh-alignment": "node scripts/verify-web-desktop-dsh-alignment.mjs",
     "check:web-plan": "node scripts/check-local-web-plan.mjs",
-    "check:layout": "yarn check:bilingual-docs && node scripts/verify-layout.mjs",
+    "check:layout": "yarn check:bilingual-docs && node scripts/verify-layout.mjs && node scripts/verify-delivery-paths.mjs",
     "check": "yarn check:layout && yarn check:desktop-dsh-alignment && yarn check:web-dsh-alignment && yarn check:web-plan && yarn workspace dsh-plugin-desktop check",
     "dev": "yarn workspace dsh-plugin-desktop dev",
     "start": "yarn workspace dsh-plugin-desktop start",
@@ -40,12 +40,6 @@
     "dist:win": "yarn workspace dsh-plugin-desktop dist:win",
     "dist:win-portable": "yarn workspace dsh-plugin-desktop dist:win-portable",
     "release:pack": "node scripts/package-desktop-release.mjs --source=local",
-    "release:pack:published": "node scripts/package-desktop-release.mjs --source=published",
-    "upstream:version": "cd deepseek-harness && corepack pnpm --version",
-    "upstream:install": "cd deepseek-harness && CI=true corepack pnpm install --frozen-lockfile",
-    "upstream:build": "cd deepseek-harness && corepack pnpm run build",
-    "upstream:build:official": "cd deepseek-harness && CI=true DSH_BUILD_CLIENT_PROFILE=official corepack pnpm run build",
-    "upstream:pack:dsh": "cd deepseek-harness && CI=true corepack pnpm run release:pack --family dsh",
-    "upstream:prepare-runtime": "yarn upstream:install && yarn upstream:build:official && yarn upstream:pack:dsh"
+    "release:pack:published": "node scripts/package-desktop-release.mjs --source=published"
   }
 }

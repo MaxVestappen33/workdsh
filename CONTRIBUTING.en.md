@@ -24,7 +24,6 @@ Plugins that follow the manifesto coexist better with other plugins and will be 
 ### Development environment
 
 ```sh
-git submodule update --init --recursive
 corepack yarn install --immutable
 corepack yarn check   # full headless gate: build, typecheck, tests, and smokes
 corepack yarn dev     # launch the application when a graphical session is available
@@ -32,15 +31,15 @@ corepack yarn dev     # launch the application when a graphical session is avail
 
 ### Repository boundaries (please read before starting)
 
-- `deepseek-harness/` is the pinned upstream submodule. **Desktop development never edits files inside it**; upstream updates land through separate pin commits.
-- Desktop code lives in `dsh-plugin-desktop/`, and WorkDSH feature packages live in `workdsh-web/`. The former uses the root Yarn workspace; the latter retains its own pnpm workspace. The pinned upstream `deepseek-harness/` is a Git submodule.
+- Official dependencies use the published version and archive digests locked in `upstream.json`; builds never clone or compile official source.
+- Desktop code lives in `apps/desktop/`, and WorkDSH feature packages live in `apps/web/`. The former uses the root Yarn workspace; the latter retains its own pnpm workspace.
 - Builds, typechecks, unit tests, and smoke checks must stay headless-safe.
 
 ### Commits and pull requests
 
 - Use conventional commit messages (for example `fix(desktop): ...`, `docs: ...`).
 - Run `yarn check` and keep it green before committing.
-- After changing packaged dependencies or the WorkDSH Profile, verify the actual installed versions, license files, and `dsh-plugin-desktop/THIRD_PARTY_NOTICES.md`. Do not reuse a dependency inventory from an older release.
+- After changing packaged dependencies or the WorkDSH Profile, verify the actual installed versions, license files, and `apps/desktop/THIRD_PARTY_NOTICES.md`. Do not reuse a dependency inventory from an older release.
 - Documentation changes should stay bilingual and update the `README.i18n.yaml` hash record.
 - Describe the change, its motivation, and how it was verified in the PR; merge after CI passes.
 

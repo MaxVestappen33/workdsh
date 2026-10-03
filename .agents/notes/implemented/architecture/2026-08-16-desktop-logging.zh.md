@@ -40,6 +40,6 @@ JavaScript handler 无法在主进程原生崩溃后继续执行。因此 bootst
 
 所有进入文件边界的日志行都经过脱敏层，覆盖 `sk-` 风格 key、长 hex/base64 token、bearer/basic authorization、cookie header、带引号或不带引号的具名敏感字段（包括渲染后的 JSON），以及 HTTP URL 中的凭据或敏感 query 值。
 
-默认 profile 加载 `dsh-plugin-desktop/diagnostics`，在 macOS 与 Windows 的原生托盘中提供 **Export Diagnostics…** 命令。创建归档前，`desktopRuntime.exportDiagnostics()` 会显示本地化隐私确认，说明日志可能包含本地路径与工作区/会话标识，崩溃转储可能包含进程内存片段。确认后的导出在短生命周期 Node worker 中运行，避免文件读取与压缩阻塞 Electron 主线程。Worker 优先纳入本地普通 `.dmp` 文件，再纳入最近的自有日志，两者共享 50MB 证据上限；同时加入系统信息摘要与被省略文件数量，把 zip 原子发布到 `userData/diagnostics/`，拒绝链接形式的输入、输出和崩溃转储目录，容忍文件消失或被锁，并只保留最新三份归档。Runtime 会合并并发请求，成功后在系统文件管理器中定位文件，失败时显示原生错误对话框。
+默认 profile 加载 `apps/desktop/diagnostics`，在 macOS 与 Windows 的原生托盘中提供 **Export Diagnostics…** 命令。创建归档前，`desktopRuntime.exportDiagnostics()` 会显示本地化隐私确认，说明日志可能包含本地路径与工作区/会话标识，崩溃转储可能包含进程内存片段。确认后的导出在短生命周期 Node worker 中运行，避免文件读取与压缩阻塞 Electron 主线程。Worker 优先纳入本地普通 `.dmp` 文件，再纳入最近的自有日志，两者共享 50MB 证据上限；同时加入系统信息摘要与被省略文件数量，把 zip 原子发布到 `userData/diagnostics/`，拒绝链接形式的输入、输出和崩溃转储目录，容忍文件消失或被锁，并只保留最新三份归档。Runtime 会合并并发请求，成功后在系统文件管理器中定位文件，失败时显示原生错误对话框。
 
 带手动清空的设置页日志查看器尚未构建，作为后续项。
