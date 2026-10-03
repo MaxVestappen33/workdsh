@@ -24,7 +24,7 @@ function baseOptions(
     env,
     platform: 'darwin',
     arch: 'arm64',
-    desktopRoot: '/repo/dsh-plugin-desktop',
+    desktopRoot: '/repo/apps/desktop',
     outputDir: '/repo/apps/desktop/dist/mac-release',
     resetOutput: () => undefined,
     listCodeSigningIdentities: identityEnv => {
@@ -63,7 +63,7 @@ describe('macOS release command boundary', () => {
     expect(calls[0]).toEqual({
       command: 'yarn',
       args: ['run', 'check'],
-      cwd: resolve('/repo/dsh-plugin-desktop', '..'),
+      cwd: resolve('/repo/apps/desktop', '..', '..'),
       env: { PATH: '/usr/bin', SAFE_BUILD_VALUE: 'kept' },
     })
     expect(calls[1]).toEqual({
@@ -74,7 +74,7 @@ describe('macOS release command boundary', () => {
         '--config.npmRebuild=false',
         '--config.directories.output=/repo/apps/desktop/dist/mac-release',
       ],
-      cwd: '/repo/dsh-plugin-desktop',
+      cwd: '/repo/apps/desktop',
       env: {
         PATH: '/usr/bin',
         SAFE_BUILD_VALUE: 'kept',
@@ -90,7 +90,7 @@ describe('macOS release command boundary', () => {
         '/repo/apps/desktop/dist/mac-release',
         'arm64',
       ],
-      cwd: '/repo/dsh-plugin-desktop',
+      cwd: '/repo/apps/desktop',
       env: { PATH: '/usr/bin', SAFE_BUILD_VALUE: 'kept' },
     })
     expect(logs).toHaveLength(1)
@@ -157,7 +157,7 @@ describe('macOS release command boundary', () => {
     expect(() => releaseMac(options)).toThrow('headless check failed')
     expect(calls).toHaveLength(1)
     expect(calls[0]?.args).toEqual(['run', 'check'])
-    expect(calls[0]?.cwd).toBe(resolve('/repo/dsh-plugin-desktop', '..'))
+    expect(calls[0]?.cwd).toBe(resolve('/repo/apps/desktop', '..', '..'))
     expect(resetOutput).not.toHaveBeenCalled()
   })
 })
