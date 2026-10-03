@@ -74,6 +74,12 @@ WorkDSH supports personal use and Enterprise Desktop. Personal and enterprise mo
 
 Desktop keeps personal and enterprise data and credentials in separate spaces. Install the enterprise account plugin when needed, then sign in with the company address and account; the backend still authorizes membership. Projects are included in Desktop. Enterprise collaboration is installed on demand and activates after company login; personal mode does not activate it. Enterprise Agent execution is not deployed on ECS. Notifications and business applications remain independently installed plugins.
 
+### Enterprise management backend (separate repository)
+
+The enterprise backend is developed and deployed independently in **[techflag/workdsh-admin](https://github.com/techflag/workdsh-admin)**. This repository provides the WorkDSH client and plugins. The backend provides company accounts, organization permissions, collaboration data, member-authorized conversation auditing and internal model API forwarding.
+
+Administrators should follow the [workdsh-admin deployment and usage guide](https://github.com/techflag/workdsh-admin#readme), then provide members with the backend address and company accounts. Members install this repository's desktop app and Enterprise Connection plugin and connect to that address; the Agent and tools continue to run on their computer.
+
 ### Install enterprise plugins
 
 The Enterprise Connection package is delivered independently through our [GitHub Releases](https://github.com/techflag/workdsh/releases), without a third-party marketplace. Download `workdsh-enterprise-connection-<version>.tgz`, retain the file and enter its full path in Add plugin. Release assets include the compatible DSH version manifest and `SHA256SUMS`.

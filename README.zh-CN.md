@@ -74,6 +74,12 @@ WorkDSH 支持个人使用和企业 Desktop。个人与企业保留完整官方 
 
 Desktop 的个人与企业空间分别保存数据和凭据。企业账号插件按需安装，安装后使用公司地址和账号登录，企业身份仍由后台授权。项目功能随 Desktop 提供。企业协作按需安装，登录企业账号后启用，个人模式不启用；不部署 ECS 成员 Agent 运行进程。通知和业务应用仍作为独立插件安装。
 
+### 企业管理后台（独立仓库）
+
+企业云端管理后台在 **[techflag/workdsh-admin](https://github.com/techflag/workdsh-admin)** 独立开发和部署。本仓库提供 WorkDSH 客户端与插件；公司账号、组织权限、协作数据、成员授权的会话审计及内部模型 API 转发由管理后台提供。
+
+管理员请按 [workdsh-admin 的部署与使用说明](https://github.com/techflag/workdsh-admin#readme) 部署后台，并向成员提供后台地址和公司账号。成员安装本仓库的桌面端与企业连接插件后连接该地址；Agent 与工具仍在成员本机执行。
+
 ### 安装企业插件
 
 企业连接包由本项目 [GitHub Releases](https://github.com/techflag/workdsh/releases) 独立交付，不依赖第三方插件市场。下载 `workdsh-enterprise-connection-<版本>.tgz`，保留文件并在添加插件时填写完整路径；发行附件包含兼容 DSH 版本的清单及 `SHA256SUMS`。
