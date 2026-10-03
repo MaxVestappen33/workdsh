@@ -151,6 +151,8 @@ corepack yarn dev
 
 Run checks with `corepack yarn check`. On macOS or Windows, `corepack yarn release:pack` builds the Web Profile and Desktop package from the current commit. Once the Web package is published, use `corepack yarn release:pack:published` for the final installer. Both commands share the same [packaging script](scripts/package-desktop-release.mjs). [Contributing](CONTRIBUTING.en.md)
 
+The desktop Tools menu manages the bundled `dsh` command (inspect, install, repair, remove), using the packaged Node, pnpm and official CLI. Commands display the active Desktop space; use `--workdsh-space=personal` or `--workdsh-space=enterprise` to select it explicitly. Initialize the space in Desktop first and keep Desktop signed in for enterprise operations. Plugin changes apply to that space’s Profile.
+
 ### Enterprise Desktop packaging configuration
 
 After deploying [WorkDSH Admin](https://github.com/techflag/workdsh-admin), the company administrator provides the public backend address when packaging Desktop. The configuration file contains only the address, for example:

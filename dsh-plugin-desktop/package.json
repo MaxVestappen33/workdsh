@@ -36,14 +36,15 @@
     "check:win-package": "yarn run check",
     "check:mac-package": "yarn run check",
     "start": "node scripts/start-workdsh.mjs",
-    "dev": "yarn run build && yarn run prepare:workdsh-runtime && yarn run prepare:workdsh-primary-runtime && yarn run start",
-    "package:dir": "yarn run build && yarn run prepare:workdsh-runtime && yarn run prepare:workdsh-primary-runtime && node scripts/package-dir.mjs",
-    "dist:mac": "yarn run prepare:workdsh-runtime && yarn run prepare:workdsh-primary-runtime && node scripts/release-mac.ts",
-    "dist:mac-smoke": "yarn run prepare:workdsh-runtime && yarn run prepare:workdsh-primary-runtime && node scripts/package-mac.ts",
-    "dist:win": "yarn run prepare:workdsh-runtime && yarn run prepare:workdsh-primary-runtime && node scripts/package-win.ts",
-    "dist:win-portable": "yarn run prepare:workdsh-runtime && yarn run prepare:workdsh-primary-runtime && node scripts/package-win-portable.ts",
+    "dev": "yarn run build && yarn run prepare:workdsh-runtime && yarn run prepare:workdsh-primary-runtime && yarn run prepare:workdsh-command && yarn run start",
+    "package:dir": "yarn run build && yarn run prepare:workdsh-runtime && yarn run prepare:workdsh-primary-runtime && yarn run prepare:workdsh-command && node scripts/package-dir.mjs",
+    "dist:mac": "yarn run prepare:workdsh-runtime && yarn run prepare:workdsh-primary-runtime && yarn run prepare:workdsh-command && node scripts/release-mac.ts",
+    "dist:mac-smoke": "yarn run prepare:workdsh-runtime && yarn run prepare:workdsh-primary-runtime && yarn run prepare:workdsh-command && node scripts/package-mac.ts",
+    "dist:win": "yarn run prepare:workdsh-runtime && yarn run prepare:workdsh-primary-runtime && yarn run prepare:workdsh-command && node scripts/package-win.ts",
+    "dist:win-portable": "yarn run prepare:workdsh-runtime && yarn run prepare:workdsh-primary-runtime && yarn run prepare:workdsh-command && node scripts/package-win-portable.ts",
     "prepare:workdsh-runtime": "node scripts/prepare-workdsh-runtime.mjs",
-    "prepare:workdsh-primary-runtime": "node scripts/prepare-workdsh-primary-runtime.mjs"
+    "prepare:workdsh-primary-runtime": "node scripts/prepare-workdsh-primary-runtime.mjs",
+    "prepare:workdsh-command": "node scripts/prepare-workdsh-command.mjs"
   },
   "peerDependencies": {
     "electron": "43.3.0"
@@ -184,6 +185,7 @@
         "from": "build/workdsh-runtime",
         "to": "workdsh-runtime",
         "filter": [
+          "cli/**",
           "profiles/workdsh/**",
           "package-cache/**",
           "node/**",

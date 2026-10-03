@@ -12,11 +12,12 @@ import {
 } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { connectionEntryHtml, enterpriseLoginHtml } from './connection-entry.ts'
+import { connectionEntryHtml, enterpriseLoginHtml, connectionLoadingHtml } from './connection-entry.ts'
 import { connectionPartition, enterpriseConnection, type DesktopConnection } from './connection-mode.ts'
 import { parseDeploymentConfig } from './deployment-config.ts'
 import { EnterpriseLogin, startEnterpriseAuthority, type Authority } from './enterprise-auth.ts'
 import { desktopEnterprisePatch, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher } from './local-runtime.ts'
+import { manageCommand } from './command-management.ts'
 import { cleanOwnedProcessTree, stopOwnedProcess } from './owned-process.ts'
 
 const PROFILE_NAME = 'workdsh'
@@ -110,10 +111,13 @@ function startBrowserWorker(request: { port: number, profile: string }): void {
 }
 
 function openWindow(url: string, connection: DesktopConnection = { mode: 'personal' }, carrier = false): void {
+  const previous = window
+  const previousEntrySurface = entrySurface
   const icon = fileURLToPath(new URL('../build/app-icon.png', import.meta.url))
   window = new BrowserWindow({
     width: 1440,
     height: 960,
+    ...(previous && typeof previous.getBounds === 'function' ? previous.getBounds() : {}),
     minWidth: 960,
     minHeight: 640,
     title: 'WorkDSH',
@@ -146,8 +150,15 @@ function openWindow(url: string, connection: DesktopConnection = { mode: 'person
       event.preventDefault()
     })
   }
-  void page.loadURL(url).then(() => { if (!page.isDestroyed()) page.show() }).catch(() => {
-    if (!page.isDestroyed()) dialog.showErrorBox('无法打开工作区', '请检查企业地址、网络或本地运行状态。')
+  void page.loadURL(url).then(() => {
+    if (page.isDestroyed()) return
+    page.show()
+    if (previous && !previous.isDestroyed()) previous.destroy()
+  }).catch(() => {
+    if (!page.isDestroyed()) page.destroy()
+    if (previous && !previous.isDestroyed()) { window = previous; entrySurface = previousEntrySurface }
+    dialog.showErrorBox('无法打开工作区', '请检查企业地址、网络或本地运行状态。')
+    if (runtime) void returnToEntry()
   })
   page.on('closed', () => { enterpriseWindows.delete(page); if (window === page) window = undefined })
 }
@@ -191,10 +202,18 @@ async function prepareProfile(home: string): Promise<string> {
     await officialCommand(home, ['plugin', '--profile', PROFILE_NAME, 'install'])
     markProfileUpdated(source, result.profile)
   }
+  officialLauncher(source, home, bundledNodeExecutable(), join(bundledPrimaryRuntime(), 'dependencies', 'pnpm', 'bin', 'pnpm.cjs'))
   return result.profile
 }
 
+function rememberCommandSpace(home?: string): void {
+  const active = home ? { mode: enterprise ? 'enterprise' : 'personal', home, ...(enterprise ? { root: enterprise.root } : {}), label: enterprise ? `${enterprise.login.actor.organizationName ?? '企业'} / ${enterprise.login.actor.displayName}` : '个人工作区' } : undefined
+  mkdirSync(app.getPath('userData'), { recursive: true })
+  writeFileSync(join(app.getPath('userData'), 'command-context.json'), JSON.stringify({ personalHome: runtimeHome(), active }), { mode: 0o600 })
+}
+
 function startRuntime(home: string, connection: DesktopConnection, patches: string[] = []): void {
+  rememberCommandSpace(home)
   if (quitRequested) throw new Error('启动已取消')
   const executable = bundledNodeExecutable()
   if (!existsSync(executable)) throw new Error(`Bundled Node.js runtime is missing: ${executable}`)
@@ -227,7 +246,7 @@ function startRuntime(home: string, connection: DesktopConnection, patches: stri
   child.stdout.on('data', consume)
   child.stderr.on('data', chunk => process.stderr.write(chunk.toString().replace(/\?token=[^\s]+/gu, '?token=[redacted]')))
   child.once('error', cause => {
-    if (!quitting && runtime === child) { dialog.showErrorBox('启动失败', cause.message); app.quit() }
+    if (!quitting && runtime === child) { dialog.showErrorBox('启动失败', cause.message); void returnToEntry() }
   })
   child.once('exit', code => {
     if (runtime !== child) return
@@ -260,6 +279,7 @@ async function leaveWorkspace(): Promise<void> {
   const child = runtime
   if (child) { await stopOwnedProcess(child); if (runtime === child) { runtime = undefined; runtimeStarting = false } }
   enterprise = undefined
+  rememberCommandSpace()
   if (session) {
     if (session.authFile) rmSync(session.authFile, { force: true })
     const revoked = await session.login.logout()
@@ -318,21 +338,21 @@ function connectEntryNavigation(entry: BrowserWindow): void {
           pendingConnection = connection
           enterprisePortal = connection.portalOrigin
           rememberBackend(enterprisePortal)
-          entry.destroy()
           openWindow('data:text/html;charset=utf-8,' + encodeURIComponent(enterpriseLoginHtml(enterprisePortal)), { mode: 'personal' }, true)
-                  connectEntryNavigation(window!)
+          connectEntryNavigation(window!)
         } else if (command.hostname === 'personal') {
           if (enterprise) await leaveWorkspace()
           const home = runtimeHome()
+          await entry.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(connectionLoadingHtml('正在启动个人工作区')))
           await prepareProfile(home)
-          entry.destroy(); entrySurface = false
+          entrySurface = false
           startRuntime(home, { mode: 'personal' })
         } else if (command.hostname === 'entry') {
           await leaveWorkspace(); showConnectionEntry()
         }
       } catch (error) {
         dialog.showErrorBox('无法进入', error instanceof Error ? error.message : '请检查入口配置')
-        if (!window) showConnectionEntry()
+        showConnectionEntry()
       } finally { endSwitch() }
     })()
   })
@@ -375,7 +395,8 @@ async function activateEnterprise(): Promise<void> {
   const patch = desktopEnterprisePatch(session.home, session.authority, session.login.actor, session.login.backendUrl, session.deviceId)
   session.authFile = patch.authFile
   const connection: DesktopConnection = { mode: 'enterprise', portalOrigin: session.login.backendUrl, organizationId: session.login.actor.organizationId, principalId: session.login.actor.id }
-  window?.destroy(); entrySurface = false
+  if (window) await window.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(connectionLoadingHtml('正在启动企业工作区')))
+  entrySurface = false
   startRuntime(session.home, connection, [patch.patch])
   verifyTimer = setInterval(() => {
     if (verifying || switching) return
@@ -415,6 +436,7 @@ function installConnectionMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     ...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : []),
     { label: '工作区', submenu: [{ label: '退出并切换使用方式', click: () => { void returnToEntry() } }] },
+    { label: '工具', submenu: [{ label: '管理 dsh 命令…', click: () => { void manageCommand(join(process.resourcesPath, 'workdsh-runtime'), enterprise ? `${enterprise.login.actor.organizationName ?? '企业'} / ${enterprise.login.actor.displayName}` : '个人工作区') } }] },
     { role: 'editMenu' }, { role: 'viewMenu' }, { role: 'windowMenu' },
   ]))
 }

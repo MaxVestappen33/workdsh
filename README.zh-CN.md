@@ -139,6 +139,8 @@ Desktop 安装包默认内置 Node.js 和 Python 运行时，普通用户无需�
 
 企业 Desktop 使用公司提供、包含企业入口的安装包。已有下载版本的功能以对应发行说明为准。
 
+桌面菜单“工具 → 管理 dsh 命令”可查看、安装、修复和移除终端命令，使用随包的 Node、pnpm 和官方 CLI。命令默认操作当前 Desktop 工作区，启动时显示空间名称；`--workdsh-space=personal` 或 `--workdsh-space=enterprise` 可明确选择。企业空间须保持 Desktop 登录，首次使用前先在 Desktop 打开对应空间。插件安装、更新和移除遵循该空间的官方 Profile。
+
 ## 开发与文档
 
 源码分工：[WorkDSH 功能包与 Web](workdsh-web/README.zh-CN.md) · [Desktop 外壳](dsh-plugin-desktop/README.zh.md) · [架构](docs/architecture.md) · [全部文档](docs/README.md)。从源码运行需要 Node.js 22.19+ 或 24+、Corepack 和 Yarn 4.18.0：

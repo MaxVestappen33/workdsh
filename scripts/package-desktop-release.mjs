@@ -89,6 +89,7 @@ if (source === 'local') {
 const runtimeEnv = { ...process.env, WORKDSH_RELEASE_DIRECTORY: releaseDirectory }
 run('Prepare the single WorkDSH DSH Profile', corepack, ['yarn', 'workspace', 'dsh-plugin-desktop', 'prepare:workdsh-runtime'], { env: runtimeEnv })
 run('Prepare bundled Python and Node.js', corepack, ['yarn', 'workspace', 'dsh-plugin-desktop', 'prepare:workdsh-primary-runtime'], { env: runtimeEnv })
+run('Prepare official command management adapters', corepack, ['yarn', 'workspace', 'dsh-plugin-desktop', 'prepare:workdsh-command'], { env: runtimeEnv })
 run('Build the Desktop installer', process.execPath, [join(root, 'dsh-plugin-desktop', 'scripts', platform === 'win32' ? 'package-win.ts' : 'package-mac.ts')], {
   env: { ...runtimeEnv, DSH_PACKAGE_CHECK_ALREADY_RAN: '1' },
 })

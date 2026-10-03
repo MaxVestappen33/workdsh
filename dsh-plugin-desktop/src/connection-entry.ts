@@ -14,3 +14,10 @@ export function enterpriseLoginHtml(backend: string): string {
   const escaped = backend.replace(/[&<>"']/g, value => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[value]!)
   return base.slice(0, start).replace('form-action workdsh:', "form-action 'none'") + `<main><header><span>W</span> WorkDSH</header><h1>登录企业 Desktop</h1><p>${escaped}</p><form id="enterprise-login"><label for="account">账号</label><input id="account" autocomplete="username" required maxlength="254"><label for="password" style="margin-top:16px">密码</label><input id="password" type="password" autocomplete="current-password" required maxlength="512"><button type="submit">登录并在本机运行</button></form><p id="status" role="status" style="margin-top:16px"></p><a href="workdsh://entry" style="margin-top:16px">返回使用方式</a></main></html>`
 }
+
+/** Trusted carrier loading surface; no remote content or credentials are embedded. */
+export function connectionLoadingHtml(message: string): string {
+  const base = connectionEntryHtml('')
+  const escaped = message.replace(/[&<>"']/g, value => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[value]!)
+  return base.slice(0, base.indexOf('<main>')) + `<style>main{animation:appear .16s ease-out}.spinner{width:28px;height:28px;border:3px solid var(--border);border-top-color:#2463eb;border-radius:50%;animation:spin .8s linear infinite;margin:24px auto}@keyframes spin{to{transform:rotate(360deg)}}@keyframes appear{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}@media(prefers-reduced-motion:reduce){main,.spinner{animation:none}}</style><main aria-busy="true"><header><span>W</span> WorkDSH</header><h1 role="status">${escaped}</h1><p>正在准备本机工作区，请稍候。首次启动可能需要下载依赖。</p><div class="spinner" aria-hidden="true"></div></main></html>`
+}

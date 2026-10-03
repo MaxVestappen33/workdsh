@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
 import { enterpriseSpace } from '../src/local-runtime.ts'
 
-const state = vi.hoisted(() => ({ windows: [] as any[], menu: [] as any[], handlers: {} as Record<string, (...args: any[]) => Promise<any>>, logins: [] as string[], userData: '', revoked: true, stop: vi.fn(async () => {}), logout: vi.fn(async () => false), verify: vi.fn(async () => {}), closed: vi.fn(async () => {}) }))
+const state = vi.hoisted(() => ({ loadGate: undefined as Promise<void> | undefined, windows: [] as any[], menu: [] as any[], handlers: {} as Record<string, (...args: any[]) => Promise<any>>, logins: [] as string[], userData: '', revoked: true, stop: vi.fn(async () => {}), logout: vi.fn(async () => false), verify: vi.fn(async () => {}), closed: vi.fn(async () => {}) }))
 const actor = { id: 'a', organizationId: 'org-a', organizationName: 'Company', displayName: 'A', email: 'a@test', role: 'MEMBER' as const, mustChangePassword: false }
 vi.mock('../src/enterprise-auth.ts', () => ({
   EnterpriseLogin: { login: async (origin: string) => { state.logins.push(origin); return { backendUrl: origin, actor, verify: state.verify, logout: state.logout, cancelRequests() {} } } },
@@ -22,7 +22,7 @@ vi.mock('electron', async () => {
       session: { closeAllConnections: vi.fn(async () => {}), clearStorageData: vi.fn(async () => {}), clearCache: vi.fn(async () => {}) },
     })
     constructor(readonly options: any) { super(); state.windows.push(this) }
-    async loadURL(url: string) { this.url = url }
+    async loadURL(url: string) { this.url = url; if (url.startsWith('http://127.0.0.1:19999')) await state.loadGate }
     show() {} setTitle() {} isDestroyed() { return this.destroyed }
     destroy() { this.destroyed = true; this.emit('closed') }
   }
@@ -96,9 +96,17 @@ it('enforces the packaged backend, uses built-in enterprise identity, and clears
     expect(app.relaunch).not.toHaveBeenCalled()
     expect(app.quit).not.toHaveBeenCalled()
     expect(children[0].kill).not.toHaveBeenCalled()
+    let finishLoad!: () => void
+    state.loadGate = new Promise<void>(resolve => { finishLoad = resolve })
+    const loadingPage = state.windows[1]
     children[0].stdout.emit('data', Buffer.from('dsh web: http://127.0.0.1:19999/?token=local-token'))
     const workspace = state.windows[2]
     expect(workspace.url).toContain('127.0.0.1:19999')
+    expect(loadingPage.destroyed).toBe(false)
+    expect(decodeURIComponent(loadingPage.url)).toContain('正在')
+    finishLoad()
+    await vi.waitFor(() => expect(loadingPage.destroyed).toBe(true))
+    state.loadGate = undefined
     expect(workspace.options.webPreferences.partition).toMatch(/^workdsh-enterprise-/)
     expect(workspace.options.webPreferences.preload).toBeUndefined()
     expect(workspace.options.webPreferences.sandbox).toBe(true)
