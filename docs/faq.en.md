@@ -16,7 +16,7 @@ Ordinary users do not. The installer includes a pinned runtime and DSH Profile. 
 
 ## Is official Harness modified?
 
-No. The repository pins an unmodified upstream submodule. The Electron carrier starts that DSH Profile, and WorkDSH features are composed by Profile packages.
+No. The repository pins official published packages and Desktop release archives, without building official source. The Electron carrier starts that DSH Profile, and WorkDSH features are composed by Profile packages.
 
 ## Where are data and plugins?
 

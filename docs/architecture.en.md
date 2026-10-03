@@ -2,7 +2,7 @@
 
 [中文](architecture.md)
 
-WorkDSH Desktop is an Electron carrier for one pinned DeepSeek Harness Profile. `dsh-plugin-desktop/src/workdsh-main.ts` is the installer's only application entry point. `deepseek-harness/` is an unmodified upstream submodule. The bundled `workdsh-runtime/profiles/workdsh` provides the DSH Host, Web UI, and WorkDSH feature packages.
+WorkDSH Desktop is an Electron carrier for one pinned DeepSeek Harness Profile. `dsh-plugin-desktop/src/workdsh-main.ts` is the installer's only application entry point. Official DSH is consumed as version-locked published packages. Bundled interpreters, Office assets and command helpers come from checksum-verified official Desktop releases; no official source checkout is required. The bundled `workdsh-runtime/profiles/workdsh` provides the DSH Host, Web UI, and WorkDSH feature packages.
 
 ```mermaid
 flowchart LR

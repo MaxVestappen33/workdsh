@@ -35,7 +35,6 @@ function run(label, command, commandArgs, { cwd = root, env = process.env } = {}
 }
 
 run('Install Desktop dependencies', corepack, ['yarn', 'install', '--immutable'])
-run('Install the pinned official DSH checkout dependencies', corepack, ['yarn', 'upstream:install'])
 run('Check Desktop packaging', corepack, ['yarn', 'workspace', 'dsh-plugin-desktop', platform === 'win32' ? 'check:win-package' : 'check:mac-package'])
 
 const version = JSON.parse(readFileSync(join(webRoot, 'package.json'), 'utf8')).version
@@ -49,7 +48,7 @@ if (source === 'local') {
   const webReleaseDirectory = join(webRoot, '.artifacts', `project-v${version}`)
   const manifest = JSON.parse(readFileSync(join(webReleaseDirectory, 'release-manifest.json'), 'utf8'))
   if (manifest.version !== version || manifest.sourceCommit !== commit || manifest.sourceDirty) {
-    const changed = execFileSync('git', ['diff', '--name-only', '--ignore-submodules=dirty', 'HEAD', '--', 'workdsh-web', 'upstream.json', 'deepseek-harness'], { cwd: root, encoding: 'utf8' }).trim()
+    const changed = execFileSync('git', ['diff', '--name-only', '--ignore-submodules=dirty', 'HEAD', '--', 'workdsh-web', 'upstream.json'], { cwd: root, encoding: 'utf8' }).trim()
     throw new Error(`The local Web release candidate is not a clean package of this commit: version=${manifest.version}/${version}, commit=${manifest.sourceCommit}/${commit}, sourceDirty=${manifest.sourceDirty}, changed=${changed || '(none)'}`)
   }
   run('Pack this commit\'s Desktop feature composition', process.execPath, [join(root, 'dsh-plugin-desktop', 'scripts', 'pack-workdsh-profile.mjs'), webRoot, releaseDirectory])

@@ -2,7 +2,7 @@
 
 [中文](plugin-development.md)
 
-WorkDSH uses the official DeepSeek Harness plugin system. Ordinary DSH plugins should use upstream public Host, Client, tool, and service contracts. Compatibility is determined against the currently pinned DSH version. The upstream source is the read-only `deepseek-harness/` submodule.
+WorkDSH uses the official DeepSeek Harness plugin system. Ordinary DSH plugins should use upstream public Host, Client, tool, and service contracts. Compatibility is determined against the currently pinned DSH version. Use the public APIs of the fixed official published packages; source checkouts are not product build inputs.
 
 WorkDSH projects, library, experts, skills, and connectors are provided by packages in the runtime Profile. Implement and test extensions in the relevant Profile package rather than adding another Host, Client, or DSH dependency to the Electron carrier. Activity, Office, audit, access, and providers support that same Profile; they are not separately released Desktop editions.
 

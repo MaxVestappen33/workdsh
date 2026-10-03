@@ -146,10 +146,11 @@ Desktop 安装包默认内置 Node.js 和 Python 运行时，普通用户无需�
 源码分工：[WorkDSH 功能包与 Web](workdsh-web/README.zh-CN.md) · [Desktop 外壳](dsh-plugin-desktop/README.zh.md) · [架构](docs/architecture.md) · [全部文档](docs/README.md)。从源码运行需要 Node.js 22.19+ 或 24+、Corepack 和 Yarn 4.18.0：
 
 ```sh
-git submodule update --init --recursive
 corepack yarn install --immutable
 corepack yarn dev
 ```
+
+官方 DSH 核心使用已发布 npm 包；Desktop 的 Node、pnpm、Python、Office 资源和命令管理程序从官方安装包提取。`upstream.json` 锁定版本、下载地址、大小与 SHA-512 摘要，构建无需克隆官方源码。首次打包会下载对应平台的官方包；Windows 构建机需要 7-Zip，仅用于解压安装包。
 
 运行检查：`corepack yarn check`。在 macOS 或 Windows 上，从当前提交一键打包 Web Profile 与 Desktop：`corepack yarn release:pack`；Web 包发布后，正式安装包使用 `corepack yarn release:pack:published`。两条命令使用同一个[打包脚本](scripts/package-desktop-release.mjs)。[参与贡献](CONTRIBUTING.md)
 

@@ -24,7 +24,6 @@ DSH 的核心是插件。如果你写插件，请先阅读：
 ### 开发环境
 
 ```sh
-git submodule update --init --recursive
 corepack yarn install --immutable
 corepack yarn check   # 完整 headless gate：构建、类型检查、测试与冒烟
 corepack yarn dev     # 有图形环境时启动应用
@@ -32,8 +31,8 @@ corepack yarn dev     # 有图形环境时启动应用
 
 ### 仓库边界（开始前务必了解）
 
-- `deepseek-harness/` 是固定版本的上游子模块，**桌面开发不修改其中的任何文件**；上游内容更新走独立的 pin 提交。
-- 桌面代码位于 `dsh-plugin-desktop/`，WorkDSH 功能包位于 `workdsh-web/`；前者使用根目录 Yarn 工作区，后者保留独立 pnpm 工作区。上游 `deepseek-harness/` 是固定版本的 Git 子模块。
+- 官方依赖使用 `upstream.json` 锁定的发布版本与校验摘要，构建不克隆或编译官方源码。
+- 桌面代码位于 `dsh-plugin-desktop/`，WorkDSH 功能包位于 `workdsh-web/`；前者使用根目录 Yarn 工作区，后者保留独立 pnpm 工作区。
 - 构建、类型检查、单元测试和冒烟检查必须保持 headless-safe。
 
 ### 提交与 PR

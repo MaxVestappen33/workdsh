@@ -42,7 +42,7 @@ try {
   // cleanliness covers the Web source and the DSH version inputs it consumes.
   const repositoryRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: root, encoding: 'utf8' }).trim();
   const webPath = relative(repositoryRoot, root);
-  execFileSync('git', ['diff', '--quiet', '--ignore-submodules=dirty', 'HEAD', '--', webPath || '.', 'upstream.json', 'deepseek-harness'], { cwd: repositoryRoot, stdio: 'ignore' });
+  execFileSync('git', ['diff', '--quiet', '--ignore-submodules=dirty', 'HEAD', '--', webPath || '.', 'upstream.json'], { cwd: repositoryRoot, stdio: 'ignore' });
 } catch (error) {
   if (error.status !== 1) throw error;
   sourceDirty = true;

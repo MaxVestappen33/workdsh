@@ -33,7 +33,6 @@ WORKDSH_DEPLOYMENT_CONFIG=/absolute/path/company.json corepack yarn package:dir
 使用 Node.js `^22.19.0` 或 `>=24`，以及通过 Corepack 启动的 Yarn 4.18.0。在仓库根目录执行：
 
 ```sh
-git submodule update --init --recursive
 corepack yarn install --immutable
 corepack pnpm --dir workdsh-web build
 node dsh-plugin-desktop/scripts/pack-workdsh-profile.mjs workdsh-web

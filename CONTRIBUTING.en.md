@@ -24,7 +24,6 @@ Plugins that follow the manifesto coexist better with other plugins and will be 
 ### Development environment
 
 ```sh
-git submodule update --init --recursive
 corepack yarn install --immutable
 corepack yarn check   # full headless gate: build, typecheck, tests, and smokes
 corepack yarn dev     # launch the application when a graphical session is available
@@ -32,8 +31,8 @@ corepack yarn dev     # launch the application when a graphical session is avail
 
 ### Repository boundaries (please read before starting)
 
-- `deepseek-harness/` is the pinned upstream submodule. **Desktop development never edits files inside it**; upstream updates land through separate pin commits.
-- Desktop code lives in `dsh-plugin-desktop/`, and WorkDSH feature packages live in `workdsh-web/`. The former uses the root Yarn workspace; the latter retains its own pnpm workspace. The pinned upstream `deepseek-harness/` is a Git submodule.
+- Official dependencies use the published version and archive digests locked in `upstream.json`; builds never clone or compile official source.
+- Desktop code lives in `dsh-plugin-desktop/`, and WorkDSH feature packages live in `workdsh-web/`. The former uses the root Yarn workspace; the latter retains its own pnpm workspace.
 - Builds, typechecks, unit tests, and smoke checks must stay headless-safe.
 
 ### Commits and pull requests

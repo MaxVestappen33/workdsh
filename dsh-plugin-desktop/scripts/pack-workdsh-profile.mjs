@@ -17,7 +17,7 @@ if (project.devDependencies?.['@deepseek-ai/dsh'] !== DSH_VERSION) throw new Err
 const sourceRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: source, encoding: 'utf8' }).trim()
 const sourcePath = relative(sourceRoot, source) || '.'
 const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: source, encoding: 'utf8' }).trim()
-const sourceDirty = execFileSync('git', ['status', '--porcelain', '--untracked-files=all', '--', sourcePath, 'upstream.json', 'deepseek-harness'], { cwd: sourceRoot, encoding: 'utf8' }).trim().length > 0
+const sourceDirty = execFileSync('git', ['status', '--porcelain', '--untracked-files=all', '--', sourcePath, 'upstream.json'], { cwd: sourceRoot, encoding: 'utf8' }).trim().length > 0
 const pnpm = join(source, 'node_modules/pnpm/bin/pnpm.cjs')
 const packages = []
 const requiredPeers = {}

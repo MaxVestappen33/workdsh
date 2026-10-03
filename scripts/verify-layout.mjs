@@ -14,11 +14,10 @@ const fail = message => { throw new Error(`verify-layout: ${message}`) }
 const workspace = readJson('package.json')
 const upstream = readJson('upstream.json')
 const stablePlugin = readJson('dsh-plugin-desktop/package.json')
-const upstreamPackage = readJson('deepseek-harness/package.json')
 
 if (stablePlugin.name !== 'dsh-plugin-desktop') fail('the stable Desktop workspace must retain dsh-plugin-desktop')
-if (typeof upstream.commit !== 'string' || typeof upstream.version !== 'string') {
-  fail('the pinned upstream commit and version must be recorded')
+if (upstream.distribution !== 'published-packages-and-desktop-release' || typeof upstream.version !== 'string') {
+  fail('the official release distribution and version must be recorded')
 }
 
 if (workspace.packageManager !== 'yarn@4.18.0') {
@@ -48,16 +47,6 @@ for (const legacyFile of [
 ]) {
   if (existsSync(resolve(root, legacyFile))) fail(`${legacyFile} must not exist`)
 }
-if (run('git', ['config', '-f', '.gitmodules', '--get', 'submodule.deepseek-harness.path']) !== 'deepseek-harness') {
-  fail('the upstream submodule path must be deepseek-harness')
-}
-if (run('git', ['config', '-f', '.gitmodules', '--get', 'submodule.deepseek-harness.url']) !== upstream.repository) {
-  fail('the upstream submodule URL differs from upstream.json')
-}
-if (typeof upstreamPackage.packageManager !== 'string' || !upstreamPackage.packageManager.startsWith('pnpm@')) {
-  fail('the upstream checkout must retain its pnpm package manager')
-}
-
 for (const [owner, manifest] of [
   ['root', workspace],
   ['stable desktop', stablePlugin],
@@ -73,25 +62,9 @@ for (const [owner, manifest] of [
   }
 }
 
-const [mode, object] = run('git', ['ls-files', '--stage', '--', 'deepseek-harness']).split(/\s+/u)
-if (mode !== '160000') fail('deepseek-harness must be tracked as a Git submodule')
-if (object !== upstream.commit) fail(`submodule index is ${object}, expected ${upstream.commit}`)
-
-const upstreamDir = resolve(root, 'deepseek-harness')
-if (run('git', ['rev-parse', 'HEAD'], upstreamDir) !== upstream.commit) {
-  fail('checked-out upstream commit differs from upstream.json')
-}
-if (run('git', ['status', '--porcelain'], upstreamDir) !== '') {
-  fail('deepseek-harness contains local changes')
-}
-if (run('git', ['remote', 'get-url', 'origin'], upstreamDir) !== upstream.repository) {
-  fail('deepseek-harness origin differs from upstream.json')
-}
-if (upstreamPackage.version !== upstream.version) {
-  fail('deepseek-harness package version differs from upstream.json')
-}
+if (run('git', ['ls-files', '--stage', '--', 'deepseek-harness']).startsWith('160000')) fail('Official source must not be a build dependency')
 if (Object.keys(stablePlugin.dependencies ?? {}).some(name => name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-'))) {
   fail('the Electron carrier must not directly depend on a second DSH runtime')
 }
 
-process.stdout.write(`verify-layout: one Electron carrier and upstream ${upstream.commit.slice(0, 10)} are consistent\n`)
+process.stdout.write(`verify-layout: one Electron carrier and official release ${upstream.version} are consistent\n`)

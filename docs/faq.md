@@ -16,7 +16,7 @@
 
 ## 是否修改了官方 Harness？
 
-没有。仓库固定一个未修改的上游子模块。Electron 外壳启动该版本的 DSH Profile，WorkDSH 功能由 Profile 包组合。
+没有。仓库使用固定版本的官方发布包及校验过的 Desktop 发布产物，不编译官方源码。Electron 外壳启动该版本的 DSH Profile，WorkDSH 功能由 Profile 包组合。
 
 ## 数据与插件在哪里？
 

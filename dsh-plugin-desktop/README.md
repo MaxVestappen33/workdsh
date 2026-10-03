@@ -33,7 +33,6 @@ Packaging writes the validated configuration to `workdsh-config.json` in applica
 Use Node.js `^22.19.0` or `>=24` and Corepack Yarn 4.18.0. At the repository root:
 
 ```sh
-git submodule update --init --recursive
 corepack yarn install --immutable
 corepack pnpm --dir workdsh-web build
 node dsh-plugin-desktop/scripts/pack-workdsh-profile.mjs workdsh-web

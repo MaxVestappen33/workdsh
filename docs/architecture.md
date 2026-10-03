@@ -2,7 +2,7 @@
 
 [English](architecture.en.md)
 
-WorkDSH Desktop 是一个 Electron 外壳，运行一套固定版本的 DeepSeek Harness Profile。`dsh-plugin-desktop/src/workdsh-main.ts` 是安装包唯一的应用入口；`deepseek-harness/` 是不修改的上游子模块。安装包中的 `workdsh-runtime/profiles/workdsh` 提供 DSH Host、Web UI 和 WorkDSH 功能包。
+WorkDSH Desktop 是一个 Electron 外壳，运行一套固定版本的 DeepSeek Harness Profile。`dsh-plugin-desktop/src/workdsh-main.ts` 是安装包唯一的应用入口；官方 DSH 使用锁定版本的已发布包；解释器、Office 资源和命令管理程序从校验过的官方 Desktop 发布包提取，构建无需官方源码。安装包中的 `workdsh-runtime/profiles/workdsh` 提供 DSH Host、Web UI 和 WorkDSH 功能包。
 
 ```mermaid
 flowchart LR

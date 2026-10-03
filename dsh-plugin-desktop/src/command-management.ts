@@ -10,7 +10,7 @@ export function manageCommand(resources: string, scope: string): Promise<void> {
 }
 async function worker(resources: string, action: string, expected?: string, elevated = false): Promise<State> {
   const node = join(resources, 'primary-runtime/dependencies/node/bin', process.platform === 'win32' ? 'node.exe' : 'node')
-  const entry = join(resources, 'cli/command-worker.js')
+  const entry = join(resources, 'runtime/cli/command-manager.js')
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/KEY|SECRET|TOKEN|PASSWORD|^NODE_OPTIONS$|^NODE_PATH$/iu.test(name)))
   const options = { timeout: 30000, maxBuffer: 65536, windowsHide: true, env }
   let stdout: string

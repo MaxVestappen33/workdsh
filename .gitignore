@@ -16,3 +16,6 @@ dsh-community-market/lib/
 .env.yarn
 /dist/
 /.test-harness/
+
+# Verified official binary release cache (generated, never source).
+dsh-plugin-desktop/build/official-release-cache/

@@ -2,7 +2,7 @@
 
 [English](plugin-development.en.md)
 
-WorkDSH 基于官方 DeepSeek Harness 的插件体系。普通 DSH 插件应使用上游公开的 Host、Client、工具和服务接口；插件兼容性以当前固定的 DSH 版本为准。上游源码位于只读子模块 `deepseek-harness/`。
+WorkDSH 基于官方 DeepSeek Harness 的插件体系。普通 DSH 插件应使用上游公开的 Host、Client、工具和服务接口；插件兼容性以当前固定的 DSH 版本为准。开发依赖固定版本的官方发布包，官方源码不作为产品构建输入。
 
 WorkDSH 的项目、资料库、专家、技能和连接器由运行时 Profile 中的 WorkDSH 包提供。扩展这些功能时，应在对应 Profile 包中实现和测试，不要向 Electron 外壳添加另一个 Host、Client 或 DSH 依赖。活动记录、Office、审计、访问控制及 provider 是同一 Profile 的支撑服务，不是独立发行的 Desktop 版本。
 

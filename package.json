@@ -40,12 +40,6 @@
     "dist:win": "yarn workspace dsh-plugin-desktop dist:win",
     "dist:win-portable": "yarn workspace dsh-plugin-desktop dist:win-portable",
     "release:pack": "node scripts/package-desktop-release.mjs --source=local",
-    "release:pack:published": "node scripts/package-desktop-release.mjs --source=published",
-    "upstream:version": "cd deepseek-harness && corepack pnpm --version",
-    "upstream:install": "cd deepseek-harness && CI=true corepack pnpm install --frozen-lockfile",
-    "upstream:build": "cd deepseek-harness && corepack pnpm run build",
-    "upstream:build:official": "cd deepseek-harness && CI=true DSH_BUILD_CLIENT_PROFILE=official corepack pnpm run build",
-    "upstream:pack:dsh": "cd deepseek-harness && CI=true corepack pnpm run release:pack --family dsh",
-    "upstream:prepare-runtime": "yarn upstream:install && yarn upstream:build:official && yarn upstream:pack:dsh"
+    "release:pack:published": "node scripts/package-desktop-release.mjs --source=published"
   }
 }

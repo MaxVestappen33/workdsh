@@ -1,13 +1,12 @@
 #!/usr/bin/env node
 
-import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { prepareOfficialRelease } from './official-desktop-release.mjs'
 import { DSH_VERSION } from './runtime-version.mjs'
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const upstreamRoot = resolve(desktopRoot, '..', 'deepseek-harness')
 const target = process.platform === 'win32' ? 'win-x64'
   : process.platform === 'darwin' ? `mac-${process.env.WORKDSH_MAC_ARCH ?? process.arch}`
     : undefined
@@ -20,23 +19,8 @@ const profileMarker = join(profile, '.workdsh-desktop-release.json')
 if (!existsSync(profileMarker) || JSON.parse(readFileSync(profileMarker, 'utf8')).harness !== DSH_VERSION) {
   throw new Error('Prepare and verify the target WorkDSH Profile before its primary runtime')
 }
-const cache = join(desktopRoot, 'build', '.workdsh-primary-runtime-cache')
-const corepack = process.platform === 'win32' ? 'corepack.cmd' : 'corepack'
-const preparationTimeout = 12 * 60_000
-const result = spawnSync(corepack, [
-  'pnpm', 'run', 'prepare:primary-runtime', '--target', target, '--output', output, '--cache', cache,
-], {
-  cwd: upstreamRoot,
-  env: { ...process.env, CI: 'true' },
-  stdio: 'inherit',
-  shell: process.platform === 'win32',
-  timeout: preparationTimeout,
-})
-if (result.error?.code === 'ETIMEDOUT') {
-  throw new Error(`Official primary runtime preparation exceeded ${preparationTimeout / 60_000} minutes for ${target}; check pinned asset downloads and retry the build`, { cause: result.error })
-}
-if (result.error) throw result.error
-if (result.status !== 0) throw new Error(`Official primary runtime preparation failed: ${result.status}`)
+const released = await prepareOfficialRelease(desktopRoot, target)
+for (const name of ['primary-runtime', 'office-skills']) cpSync(join(released, 'runtime', name), join(output, name), { recursive: true, force: true, dereference: false })
 const manifestPath = join(output, 'primary-runtime', 'runtime.json')
 if (!existsSync(manifestPath) || !existsSync(join(output, 'office-skills'))) {
   throw new Error('Official primary runtime payload is incomplete')
