@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { DSH_VERSION } from '../dsh-plugin-desktop/scripts/runtime-version.mjs'
+import { DSH_VERSION } from '../apps/desktop/scripts/runtime-version.mjs'
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const readJson = path => JSON.parse(readFileSync(join(root, path), 'utf8'))
@@ -12,7 +12,7 @@ for (const target of ['mac-arm64', 'mac-x64', 'win-x64']) {
   const artifact = upstream.desktopArtifacts?.[target]
   if (!artifact || !artifact.url.startsWith('https://download.deepseek.com/dsh-desk/bin/' + target + '/') || !artifact.url.includes('deepseek-harness-' + DSH_VERSION + '-') || Buffer.from(artifact.sha512 ?? '', 'base64').length !== 64 || !Number.isSafeInteger(artifact.size) || artifact.size <= 0) problems.push('Missing or invalid official release lock: ' + target)
 }
-for (const workspace of ['dsh-plugin-desktop']) {
+for (const workspace of ['apps/desktop']) {
   const manifest = readJson(`${workspace}/package.json`)
   for (const field of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']) {
     for (const name of Object.keys(manifest[field] ?? {})) {

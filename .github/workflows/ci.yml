@@ -61,8 +61,8 @@ jobs:
             git diff --check "$BASE_SHA" "$HEAD_SHA"
             product="$(git diff --name-only -z "$BASE_SHA" "$HEAD_SHA" | node scripts/classify-ci-changes.mjs)"
             changed_paths="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
-            if [[ -n "$changed_paths" ]] && grep -q '^workdsh-web/' <<< "$changed_paths"; then web=true; else web=false; fi
-            if [[ -n "$changed_paths" ]] && grep -qv '^workdsh-web/' <<< "$changed_paths"; then desktop=true; else desktop=false; fi
+            if [[ -n "$changed_paths" ]] && grep -q '^apps/web/' <<< "$changed_paths"; then web=true; else web=false; fi
+            if [[ -n "$changed_paths" ]] && grep -qv '^apps/web/' <<< "$changed_paths"; then desktop=true; else desktop=false; fi
           fi
           echo "product=$product" >> "$GITHUB_OUTPUT"
           echo "desktop=$desktop" >> "$GITHUB_OUTPUT"
@@ -123,29 +123,29 @@ jobs:
         with:
           node-version: 22.23.2
       - run: corepack enable
-      - working-directory: workdsh-web
+      - working-directory: apps/web
         run: pnpm install --frozen-lockfile
       - name: Build shared and enterprise packages
-        working-directory: workdsh-web
+        working-directory: apps/web
         run: |
           pnpm build
           pnpm --filter workdsh-provider-identity-enterprise build
           pnpm --filter workdsh-plugin-enterprise-collaboration build
       - name: Check shared and enterprise types
-        working-directory: workdsh-web
+        working-directory: apps/web
         run: |
           pnpm typecheck
           pnpm --filter workdsh-provider-identity-enterprise typecheck
           pnpm --filter workdsh-plugin-enterprise-collaboration typecheck
-      - working-directory: workdsh-web
+      - working-directory: apps/web
         run: pnpm check:versions
       - name: Install browser for Web integration tests
-        working-directory: workdsh-web
+        working-directory: apps/web
         run: pnpm exec playwright install --with-deps chromium
-      - working-directory: workdsh-web
+      - working-directory: apps/web
         run: pnpm test:integration
       - name: Enterprise identity, collaboration and account process tests
-        working-directory: workdsh-web
+        working-directory: apps/web
         run: node --test packages/providers/identity-enterprise/tests/*.test.mjs packages/plugins/enterprise-collaboration/tests/*.test.mjs deploy/member-process/tests/*.test.mjs
 
   # Windows-only logic and unsigned NSIS build on a real Windows runner:
@@ -175,12 +175,12 @@ jobs:
         timeout-minutes: 60
         run: node scripts/package-desktop-release.mjs --source=${{ github.ref_type == 'tag' && 'published' || 'local' }}
       - name: Report unpacked Windows footprint
-        run: node dsh-plugin-desktop/scripts/report-package-footprint.mjs dsh-plugin-desktop/dist/win-unpacked dsh-plugin-desktop/dist/windows-footprint.json
+        run: node apps/desktop/scripts/report-package-footprint.mjs apps/desktop/dist/win-unpacked apps/desktop/dist/windows-footprint.json
       - name: Upload Windows footprint report
         uses: actions/upload-artifact@v4
         with:
           name: desktop-footprint-windows-x64
-          path: dsh-plugin-desktop/dist/windows-footprint.json
+          path: apps/desktop/dist/windows-footprint.json
           if-no-files-found: error
           retention-days: 14
       - name: Upload Windows installer
@@ -188,8 +188,8 @@ jobs:
         with:
           name: dsh-plugin-desktop-windows-x64
           path: |
-            dsh-plugin-desktop/dist/*.exe
-            dsh-plugin-desktop/dist/*.blockmap
+            apps/desktop/dist/*.exe
+            apps/desktop/dist/*.blockmap
           if-no-files-found: error
           retention-days: 14
 
@@ -232,8 +232,8 @@ jobs:
         with:
           name: dsh-plugin-desktop-macos-${{ matrix.arch }}
           path: |
-            dsh-plugin-desktop/dist/mac-smoke/${{ matrix.arch }}/*.dmg
-            dsh-plugin-desktop/dist/mac-smoke/${{ matrix.arch }}/*.dmg.blockmap
+            apps/desktop/dist/mac-smoke/${{ matrix.arch }}/*.dmg
+            apps/desktop/dist/mac-smoke/${{ matrix.arch }}/*.dmg.blockmap
           if-no-files-found: error
           retention-days: 14
 
@@ -256,7 +256,7 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          node -e "const version = require('./dsh-plugin-desktop/package.json').version; if (process.env.TAG !== 'desktop-v' + version) { throw new Error('Release tag does not match Desktop package version: ' + process.env.TAG + ' != desktop-v' + version) }"
+          node -e "const version = require('./apps/desktop/package.json').version; if (process.env.TAG !== 'desktop-v' + version) { throw new Error('Release tag does not match Desktop package version: ' + process.env.TAG + ' != desktop-v' + version) }"
       - name: Download desktop packages
         uses: actions/download-artifact@v5
         with:

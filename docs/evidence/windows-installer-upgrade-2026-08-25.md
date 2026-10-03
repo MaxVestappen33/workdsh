@@ -42,7 +42,7 @@
 | `DSH-Desktop-2.0.2-x64-Setup.exe` | `2.0.2` | 132417238 | `B31F63F8CF70D3FC07ED2AE36E5DE7B1939E604BDB3BE097DE3383A82A06A787` |
 | `DSH-Desktop-2.0.3-x64-Setup.exe` | `2.0.3` | 132758556 | `AE2FD0820803A69B7C953B9831FC029EE06499E07078DC8B45497C17A858743A` |
 
-候选产物：`dsh-plugin-desktop/dist/DSH-Desktop-2.0.3-x64-Setup.exe`。
+候选产物：`apps/desktop/dist/DSH-Desktop-2.0.3-x64-Setup.exe`。
 
 ## 问题复现
 

@@ -2,7 +2,7 @@
 
 [English](architecture.en.md)
 
-WorkDSH Desktop 是一个 Electron 外壳，运行一套固定版本的 DeepSeek Harness Profile。`dsh-plugin-desktop/src/workdsh-main.ts` 是安装包唯一的应用入口；官方 DSH 使用锁定版本的已发布包；解释器、Office 资源和命令管理程序从校验过的官方 Desktop 发布包提取，构建无需官方源码。安装包中的 `workdsh-runtime/profiles/workdsh` 提供 DSH Host、Web UI 和 WorkDSH 功能包。
+WorkDSH Desktop 是一个 Electron 外壳，运行一套固定版本的 DeepSeek Harness Profile。`apps/desktop/src/workdsh-main.ts` 是安装包唯一的应用入口；官方 DSH 使用锁定版本的已发布包；解释器、Office 资源和命令管理程序从校验过的官方 Desktop 发布包提取，构建无需官方源码。安装包中的 `workdsh-runtime/profiles/workdsh` 提供 DSH Host、Web UI 和 WorkDSH 功能包。
 
 ```mermaid
 flowchart LR
@@ -19,4 +19,4 @@ flowchart LR
 
 `upstream.json` 记录唯一的上游提交和版本。外壳不直接依赖 DSH npm 包。打包脚本读取该版本来准备和验证 Profile、官方主运行时与安装包；安装后的 `app.asar` 只含 Electron 入口，不含第二个 `node_modules`。升级时依次更新上游固定提交、WorkDSH Profile 兼容版本和打包资源，并通过 `corepack yarn check`、平台打包检查及安装包启动验证。默认采用上游最新正式版，预发布版本需要明确选择。
 
-参见[归属约束](desktop-boundaries.md)与[包级构建说明](../dsh-plugin-desktop/README.zh.md)。
+参见[归属约束](desktop-boundaries.md)与[包级构建说明](../apps/desktop/README.zh.md)。

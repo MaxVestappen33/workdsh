@@ -1762,9 +1762,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"dsh-plugin-desktop@workspace:dsh-plugin-desktop":
+"dsh-plugin-desktop@workspace:apps/desktop":
   version: 0.0.0-use.local
-  resolution: "dsh-plugin-desktop@workspace:dsh-plugin-desktop"
+  resolution: "dsh-plugin-desktop@workspace:apps/desktop"
   dependencies:
     "@electron/asar": "npm:3.4.1"
     "@electron/fuses": "npm:1.8.0"

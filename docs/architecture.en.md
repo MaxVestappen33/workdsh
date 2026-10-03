@@ -2,7 +2,7 @@
 
 [中文](architecture.md)
 
-WorkDSH Desktop is an Electron carrier for one pinned DeepSeek Harness Profile. `dsh-plugin-desktop/src/workdsh-main.ts` is the installer's only application entry point. Official DSH is consumed as version-locked published packages. Bundled interpreters, Office assets and command helpers come from checksum-verified official Desktop releases; no official source checkout is required. The bundled `workdsh-runtime/profiles/workdsh` provides the DSH Host, Web UI, and WorkDSH feature packages.
+WorkDSH Desktop is an Electron carrier for one pinned DeepSeek Harness Profile. `apps/desktop/src/workdsh-main.ts` is the installer's only application entry point. Official DSH is consumed as version-locked published packages. Bundled interpreters, Office assets and command helpers come from checksum-verified official Desktop releases; no official source checkout is required. The bundled `workdsh-runtime/profiles/workdsh` provides the DSH Host, Web UI, and WorkDSH feature packages.
 
 ```mermaid
 flowchart LR
@@ -19,4 +19,4 @@ The default WorkDSH features are only library, experts, skills and MCP/connector
 
 `upstream.json` records the sole upstream commit and version. The carrier has no direct DSH npm dependency. Packaging scripts use that version to prepare and verify the Profile, official primary runtime, and installer. The installed `app.asar` contains only the Electron entry point, without a second `node_modules`. An upgrade updates the upstream pin, compatible WorkDSH Profile, and bundled resources, then runs `corepack yarn check`, platform packaging checks, and installed-app startup validation. The default target is the latest official stable release; pre-releases require an explicit decision.
 
-See [ownership boundaries](desktop-boundaries.md) and the [package build guide](../dsh-plugin-desktop/README.md).
+See [ownership boundaries](desktop-boundaries.md) and the [package build guide](../apps/desktop/README.md).

@@ -12,7 +12,7 @@ Windows sandbox 没有更弱的自动 provider fallback。因此，损坏的 run
 
 ## Decision
 
-Desktop package 会把 `dsh-plugin-desktop/windows-pwsh-sandbox` 发布为现有 package 的 Host 子路径，而不是第二个 npm package。Windows desktop profile 会确认 `pwsh-sandbox` row 仍指向预期的上游 provider，保留它的平台 gate 与配置，禁用该 row，再插入 desktop 子路径。兼容模式与高级呈现模式使用同一个 Host profile，因此都会使用同一个执行 adapter。
+Desktop package 会把 `apps/desktop/windows-pwsh-sandbox` 发布为现有 package 的 Host 子路径，而不是第二个 npm package。Windows desktop profile 会确认 `pwsh-sandbox` row 仍指向预期的上游 provider，保留它的平台 gate 与配置，禁用该 row，再插入 desktop 子路径。兼容模式与高级呈现模式使用同一个 Host profile，因此都会使用同一个执行 adapter。
 
 `DesktopWindowsPwshSandbox` 会继承上游 `SandboxPwshExecutor`，并使用其受保护的 argv 执行方法。只有当平台为 Windows、Host 为 Electron、executable 等于 `process.execPath`，且下一个参数等于已解析的上游 Windows ACL runner 时，它才会改变调用。改写后的 argv 会在 executable 与上游 runner 之间插入私有 desktop trampoline。直接 PowerShell 执行，包括显式 `danger-full-access` 路径，都会原样通过。
 

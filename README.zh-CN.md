@@ -1,4 +1,4 @@
-<p align="center"><img src="workdsh-web/assets/brand/workdsh-logo.svg" width="88" alt="WorkDSH 标志"></p>
+<p align="center"><img src="apps/web/assets/brand/workdsh-logo.svg" width="88" alt="WorkDSH 标志"></p>
 <h1 align="center">WorkDSH</h1>
 <p align="center"><strong>WorkBuddy 式工作台，让技能、专家与插件组成更多工作场景。</strong></p>
 <p align="center">WorkDSH 将资料、专家、技能和连接器带入同一工作台；接入 SkillHub 技能目录，并支持安装 DSH 社区插件。</p>
@@ -6,7 +6,7 @@
 
 [![Desktop release](https://img.shields.io/badge/Desktop-2.0.6--alpha.1-176BFF)](https://github.com/techflag/workdsh/releases/tag/desktop-v2.0.6-alpha.1) [![GitHub stars](https://img.shields.io/github/stars/techflag/workdsh?label=stars)](https://github.com/techflag/workdsh) [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-![WorkDSH 项目主页：项目、模板与完整桌面侧栏](workdsh-web/assets/screenshots/workdsh-projects-alpha8-dark.png)
+![WorkDSH 项目主页：项目、模板与完整桌面侧栏](apps/web/assets/screenshots/workdsh-projects-alpha8-dark.png)
 
 <sub>WorkDSH 本地运行截图。项目名称和账户数值为演示环境数据，不随安装包提供。</sub>
 
@@ -29,12 +29,12 @@ WorkDSH 参考 WorkBuddy 按项目组织资料、专家、技能和连接器的�
                                       └──> 查看过程与成果，在支持的编辑器中继续修改
 ```
 
-这条路径是 WorkDSH 的产品方向。项目内资料引用、专家执行与不同 Office 格式的完整端到端体验仍在 Alpha 验收中；各格式的预览、编辑和导出范围不同，[当前能力与限制](workdsh-web/README.zh-CN.md)有更具体的说明。
+这条路径是 WorkDSH 的产品方向。项目内资料引用、专家执行与不同 Office 格式的完整端到端体验仍在 Alpha 验收中；各格式的预览、编辑和导出范围不同，[当前能力与限制](apps/web/README.zh-CN.md)有更具体的说明。
 
 <details>
 <summary>查看实际会话中的 HTML 成果示例</summary>
 
-![WorkDSH 会话、成果卡片和右侧 HTML 预览](workdsh-web/assets/screenshots/workdsh-html-dashboard-preview.png)
+![WorkDSH 会话、成果卡片和右侧 HTML 预览](apps/web/assets/screenshots/workdsh-html-dashboard-preview.png)
 
 <sub>本地任务示例；展示成果卡片和右侧预览，不代表任意文件都能无损编辑。</sub>
 
@@ -46,13 +46,13 @@ WorkDSH 参考 WorkBuddy 按项目组织资料、专家、技能和连接器的�
 
 DSH 插件可以是单项工具，也可以组合界面、服务与其他资源，形成更完整的应用场景。例如，数据管理插件可以提供数据页面和处理工具，再与技能、专家配合完成一套流程；这是插件体系允许的扩展方向，不表示当前版本已内置这样的数据管理系统。用户可以从 SkillHub 发现和安装技能，也可以通过 dsh-market 寻找 DSH 社区插件。安装前应看插件具体提供什么，以及是否兼容当前 DSH 版本。
 
-WorkDSH 接入两个独立维护的目录：[SkillHub](https://skillhub.cn/) 提供 Skill，[dsh-market](https://dshmarket.com/zh/) 提供 DSH 插件。SkillHub 条目展示来源和版本，许可证信息可到来源页核对；现有插件页通过第三方 dsh-market 插件打开社区目录。目录中的内容**并非全部预装、经 WorkDSH 审核或获得 WorkDSH 背书**，安装前应查看许可证、依赖和 DSH 版本兼容性。[技能管理](workdsh-web/packages/plugins/skills/README.md) · [插件开发](docs/plugin-development.md) · [生态倡议](docs/plugin-ecosystem.md)
+WorkDSH 接入两个独立维护的目录：[SkillHub](https://skillhub.cn/) 提供 Skill，[dsh-market](https://dshmarket.com/zh/) 提供 DSH 插件。SkillHub 条目展示来源和版本，许可证信息可到来源页核对；现有插件页通过第三方 dsh-market 插件打开社区目录。目录中的内容**并非全部预装、经 WorkDSH 审核或获得 WorkDSH 背书**，安装前应查看许可证、依赖和 DSH 版本兼容性。[技能管理](packages/plugins/skills/README.md) · [插件开发](docs/plugin-development.md) · [生态倡议](docs/plugin-ecosystem.md)
 
-![WorkDSH 中的 SkillHub 技能目录：图标、版本、来源与安装入口](workdsh-web/assets/screenshots/workdsh-skillhub-2026-09.png)
+![WorkDSH 中的 SkillHub 技能目录：图标、版本、来源与安装入口](apps/web/assets/screenshots/workdsh-skillhub-2026-09.png)
 
 <sub>SkillHub 实时目录，条目和数量会变化；截图所示本地会话为演示环境。</sub>
 
-![从 WorkDSH 现有插件页打开的 DSH 社区插件市场](workdsh-web/assets/screenshots/workdsh-dshmarket-2026-09.png)
+![从 WorkDSH 现有插件页打开的 DSH 社区插件市场](apps/web/assets/screenshots/workdsh-dshmarket-2026-09.png)
 
 <sub>社区插件的发现和安装由第三方 dsh-market 插件提供；截图不代表目录中的插件已随 WorkDSH 安装包提供。</sub>
 
@@ -143,7 +143,7 @@ Desktop 安装包默认内置 Node.js 和 Python 运行时，普通用户无需�
 
 ## 开发与文档
 
-源码分工：[WorkDSH 功能包与 Web](workdsh-web/README.zh-CN.md) · [Desktop 外壳](dsh-plugin-desktop/README.zh.md) · [架构](docs/architecture.md) · [全部文档](docs/README.md)。从源码运行需要 Node.js 22.19+ 或 24+、Corepack 和 Yarn 4.18.0：
+源码分工：[WorkDSH 功能包与 Web](apps/web/README.zh-CN.md) · [Desktop 外壳](apps/desktop/README.zh.md) · [架构](docs/architecture.md) · [全部文档](docs/README.md)。从源码运行需要 Node.js 22.19+ 或 24+、Corepack 和 Yarn 4.18.0：
 
 ```sh
 corepack yarn install --immutable
@@ -153,6 +153,16 @@ corepack yarn dev
 官方 DSH 核心使用已发布 npm 包；Desktop 的 Node、pnpm、Python、Office 资源和命令管理程序从官方安装包提取。`upstream.json` 锁定版本、下载地址、大小与 SHA-512 摘要，构建无需克隆官方源码。首次打包会下载对应平台的官方包；Windows 构建机需要 7-Zip，仅用于解压安装包。
 
 运行检查：`corepack yarn check`。在 macOS 或 Windows 上，从当前提交一键打包 Web Profile 与 Desktop：`corepack yarn release:pack`；Web 包发布后，正式安装包使用 `corepack yarn release:pack:published`。两条命令使用同一个[打包脚本](scripts/package-desktop-release.mjs)。[参与贡献](CONTRIBUTING.md)
+
+工程目录按应用入口和共享功能分开：
+
+```text
+apps/desktop/   Electron 桌面应用与安装包
+apps/web/       Web 启动、部署与验证
+packages/       共用插件、身份适配、UI 和契约
+profiles/       个人与企业插件组合
+scripts/        产品构建与发布检查
+```
 
 ### 企业 Desktop 打包配置
 
@@ -166,11 +176,11 @@ corepack yarn dev
 }
 ```
 
-通过 `WORKDSH_DEPLOYMENT_CONFIG` 指定该文件，打包后写入应用资源中的 `workdsh-config.json`，员工入口使用固定地址。模型 API 地址与内部访问 Key 仍在官方模型设置中填写，不放入打包配置。具体操作见 [Desktop 打包说明](dsh-plugin-desktop/README.zh.md)。
+通过 `WORKDSH_DEPLOYMENT_CONFIG` 指定该文件，打包后写入应用资源中的 `workdsh-config.json`，员工入口使用固定地址。模型 API 地址与内部访问 Key 仍在官方模型设置中填写，不放入打包配置。具体操作见 [Desktop 打包说明](apps/desktop/README.zh.md)。
 
 ## 社区与致谢
 
-感谢 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 社区提供运行时与插件底座；[腾讯 SkillHub](https://github.com/Tencent/skillhub) 提供公开的技能目录 API；[@cocofhu/skillhub](https://github.com/cocofhu/skillhub) 提供随桌面版集成的 DSH SkillHub 插件；[dsh-market](https://github.com/dsh-market/dsh-market) 与 [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) 社区提供插件市场与目录。WorkBuddy 是工作台设计参考。内置 skill-creator 的改编保留了原 [Apache-2.0 来源说明](workdsh-web/packages/plugins/skills/resources/skills/workdsh-skill-creator/NOTICE.md)。反馈与参与：[GitHub Issues](https://github.com/techflag/workdsh/issues) · [参与贡献](CONTRIBUTING.md)
+感谢 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 社区提供运行时与插件底座；[腾讯 SkillHub](https://github.com/Tencent/skillhub) 提供公开的技能目录 API；[@cocofhu/skillhub](https://github.com/cocofhu/skillhub) 提供随桌面版集成的 DSH SkillHub 插件；[dsh-market](https://github.com/dsh-market/dsh-market) 与 [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) 社区提供插件市场与目录。WorkBuddy 是工作台设计参考。内置 skill-creator 的改编保留了原 [Apache-2.0 来源说明](packages/plugins/skills/resources/skills/workdsh-skill-creator/NOTICE.md)。反馈与参与：[GitHub Issues](https://github.com/techflag/workdsh/issues) · [参与贡献](CONTRIBUTING.md)
 
 WorkDSH 采用 [MIT License](LICENSE)，是独立社区项目，与 DeepSeek 或 WorkBuddy 不存在隶属、合作、授权或背书关系。相关名称仅用于说明技术来源、兼容性与设计参考。GitHub Contributors 中的上游贡献者来自继承和同步的提交历史，不表示其参与本仓库维护。
 

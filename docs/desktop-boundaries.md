@@ -32,7 +32,7 @@ business applications remain external plugins requiring explicit installation.
 Official runtime plugins and primary-runtime Office skills are separate
 infrastructure, not the WorkDSH Office feature package.
 
-`dsh-plugin-desktop/scripts/workdsh-package-boundary.mjs` owns the release
+`apps/desktop/scripts/workdsh-package-boundary.mjs` owns the release
 inventory: four feature packages, the enterprise account package, and the
 required local identity, browser-session, access, audit and composition packages.
 SkillHub 0.2.16 and dshmarket 1.66.1 retain the existing third-party catalog integration in this same Profile. Catalog entries remain separately installed and subject to compatibility checks.

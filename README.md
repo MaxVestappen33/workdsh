@@ -1,4 +1,4 @@
-<p align="center"><img src="workdsh-web/assets/brand/workdsh-logo.svg" width="88" alt="WorkDSH logo"></p>
+<p align="center"><img src="apps/web/assets/brand/workdsh-logo.svg" width="88" alt="WorkDSH logo"></p>
 <h1 align="center">WorkDSH</h1>
 <p align="center"><strong>A WorkBuddy-style workspace where skills, experts, and plugins shape new workflows.</strong></p>
 <p align="center">WorkDSH brings material, experts, skills, and connectors into one workspace, with the SkillHub catalog and installable DSH community plugins.</p>
@@ -6,7 +6,7 @@
 
 [![Desktop release](https://img.shields.io/badge/Desktop-2.0.6--alpha.1-176BFF)](https://github.com/techflag/workdsh/releases/tag/desktop-v2.0.6-alpha.1) [![GitHub stars](https://img.shields.io/github/stars/techflag/workdsh?label=stars)](https://github.com/techflag/workdsh) [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-![WorkDSH projects home with project templates and the complete desktop sidebar](workdsh-web/assets/screenshots/workdsh-projects-alpha8-dark.png)
+![WorkDSH projects home with project templates and the complete desktop sidebar](apps/web/assets/screenshots/workdsh-projects-alpha8-dark.png)
 
 <sub>Captured from a local WorkDSH session. Project names and account figures are demonstration data, not bundled with the installer.</sub>
 
@@ -29,12 +29,12 @@ File in library ──reference──> Project task ──choose──> Expert /
                                             └──> Inspect the process and result; keep editing in supported editors
 ```
 
-This path is WorkDSH's product direction. End-to-end validation of project document references, expert execution, and different Office formats is ongoing during Alpha. Preview, editing, and export fidelity differ by format; the [current capabilities and limits](workdsh-web/README.md) describe them in more detail.
+This path is WorkDSH's product direction. End-to-end validation of project document references, expert execution, and different Office formats is ongoing during Alpha. Preview, editing, and export fidelity differ by format; the [current capabilities and limits](apps/web/README.md) describe them in more detail.
 
 <details>
 <summary>See an HTML deliverable from a real local conversation</summary>
 
-![WorkDSH conversation, deliverable cards, and right-side HTML preview](workdsh-web/assets/screenshots/workdsh-html-dashboard-preview.png)
+![WorkDSH conversation, deliverable cards, and right-side HTML preview](apps/web/assets/screenshots/workdsh-html-dashboard-preview.png)
 
 <sub>A local task example showing deliverable cards and right-side preview; it does not imply lossless editing for every file.</sub>
 
@@ -46,13 +46,13 @@ It helps to distinguish **the content people use** from **the software extension
 
 DSH plugins can be individual tools or combine UI, services, and other resources into a larger application scenario. For example, a data-management plugin could add data views and processing tools, then work with skills and experts across a workflow. This illustrates what the plugin model can support; it does not mean this release bundles such a data-management system. Users can discover and install skills through SkillHub and find DSH community plugins through dsh-market. Before installing a plugin, check what it provides and whether it supports the current DSH version.
 
-WorkDSH connects two independently maintained catalogs: [SkillHub](https://skillhub.cn/) for Skills and [dsh-market](https://dshmarket.com/zh/) for DSH plugins. SkillHub entries show their source and version, and open the source page for license information before installation. The DSH catalog is provided by the third-party dsh-market plugin inside the existing plugin page. Catalog entries are **not all preinstalled, reviewed, or endorsed by WorkDSH**; check each item's license, dependencies, and DSH compatibility. [Skill management](workdsh-web/packages/plugins/skills/README.md) · [Plugin development](docs/plugin-development.en.md) · [Ecosystem manifesto](docs/plugin-ecosystem.en.md)
+WorkDSH connects two independently maintained catalogs: [SkillHub](https://skillhub.cn/) for Skills and [dsh-market](https://dshmarket.com/zh/) for DSH plugins. SkillHub entries show their source and version, and open the source page for license information before installation. The DSH catalog is provided by the third-party dsh-market plugin inside the existing plugin page. Catalog entries are **not all preinstalled, reviewed, or endorsed by WorkDSH**; check each item's license, dependencies, and DSH compatibility. [Skill management](packages/plugins/skills/README.md) · [Plugin development](docs/plugin-development.en.md) · [Ecosystem manifesto](docs/plugin-ecosystem.en.md)
 
-![SkillHub catalog inside WorkDSH, showing skill icons, versions, sources, and install actions](workdsh-web/assets/screenshots/workdsh-skillhub-2026-09.png)
+![SkillHub catalog inside WorkDSH, showing skill icons, versions, sources, and install actions](apps/web/assets/screenshots/workdsh-skillhub-2026-09.png)
 
 <sub>Live SkillHub results; catalog size and entries change over time. The local session shown is a demonstration environment.</sub>
 
-![DSH community plugin catalog opened from WorkDSH's existing plugin page](workdsh-web/assets/screenshots/workdsh-dshmarket-2026-09.png)
+![DSH community plugin catalog opened from WorkDSH's existing plugin page](apps/web/assets/screenshots/workdsh-dshmarket-2026-09.png)
 
 <sub>The third-party dsh-market plugin supplies discovery and installation. The screenshot does not imply that catalog plugins are bundled with WorkDSH.</sub>
 
@@ -141,7 +141,7 @@ Enterprise Desktop uses a company-provided package that includes the enterprise 
 
 ## Development and documentation
 
-Source ownership: [WorkDSH feature packages and Web](workdsh-web/README.md) · [Desktop carrier](dsh-plugin-desktop/README.md) · [Architecture](docs/architecture.en.md) · [All documentation](docs/README.en.md). Running from source requires Node.js 22.19+ or 24+, Corepack, and Yarn 4.18.0:
+Source ownership: [WorkDSH feature packages and Web](apps/web/README.md) · [Desktop carrier](apps/desktop/README.md) · [Architecture](docs/architecture.en.md) · [All documentation](docs/README.en.md). Running from source requires Node.js 22.19+ or 24+, Corepack, and Yarn 4.18.0:
 
 ```sh
 corepack yarn install --immutable
@@ -153,6 +153,16 @@ Run checks with `corepack yarn check`. On macOS or Windows, `corepack yarn relea
 The desktop Tools menu manages the bundled `dsh` command (inspect, install, repair, remove), using the packaged Node, pnpm and official CLI. Commands display the active Desktop space; use `--workdsh-space=personal` or `--workdsh-space=enterprise` to select it explicitly. Initialize the space in Desktop first and keep Desktop signed in for enterprise operations. Plugin changes apply to that space’s Profile.
 
 The official DSH core uses published npm packages. Desktop Node, pnpm, Python, Office resources and command helpers are extracted from official installers. `upstream.json` locks their version, URLs, sizes and SHA-512 digests; no official source checkout is required. Initial packaging downloads the platform release. Windows build machines require 7-Zip to extract the installer.
+
+The source layout separates application entry points from shared packages:
+
+```text
+apps/desktop/   Electron application and installer
+apps/web/       Web launch, deployment and verification
+packages/       Shared plugins, providers, UI and contracts
+profiles/       Personal and enterprise plugin composition
+scripts/        Product build and release checks
+```
 
 ### Enterprise Desktop packaging configuration
 
@@ -166,11 +176,11 @@ After deploying [WorkDSH Admin](https://github.com/techflag/workdsh-admin), the 
 }
 ```
 
-Set `WORKDSH_DEPLOYMENT_CONFIG` to this file. Packaging writes it to `workdsh-config.json` in application resources, and the employee entry uses the fixed address. Model API addresses and internal access keys are configured in the official model settings, outside the packaging configuration. See the [Desktop packaging instructions](dsh-plugin-desktop/README.md).
+Set `WORKDSH_DEPLOYMENT_CONFIG` to this file. Packaging writes it to `workdsh-config.json` in application resources, and the employee entry uses the fixed address. Model API addresses and internal access keys are configured in the official model settings, outside the packaging configuration. See the [Desktop packaging instructions](apps/desktop/README.md).
 
 ## Community and acknowledgements
 
-Thanks to the maintainers and contributors of [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), the foundation of our runtime and plugin system; [Tencent SkillHub](https://github.com/Tencent/skillhub), whose public catalog API powers skill discovery; [@cocofhu/skillhub](https://github.com/cocofhu/skillhub), the bundled DSH SkillHub plugin; and [dsh-market](https://github.com/dsh-market/dsh-market) with the [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) catalog, which power community plugin discovery. WorkBuddy inspired the workspace design. The bundled skill-creator adaptation retains its [Apache-2.0 notice](workdsh-web/packages/plugins/skills/resources/skills/workdsh-skill-creator/NOTICE.md). Feedback and contributions: [GitHub Issues](https://github.com/techflag/workdsh/issues) · [Contributing](CONTRIBUTING.en.md)
+Thanks to the maintainers and contributors of [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), the foundation of our runtime and plugin system; [Tencent SkillHub](https://github.com/Tencent/skillhub), whose public catalog API powers skill discovery; [@cocofhu/skillhub](https://github.com/cocofhu/skillhub), the bundled DSH SkillHub plugin; and [dsh-market](https://github.com/dsh-market/dsh-market) with the [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) catalog, which power community plugin discovery. WorkBuddy inspired the workspace design. The bundled skill-creator adaptation retains its [Apache-2.0 notice](packages/plugins/skills/resources/skills/workdsh-skill-creator/NOTICE.md). Feedback and contributions: [GitHub Issues](https://github.com/techflag/workdsh/issues) · [Contributing](CONTRIBUTING.en.md)
 
 WorkDSH uses the [MIT License](LICENSE). It is an independent community project and is not affiliated with, partnered with, authorized by, or endorsed by DeepSeek or WorkBuddy. Those names appear only to describe technical origins, compatibility, and design references. Upstream contributors shown on GitHub are inherited from synchronized commit history; this does not imply that they maintain this repository.
 

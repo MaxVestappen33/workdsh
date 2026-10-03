@@ -9,8 +9,8 @@ node_modules/
 *.tsbuildinfo
 .build/
 
-dsh-plugin-desktop/dist/
-dsh-plugin-desktop/lib/
+apps/desktop/dist/
+apps/desktop/lib/
 dsh-community-market/lib/
 
 .env.yarn
@@ -18,4 +18,13 @@ dsh-community-market/lib/
 /.test-harness/
 
 # Verified official binary release cache (generated, never source).
-dsh-plugin-desktop/build/official-release-cache/
+apps/desktop/build/official-release-cache/
+
+/apps/desktop/lib/
+/apps/desktop/dist/
+/apps/desktop/build/official-release-cache/
+
+/packages/**/dist/
+/packages/**/lib/
+/packages/**/__pycache__/
+/packages/plugins/office/src/presentation/native-react/native.css

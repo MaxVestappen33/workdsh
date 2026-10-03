@@ -8,7 +8,7 @@
     "node": "^22.19.0 || >=24.0.0"
   },
   "workspaces": [
-    "dsh-plugin-desktop"
+    "apps/desktop"
   ],
   "resolutions": {
     "app-builder-lib@npm:26.15.7": "patch:app-builder-lib@npm%3A26.15.7#./patches/app-builder-lib@26.15.7.patch"

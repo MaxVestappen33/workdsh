@@ -4,12 +4,12 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { DSH_VERSION } from '../dsh-plugin-desktop/scripts/runtime-version.mjs'
-import { RELEASE_PACKAGES } from '../dsh-plugin-desktop/scripts/workdsh-package-boundary.mjs'
-import { verifyProfileRelease, verifyReleaseArchives } from '../dsh-plugin-desktop/scripts/verify-profile-release.mjs'
+import { DSH_VERSION } from '../apps/desktop/scripts/runtime-version.mjs'
+import { RELEASE_PACKAGES } from '../apps/desktop/scripts/workdsh-package-boundary.mjs'
+import { verifyProfileRelease, verifyReleaseArchives } from '../apps/desktop/scripts/verify-profile-release.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const webRoot = join(root, 'workdsh-web')
+const webRoot = join(root, 'apps/web')
 const args = process.argv.slice(2)
 const sourceArg = args.find(arg => arg.startsWith('--source='))
 if (args.length !== 1 || !sourceArg || !['local', 'published'].includes(sourceArg.slice('--source='.length))) {
@@ -48,7 +48,7 @@ if (source === 'local') {
   const webReleaseDirectory = join(webRoot, '.artifacts', `project-v${version}`)
   const manifest = JSON.parse(readFileSync(join(webReleaseDirectory, 'release-manifest.json'), 'utf8'))
   if (manifest.version !== version || manifest.sourceCommit !== commit || manifest.sourceDirty) {
-    const changed = execFileSync('git', ['diff', '--name-only', '--ignore-submodules=dirty', 'HEAD', '--', 'workdsh-web', 'upstream.json'], { cwd: root, encoding: 'utf8' }).trim()
+    const changed = execFileSync('git', ['diff', '--name-only', '--ignore-submodules=dirty', 'HEAD', '--', 'apps/web', 'upstream.json'], { cwd: root, encoding: 'utf8' }).trim()
     throw new Error(`The local Web release candidate is not a clean package of this commit: version=${manifest.version}/${version}, commit=${manifest.sourceCommit}/${commit}, sourceDirty=${manifest.sourceDirty}, changed=${changed || '(none)'}`)
   }
   run('Pack this commit\'s Desktop feature composition', process.execPath, [join(root, 'dsh-plugin-desktop', 'scripts', 'pack-workdsh-profile.mjs'), webRoot, releaseDirectory])
