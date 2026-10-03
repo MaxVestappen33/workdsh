@@ -60,7 +60,7 @@ it('isolates account/backend directories, device records and credential/skill en
 it('delegates startup and plugin installation to official runCli using one packaged Node and pnpm', () => {
   const { source, home } = fixture(); materializeRuntimeProfile(source, home)
   const launcher = readFileSync(officialLauncher(source, home, '/runtime/node', join(source, 'node_modules/pnpm/bin/pnpm.cjs')), 'utf8')
-  expect(launcher).toContain('runCli({ manageDesktopProfile: true, packageManager:'); expect(launcher).toContain('pnpm/bin/pnpm.cjs')
+  expect(launcher).toContain('runCli({ manageDesktopProfile: true, packageManager:'); expect(launcher).toContain(JSON.stringify(join(source, 'node_modules/pnpm/bin/pnpm.cjs')))
   expect(launcher).not.toContain('token'); expect(launcher).not.toContain('createHost')
   const host = readFileSync(officialHostLauncher(source, home, '/runtime/node', join(source, 'node_modules/pnpm/bin/pnpm.cjs'), ['/user/patch.yml']), 'utf8')
   expect(host).toContain('runProfile({ environment: loadLayeredEnv')

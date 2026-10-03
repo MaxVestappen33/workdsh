@@ -5,12 +5,13 @@ import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
 import { enterpriseSpace } from '../src/local-runtime.ts'
 
-const state = vi.hoisted(() => ({ windows: [] as any[], menu: [] as any[], handlers: {} as Record<string, (...args: any[]) => Promise<any>>, logins: [] as string[], userData: '', revoked: true, logout: vi.fn(async () => false), verify: vi.fn(async () => {}), closed: vi.fn(async () => {}) }))
+const state = vi.hoisted(() => ({ windows: [] as any[], menu: [] as any[], handlers: {} as Record<string, (...args: any[]) => Promise<any>>, logins: [] as string[], userData: '', revoked: true, stop: vi.fn(async () => {}), logout: vi.fn(async () => false), verify: vi.fn(async () => {}), closed: vi.fn(async () => {}) }))
 const actor = { id: 'a', organizationId: 'org-a', organizationName: 'Company', displayName: 'A', email: 'a@test', role: 'MEMBER' as const, mustChangePassword: false }
 vi.mock('../src/enterprise-auth.ts', () => ({
   EnterpriseLogin: { login: async (origin: string) => { state.logins.push(origin); return { backendUrl: origin, actor, verify: state.verify, logout: state.logout, cancelRequests() {} } } },
   startEnterpriseAuthority: async () => ({ url: 'http://127.0.0.1:19898', key: 'a'.repeat(64), close: state.closed }),
 }))
+vi.mock('../src/owned-process.ts', () => ({ stopOwnedProcess: state.stop, cleanOwnedProcessTree: vi.fn(async () => {}) }))
 vi.mock('node:child_process', () => ({ spawn: vi.fn() }))
 vi.mock('electron', async () => {
   const { EventEmitter } = await import('node:events')
@@ -104,7 +105,7 @@ it('enforces the packaged backend, uses built-in enterprise identity, and clears
     expect(await signIn({ sender: workspace.webContents }, { account: 'b', password: 'secret' })).toHaveProperty('error')
     state.menu.find(item => item.label === '工作区').submenu[0].click()
     await vi.waitFor(() => expect(state.windows).toHaveLength(4))
-    expect(children[0].kill).toHaveBeenCalledWith('SIGTERM')
+    expect(state.stop).toHaveBeenCalledWith(children[0])
     expect(state.logout).toHaveBeenCalledOnce(); expect(state.closed).toHaveBeenCalledOnce()
     expect(workspace.webContents.session.clearStorageData).toHaveBeenCalledOnce()
     const { dialog } = await import('electron')
@@ -121,7 +122,7 @@ it('enforces the packaged backend, uses built-in enterprise identity, and clears
     expect(state.windows[4].options.webPreferences.partition).toBeUndefined()
     state.menu.find(item => item.label === '工作区').submenu[0].click()
     await vi.waitFor(() => expect(state.windows).toHaveLength(6))
-    expect(children[1].kill).toHaveBeenCalledWith('SIGTERM')
+    expect(state.stop).toHaveBeenCalledWith(children[1])
     // A failed patch write happens after authority startup; it must leave no credential file/bridge.
     rmSync(join(enterprise.home, '.enterprise-desktop.patch.yml'))
     mkdirSync(join(enterprise.home, '.enterprise-desktop.patch.yml'))

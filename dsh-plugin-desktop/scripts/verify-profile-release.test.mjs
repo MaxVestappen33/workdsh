@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import { strict as assert } from 'node:assert'
-import { verifyDefaultComposition, verifyDefaultProfile, verifyInstalledDshVersions, verifyPackageDshReferences, verifyProfileRelease, verifyReleaseArchives } from './verify-profile-release.mjs'
+import { verifyBuiltPackageExports, verifyDefaultComposition, verifyDefaultProfile, verifyInstalledDshVersions, verifyPackageDshReferences, verifyProfileRelease, verifyReleaseArchives } from './verify-profile-release.mjs'
 import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -116,5 +116,22 @@ test('installed version gate rejects an older transitive runtime behind an align
     assert.equal(verifyInstalledDshVersions(directory, DSH_VERSION), 2)
     writeFileSync(join(nested, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-agent', version: '0.1.7' }))
     assert.throws(() => verifyInstalledDshVersions(directory, DSH_VERSION), /dsh-agent is 0\.1\.7/)
+  } finally { rmSync(directory, { recursive: true, force: true }) }
+})
+
+test('validates conditional exports and locale patterns without accepting missing artifacts', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'export-map-'))
+  try {
+    mkdirSync(join(directory, 'dist')); mkdirSync(join(directory, 'locale'))
+    writeFileSync(join(directory, 'dist/index.js'), '')
+    writeFileSync(join(directory, 'dist/index.d.ts'), '')
+    writeFileSync(join(directory, 'locale/en.json'), '{}')
+    const pkg = { name: 'fixture', exports: { '.': { types: './dist/index.d.ts', default: './dist/index.js' }, './locale/*.json': './locale/*.json' } }
+    assert.doesNotThrow(() => verifyBuiltPackageExports(pkg, directory))
+    rmSync(join(directory, 'dist/index.js'))
+    assert.throws(() => verifyBuiltPackageExports(pkg, directory), /Missing built export.*index.js/)
+    writeFileSync(join(directory, 'dist/index.js'), '')
+    rmSync(join(directory, 'locale/en.json'))
+    assert.throws(() => verifyBuiltPackageExports(pkg, directory), /Missing built export.*locale/)
   } finally { rmSync(directory, { recursive: true, force: true }) }
 })

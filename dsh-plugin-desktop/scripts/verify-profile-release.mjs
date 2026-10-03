@@ -1,6 +1,6 @@
 import { ENTERPRISE_PACKAGES, PRODUCT_PACKAGES, RELEASE_PACKAGES } from './workdsh-package-boundary.mjs'
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs'
+import { existsSync, globSync, readFileSync, readdirSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 
 export function verifyReleaseArchives(manifest, directory) {
@@ -99,4 +99,17 @@ export function verifyPackageDshReferences(manifest, expectedDshVersion) {
       }
     }
   }
+}
+
+/** Export maps include conditional targets and locale patterns, not only literal files. */
+export function verifyBuiltPackageExports(pkg, directory) {
+  function verify(target) {
+    if (typeof target === 'string') {
+      const present = target.includes('*') ? globSync(target, { cwd: directory }).length > 0 : existsSync(join(directory, target))
+      if (!present) throw new Error(`Missing built export ${target} in ${pkg.name}`)
+    } else if (target && typeof target === 'object') {
+      for (const value of Object.values(target)) verify(value)
+    }
+  }
+  verify(pkg.exports)
 }

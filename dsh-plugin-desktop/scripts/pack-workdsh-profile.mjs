@@ -7,7 +7,7 @@ import { join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { DSH_VERSION } from './runtime-version.mjs'
 import { RELEASE_PACKAGES, PACKAGE_DIRECTORIES } from './workdsh-package-boundary.mjs'
-import { verifyPackageDshReferences, verifyProfileRelease } from './verify-profile-release.mjs'
+import { verifyBuiltPackageExports, verifyPackageDshReferences, verifyProfileRelease } from './verify-profile-release.mjs'
 const source = process.argv[2] && resolve(process.argv[2])
 const output = resolve(process.argv[3] ?? fileURLToPath(new URL('../build/workdsh-profile-release', import.meta.url)))
 if (!source) throw new Error('Usage: node scripts/pack-workdsh-profile.mjs <built-workdsh-source> [output]')
@@ -27,10 +27,7 @@ for (const name of RELEASE_PACKAGES) {
   const pkg = JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8'))
   if (pkg.name !== name) throw new Error('Unexpected source package: ' + directory)
   verifyPackageDshReferences(pkg, DSH_VERSION)
-  for (const entry of Object.values(pkg.exports ?? {})) {
-    const file = typeof entry === 'string' ? entry : entry.default
-    if (file && !existsSync(join(directory, file))) throw new Error('Build source package first: ' + name)
-  }
+  verifyBuiltPackageExports(pkg, directory)
   for (const [peer, range] of Object.entries(pkg.peerDependencies ?? {})) {
     if (pkg.peerDependenciesMeta?.[peer]?.optional || peer.startsWith('workdsh-')) continue
     const version = project.pnpm?.overrides?.[peer] ?? range
