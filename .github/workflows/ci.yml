@@ -116,7 +116,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: techflag/workdsh-admin
-          ref: a09dccfd18755da23b7430eb4e7411b7ba50ee96
+          ref: 2459c9b8f26cadad3565f0d6d5eadb8a1659b861
           path: workdsh-admin
           persist-credentials: false
       - uses: actions/setup-node@v6
@@ -173,7 +173,7 @@ jobs:
           key: yarn-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('yarn.lock', '.yarnrc.yml') }}
       - name: Package Windows through the single release script
         timeout-minutes: 60
-        run: node scripts/package-desktop-release.mjs --source=${{ github.ref_type == 'tag' && 'published' || 'local' }}
+        run: node scripts/package-desktop-release.mjs --source=local
       - name: Report unpacked Windows footprint
         run: node apps/desktop/scripts/report-package-footprint.mjs apps/desktop/dist/win-unpacked apps/desktop/dist/windows-footprint.json
       - name: Upload Windows footprint report
@@ -226,7 +226,7 @@ jobs:
         timeout-minutes: 55
         env:
           WORKDSH_MAC_ARCH: ${{ matrix.arch }}
-        run: node scripts/package-desktop-release.mjs --source=${{ github.ref_type == 'tag' && 'published' || 'local' }}
+        run: node scripts/package-desktop-release.mjs --source=local
       - name: Upload macOS architecture DMG
         uses: actions/upload-artifact@v4
         with:
@@ -276,6 +276,10 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22.23.2
+      - name: Require release commit on main
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor HEAD origin/main
       - name: Require one DSH version before publication
         run: node scripts/verify-desktop-dsh-alignment.mjs
       - name: Require release tag to match Desktop package version
