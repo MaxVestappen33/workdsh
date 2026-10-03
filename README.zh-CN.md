@@ -21,6 +21,13 @@ WorkDSH 参考 WorkBuddy 按项目组织资料、专家、技能和连接器的�
 | 复用团队擅长的方法 | **专家**保存角色与能力配置；**技能**承载可调用的说明和资源。 |
 | 把结果带出对话 | **成果工作区**预览或编辑支持的文档、表格、演示文稿、HTML 和 PDF 工作副本。 |
 
+### WorkDSH 的特色
+
+- **本机执行，集中管理**：Agent 和工具在员工桌面客户端运行；服务器负责账号、权限、协作数据与模型转发。
+- **完整官方界面，共享功能插件**：个人和企业复用同一套资料库、专家、技能和连接器功能。
+- **安装即可使用运行环境**：Desktop 随包提供 Node.js、pnpm 和 Python，内置插件无需首次登录再下载；社区技能和插件按需安装。
+- **个人与公司模型并存**：通过官方自定义模型 API 设置接入公司内部接口，供应商密钥由管理后台保管。
+
 ### 从资料到成果
 
 ```text
@@ -58,19 +65,24 @@ WorkDSH 接入两个独立维护的目录：[SkillHub](https://skillhub.cn/) 提
 
 ## 个人与企业使用
 
-WorkDSH 支持个人使用，以及企业 Web 和企业 Desktop 两种形式。个人与企业保留完整官方 DSH 界面，复用同一套 WorkDSH 功能插件；企业通过 [WorkDSH Admin](https://github.com/techflag/workdsh-admin) 管理公司账号、组织、权限和内部模型 API。
+WorkDSH 支持个人使用和企业 Desktop。个人与企业保留完整官方 DSH 界面，复用同一套 WorkDSH 功能插件；企业通过 [WorkDSH Admin](https://github.com/techflag/workdsh-admin) 管理公司账号、组织、权限和内部模型 API。
 
 | 使用方式 | Agent 与工具在哪里执行 | 如何进入 |
 | --- | --- | --- |
 | 个人 Desktop | 本机，使用个人文件和模型配置。 | 打开应用，选择“个人使用”。 |
-| 企业 Desktop | 员工本机，使用本机文件和工具。 | 安装公司提供的桌面应用，选择“企业登录”。 |
-| 企业 Web | 公司 ECS 服务器上的独立账号进程。 | 打开公司 Web 地址并登录。 |
+| 企业 Desktop | 员工本机，使用本机文件和工具。 | 安装桌面应用和企业账号插件，再选择“企业登录”。 |
 
-Desktop 的个人与企业空间分别保存数据和凭据。企业账号插件已内置在 Desktop 中，仅在企业模式启用，成员无需另行安装。协作、通知和业务应用仍作为独立插件安装。
+Desktop 的个人与企业空间分别保存数据和凭据。企业账号插件按需安装，安装后使用公司地址和账号登录，企业身份仍由后台授权。项目功能随 Desktop 提供。企业协作按需安装，登录企业账号后启用，个人模式不启用；不部署 ECS 成员 Agent 运行进程。通知和业务应用仍作为独立插件安装。
+
+### 安装企业插件
+
+企业连接包由本项目 [GitHub Releases](https://github.com/techflag/workdsh/releases) 独立交付，不依赖第三方插件市场。下载 `workdsh-enterprise-connection-<版本>.tgz`，保留文件并在添加插件时填写完整路径；发行附件包含兼容 DSH 版本的清单及 `SHA256SUMS`。
+
+在个人空间打开“插件 → 添加插件”，输入管理员提供的“企业连接”包路径或安装地址，确认来源并安装，安装完成后点击“立即启用”。一个包提供账号和协作，无需分别安装。完成后进入“设置 → 企业账号”，点击“连接企业”，填写后台地址并登录。安装过程复用官方进度与错误提示，不需要终端命令。目前企业插件未发布到可搜索目录，不能仅凭名称搜索安装。
 
 ### 企业登录与账号
 
-公司 Desktop 的后台地址由管理员打包预置，员工安装后使用自己的公司账号登录。企业 Web 使用管理员提供的 Web 地址。
+Desktop 使用同一个基础安装包。先进入个人空间，在插件管理中安装企业连接包（包含账号和协作）。随后从工作区菜单切换使用方式，填写管理员提供的后台地址并使用公司账号登录。后台地址也可由管理员打包预置。管理后台仍通过浏览器访问。
 
 ![Desktop 个人与企业使用入口](assets/screenshots/desktop-login.png)
 
@@ -99,7 +111,7 @@ Desktop 的个人与企业空间分别保存数据和凭据。企业账号插件
 | API 密钥 | 管理员提供的内部访问 Key。 |
 | 模型目录 | 获取可用模型，或添加管理员提供的允许使用的模型 ID。 |
 
-保存提供商后，在对话中选择其模型。个人自配模型可与公司模型并存。真实供应商 Key 只保存在服务器上；公司模型通过官方设置配置，不自动注入 DSH。模型请求发送到配置的 API，与 Agent 在本机或 ECS 执行分别决定。
+保存提供商后，在对话中选择其模型。个人自配模型可与公司模型并存。真实供应商 Key 只保存在服务器上；公司模型通过官方设置配置，不自动注入 DSH。模型请求发送到配置的 API，与 Agent 在本机执行分别决定。
 
 <details>
 <summary>查看官方模型设置中的公司模型配置</summary>
@@ -135,11 +147,11 @@ WorkDSH Admin：组织概览。
 | macOS Apple Silicon | [WorkDSH arm64.dmg](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.1/dsh-plugin-desktop-macos-arm64--WorkDSH-2.0.6-alpha.1-arm64.dmg) |
 | macOS Intel | [WorkDSH x64.dmg](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.1/dsh-plugin-desktop-macos-x64--WorkDSH-2.0.6-alpha.1-x64.dmg) |
 
-Desktop 安装包默认内置 Node.js 和 Python 运行时，普通用户无需单独安装。当前为 **Alpha 版**：项目资料引用、专家执行及不同 Office 格式的端到端体验仍在验收中。macOS DMG 未签名；更新请从 [Releases](https://github.com/techflag/workdsh/releases) 下载。开始使用前请阅读[用户指南](docs/user-guide.md)和[常见问题](docs/faq.md)。
+Desktop 安装包默认内置 Node.js、pnpm 和 Python 运行时，普通用户无需单独安装。当前为 **Alpha 版**：项目资料引用、专家执行及不同 Office 格式的端到端体验仍在验收中。macOS DMG 未签名；更新请从 [Releases](https://github.com/techflag/workdsh/releases) 下载。开始使用前请阅读[用户指南](docs/user-guide.md)和[常见问题](docs/faq.md)。
 
-企业 Desktop 使用公司提供、包含企业入口的安装包。已有下载版本的功能以对应发行说明为准。
+Desktop 基础包不预装企业插件，安装企业插件后启用企业登录。已有下载版本的功能以对应发行说明为准。
 
-桌面菜单“工具 → 管理 dsh 命令”可查看、安装、修复和移除终端命令，使用随包的 Node、pnpm 和官方 CLI。命令默认操作当前 Desktop 工作区，启动时显示空间名称；`--workdsh-space=personal` 或 `--workdsh-space=enterprise` 可明确选择。企业空间须保持 Desktop 登录，首次使用前先在 Desktop 打开对应空间。插件安装、更新和移除遵循该空间的官方 Profile。
+桌面菜单“工具 → 终端命令 dsh（可选）”可查看、安装、修复和移除终端命令。普通桌面聊天无需安装此命令，只有主动点击菜单才显示管理弹窗。安装只创建命令入口，使用随包的 Node、pnpm 和官方 CLI；移除命令不会删除应用或工作区。命令默认操作当前 Desktop 工作区，启动时显示空间名称；`--workdsh-space=personal` 或 `--workdsh-space=enterprise` 可明确选择。企业空间须保持 Desktop 登录，首次使用前先在 Desktop 打开对应空间。插件安装、更新和移除遵循该空间的官方 Profile。
 
 ## 开发与文档
 

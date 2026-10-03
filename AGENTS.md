@@ -33,11 +33,18 @@ This repository owns WorkDSH Web and Desktop. Desktop and Web consume the same e
 
 ## Personal and enterprise product boundary
 
-- Personal Desktop, enterprise Desktop and enterprise Web use one validated official DSH version and the same owned feature implementations. Preserve the complete official interface; never copy its settings, sidebar or right panel.
-- Enterprise Web runs on a single ECS with one on-demand official DSH process per account; enterprise Desktop runs the official Host, Agent and tools on the employee computer. Identity, storage, permissions and synchronization are explicit adaptations.
-- The enterprise account plugin is carried in the immutable Desktop runtime and activated only after enterprise login. Members do not manually install it, and member packages cannot shadow the bundled implementation. Personal mode does not activate it. Collaboration, notifications and business applications remain optional external plugins.
+- Personal Desktop, enterprise Desktop use one validated official DSH version and the same owned feature implementations. Preserve the complete official interface; never copy its settings, sidebar or right panel.
+- Enterprise execution is Desktop-only: the official Host, Agent and tools run on the employee computer. Do not restore ECS member processes, a member gateway or remote session storage. Identity, storage, permissions and synchronization are explicit adaptations.
+- There is one base Desktop installer. Enterprise account and collaboration plugins are installed explicitly, not shipped in the base runtime. Personal mode does not activate it. Projects are included in Desktop and Web. The server owns administration, authorization, collaboration data and model forwarding; collaboration activates only for authenticated enterprise members; personal mode must not activate it. Notifications and business applications remain optional external plugins.
 - The administrator presets only the public backend origin in packaged `workdsh-config.json` via `WORKDSH_DEPLOYMENT_CONFIG`. Login credentials and model keys do not belong in this file.
 - WorkDSH Admin owns accounts, organizations, authorization, audited member-visible conversation access and Spring AI internal model APIs. Members manually configure company API, internal Key, protocol and model catalog through official Custom Model API settings; personal providers can coexist. Do not restore enterprise model injection or synchronization.
 - Preserve user-facing README content and organize new material in the corresponding sections. Development logs, raw acceptance evidence, credentials and generated packages are not submission content.
 
 - Never clone, import or compile official DSH source as part of product builds. `upstream.json` locks published package versions and Desktop archive URLs, sizes and SHA-512 hashes. Extract only runtime dependencies, Office assets and prebuilt command helpers; do not carry a second official Electron application or DSH installation.
+
+## Delivery regression gate
+
+- Directory migrations must update scripts, CI working directories, test globs and deployment contexts together. Source-only moves are incomplete.
+- Required plugin delivery must pass composition, archive dependency closure, installed runtime and actual UI checks. Builds alone are not acceptance.
+- Shared feature changes must trigger Desktop and Web CI. Enterprise plugin installation never grants membership; authorization and inactive personal mode remain mandatory.
+- Candidate handover requires actual packaged Desktop and backend operation results. Report missing acceptance explicitly; never call a candidate complete while required plugins or entries are missing.

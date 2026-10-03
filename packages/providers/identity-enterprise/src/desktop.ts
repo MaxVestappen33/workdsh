@@ -66,6 +66,7 @@ export default class EnterpriseDesktopIdentity extends Service implements Identi
       } catch { this.syncError = '正文同步初始化失败；请检查企业认证及受保护的本机同步文件。'; }
     });
   }
+  collaborationBinding(signal?: AbortSignal) { return this.authority.collaborationBinding(signal); }
   profile() { if (!this.identity) throw new Error('Enterprise Desktop authentication required'); return this.identity.profile(); }
   membership(organizationId: string, principalId: string) { return this.identity?.membership(organizationId, principalId); }
   async resolve(evidence?: IdentityResolutionContext, signal?: AbortSignal) {

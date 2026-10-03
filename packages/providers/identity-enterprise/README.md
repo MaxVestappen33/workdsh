@@ -1,30 +1,15 @@
 # 企业身份、账号与 Desktop 正文同步
 
-当前候选版本为 `0.1.0-alpha.2`，官方版本族为 DSH `0.2.0-rc.2`、Cordis `4.0.4`。本包随 Desktop 的不可变运行时安装交付，仅在企业登录后由受控企业装配启用；员工无需安装 tgz。个人 Web 默认组合和个人 Desktop Profile 不启用本包。企业 Web 由服务器显式装配同一包。根入口只贡献客户端账号页；具体身份提供方必须由受控企业装配选择。旧共享多人 Host、runtimeToken 和登录 onboarding 原型已退役。
+当前候选版本为 `0.1.0-alpha.2`，官方版本族为 DSH `0.2.0-rc.2`、Cordis `4.0.4`。本包是按需安装的外部插件，不随基础 Desktop 预装。安装后经后台验证公司账号，才由 Main 启用固定成员身份。企业 Agent 与工具在本机运行；服务器只承担管理、授权、协作数据与模型转发。
 
 ## 公开入口
 
 | 入口 | 职责 |
 | --- | --- |
 | 根入口与 `./client` | 在官方 `settings.section` 贡献同一个“企业账号”页；Node 根入口不建立身份服务 |
-| `./process` | ECS 固定账号进程身份，提供 `workdshIdentity` |
-| `./process-supervisor` | 服务器外层按账号登录登记与原生进程生命周期 helper |
-| `./process-sessions` | 官方 `SessionPersistence` 的企业后台存储适配，仅用于服务器组合 |
 | `./desktop` | Main 受控本机认证桥、固定成员身份，以及本机可见正文同步；保留官方本机会话存储 |
 
 `@deepseek-ai/dsh` 精确 peer 声明为 optional，由 Desktop 的官方安装 anchor 提供并核验实际版本；不因此安装另一套 DSH。实际使用的 Session Controller、Session、Connection 和官方客户端 peer 仍为精确版本要求。
-
-## 企业 Web 与服务器进程
-
-`./process` 显式接收 `backendUrl`、`authFile`、`principalId` 与 `organizationId`。只读取 Host 受限认证文件，经后台验证当前登录并核对固定组织和成员；失联、登录失效或主体不匹配时拒绝，不回退个人身份。认证内容不进入 Profile 源码、客户端、日志或提交。
-
-账号页从浏览器同源 `GET /api/auth/me` 读取真实姓名、组织与角色；`POST /api/auth/logout` 撤销当前浏览器登录后返回登录页。使用官方 Slot 生命周期，不复制设置 owner。
-
-服务器目标保持单 ECS 按账号按需启动独立官方 DSH 进程；同账号多个浏览器登录复用进程，各账号分别拥有数据、配置、凭据和文件目录，共用运行包与基础插件。Profile 是组合，不是账号或安全边界。
-
-`process-supervisor` 默认退出只移除当前登录登记；只有完整活动适配确认 idle 才允许回收。缺省、busy、unknown、异常或重新登录竞争时保留，空 Session 列表不能证明后台任务已全部结束。网关仍须核验每个浏览器的当前登录。
-
-`process-sessions` 复用官方 SessionPersistence 和后台授权存储。服务器内部存储接口及其 service key 不用于 Desktop；管理员正文读取和审计由后台专门授权接口承担。
 
 ## 企业 Desktop 本机适配
 

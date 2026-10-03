@@ -18,3 +18,11 @@ it('shows an accessible loading state with reduced-motion support and escaped te
   expect(html).not.toContain('<script>unsafe()')
   expect(html).not.toContain('<form')
 })
+
+it('requires installing the enterprise account plugin before showing an active login action', () => {
+  const html = connectionEntryHtml('https://company.example', false, false)
+  expect(html).toContain('请先安装企业账号插件')
+  expect(html).toContain('type="button" disabled')
+  expect(html).toContain('workdsh://personal')
+  expect(html).not.toContain('>企业登录</button>')
+})

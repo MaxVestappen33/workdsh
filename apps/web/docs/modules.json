@@ -555,5 +555,15 @@
     "requirements": [
       "R10"
     ]
+  },
+  {
+    "path": "../../packages/enterprise-connection",
+    "title": "企业连接外部单包交付",
+    "status": "in_progress",
+    "directories": [],
+    "moduleVersion": "0.1",
+    "requirements": [
+      "R12"
+    ]
   }
 ]

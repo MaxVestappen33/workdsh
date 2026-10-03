@@ -102,6 +102,11 @@ export class DesktopAuthority {
     const value = await this.request(path, method, body, signal);
     await this.account(signal); return value;
   }
+  async collaborationBinding(signal?: AbortSignal): Promise<{url:string;authorization:string}> {
+    await this.account(signal);
+    const binding = await this.credentials();
+    return {url:binding.authorityUrl,authorization:`Bearer ${binding.authorityKey}`};
+  }
   async logout(signal?: AbortSignal): Promise<{ local: true }> {
     // Even when backend revocation cannot be confirmed, Main owns local stop/cleanup.
     const value = await this.request('/auth/logout', 'POST', {}, signal) as { local?: boolean };

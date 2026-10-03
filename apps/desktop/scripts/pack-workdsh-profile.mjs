@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createRequire } from 'node:module'
 /** Pack built owned sources, never a running Profile or its credentials. */
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -29,8 +30,12 @@ for (const name of RELEASE_PACKAGES) {
   verifyPackageDshReferences(pkg, DSH_VERSION)
   verifyBuiltPackageExports(pkg, directory)
   for (const [peer, range] of Object.entries(pkg.peerDependencies ?? {})) {
-    if (pkg.peerDependenciesMeta?.[peer]?.optional || peer.startsWith('workdsh-')) continue
-    const version = project.pnpm?.overrides?.[peer] ?? range
+    if (pkg.peerDependenciesMeta?.[peer]?.optional) continue
+    if (peer.startsWith('workdsh-')) {
+      if (!RELEASE_PACKAGES.includes(peer)) throw new Error('Missing owned runtime dependency: ' + name + ' requires ' + peer)
+      continue
+    }
+    const version = project.pnpm?.overrides?.[peer] ?? JSON.parse(readFileSync(createRequire(join(directory, 'package.json')).resolve(peer + '/package.json'), 'utf8')).version
     if (requiredPeers[peer] && requiredPeers[peer] !== version) throw new Error('Conflicting runtime peer: ' + peer)
     requiredPeers[peer] = version
   }
@@ -49,4 +54,4 @@ const manifest = { kind: 'workdsh-desktop-source-candidate', version: project.ve
   runtimeOverrides: project.pnpm?.overrides ?? {}, requiredPeers, packages, officialWeb }
 verifyProfileRelease(manifest, DSH_VERSION, RELEASE_PACKAGES)
 writeFileSync(join(output, 'release-manifest.json'), JSON.stringify(manifest, null, 2) + '\n')
-console.log(`Packed ${packages.length} owned packages for DSH ${DSH_VERSION}; only four default features selected, enterprise account supplied for enterprise composition`)
+console.log(`Packed ${packages.length} owned packages for DSH ${DSH_VERSION}; five default features selected, enterprise plugins are distributed separately`)

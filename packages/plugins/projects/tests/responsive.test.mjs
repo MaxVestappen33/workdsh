@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { chromium } from '@playwright/test';
+import { createRequire } from 'node:module';
+const { chromium } = createRequire(new URL('../../../../apps/web/package.json', import.meta.url))('@playwright/test');
 
 const source = await readFile(new URL('../src/client/styles.ts', import.meta.url), 'utf8');
 const css = source.match(/`([\s\S]*)`;/)?.[1];

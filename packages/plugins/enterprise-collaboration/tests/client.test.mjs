@@ -216,3 +216,20 @@ test('an incompatible collaboration contract prevents writes before creating a h
 test('missing Host member authorization produces a clear failure', () => {
   assert.throws(() => new Plugin.CollaborationClient({ adminUrl }), /Host memberAuthorization callback/);
 });
+
+test('Web Cookie writes carry configured public Origin without Bearer credentials', async () => {
+  const publicOrigin='https://company.example.test';let posted=false;
+  const backend=createServer(async(req,res)=>{
+    res.setHeader('Content-Type','application/json');
+    if(req.headers.cookie!=='member=test'||req.headers.authorization){res.writeHead(401).end('{}');return;}
+    if(req.method==='POST'&&req.headers.origin!==publicOrigin){res.writeHead(403).end('{}');return;}
+    if(req.url==='/api/auth/me'){res.end(JSON.stringify({id:a,organizationId:'org'}));return;}
+    if(req.url==='/api/collaboration/contract'){res.end('{"contractVersion":1}');return;}
+    posted=true;res.end(JSON.stringify({id:randomUUID(),senderId:a,senderName:'A',recipientId:b,recipientName:'B',summary:'test',status:'OPEN',resolution:null,createdAt:new Date().toISOString(),completedAt:null,lastMessageAt:null,needsReply:false}));
+  });
+  await new Promise(resolve=>backend.listen(0,'127.0.0.1',resolve));
+  try{
+    const client=new Plugin.CollaborationClient({adminUrl:`http://127.0.0.1:${backend.address().port}`,memberCookie:async()=>'member=test',memberOrigin:publicOrigin,memberAuthorization:async()=>{throw Error('Bearer must not be requested');}});
+    await client.send({resolve:async()=>({principalId:a,organizationId:'org'})},b,'test',randomUUID());assert.equal(posted,true);
+  }finally{await new Promise(resolve=>backend.close(resolve));}
+});

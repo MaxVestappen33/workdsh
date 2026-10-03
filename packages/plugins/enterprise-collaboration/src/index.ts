@@ -8,8 +8,8 @@ import type {} from '@deepseek-ai/dsh-client-connection';
 import type { HostConnectionHandle } from '@deepseek-ai/dsh-client-connection';
 
 /** Host-only login for one fixed member; never serialized into a Profile. */
-export interface Config { adminUrl: string; memberAuthorization: () => Promise<string> }
-export const Config: Schema<Config> = Schema.object({
+export interface Config { adminUrl: string; memberAuthorization: () => Promise<string>; memberOrigin?:string;memberCookie?:()=>Promise<string> }
+const MemberConfig: Schema<Config> = Schema.object({
   adminUrl: Schema.string().required(), memberAuthorization: Schema.any().required(),
 });
 
@@ -30,6 +30,8 @@ export interface CollaborationNotification { id: string; handoffId: string; auth
 export class CollaborationClient {
   private readonly origin: URL;
   private readonly memberAuthorization: () => Promise<string>;
+  private readonly memberOrigin?:string;
+  private readonly memberCookie?:()=>Promise<string>;
 
   constructor(config: Config) {
     const url = new URL(config.adminUrl);
@@ -41,6 +43,8 @@ export class CollaborationClient {
     if (typeof config.memberAuthorization !== 'function')
       throw new Error('Enterprise collaboration requires a Host memberAuthorization callback');
     this.memberAuthorization = config.memberAuthorization;
+    this.memberCookie=config.memberCookie;
+    this.memberOrigin=config.memberOrigin?new URL(config.memberOrigin).origin:undefined;
     this.origin = url;
   }
 
@@ -51,12 +55,14 @@ export class CollaborationClient {
     return value;
   }
 
+  private async cookie():Promise<string> { const value=await this.memberCookie!();if(!value || /[\r\n]/.test(value) || value.length>8192)throw new Error('Enterprise collaboration cookie invalid');return value; }
+
   private async request<T>(path: string, method: 'GET' | 'POST', body?: object, signal?: AbortSignal): Promise<T> {
     let response: Response;
     try {
       response = await fetch(new URL(path, this.origin), {
         method,
-        headers: { Authorization: await this.authorization(), ...(body ? { 'Content-Type': 'application/json' } : {}) },
+        headers: { ...(this.memberCookie ? {Cookie:await this.cookie(),Origin:this.memberOrigin??this.origin.origin} : {Authorization:await this.authorization()}), ...(body ? { 'Content-Type': 'application/json' } : {}) },
         body: body ? JSON.stringify(body) : undefined,
         signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(5_000)]) : AbortSignal.timeout(5_000),
         redirect: 'error',
@@ -196,9 +202,11 @@ export const inject = ['tools', 'workdshIdentity', 'connection'];
 const resultSchema = { type: 'object' as const, additionalProperties: false,
   properties: { data_json: { type: 'string' as const, required: true as const } } };
 
-export function apply(ctx: Context, config: Config): void {
-  installEnterpriseCollaboration(ctx,new CollaborationClient(config));
+export async function apply(ctx: Context, config: Config | {desktop:true}): Promise<void> {
+  if("desktop" in config && config.desktop===true) { const plugin=(await import('./desktop.js')).default;await plugin.apply(ctx);return; }
+  installEnterpriseCollaboration(ctx,new CollaborationClient(config as Config));
 }
+export const Config: Schema<Config | {desktop?:true|null}>=Schema.union([MemberConfig,Schema.object({desktop:Schema.const(true).required()})]);
 
 /** Install collaboration into an explicitly authorized member instance. */
 export function installEnterpriseCollaboration(ctx: Context, client: CollaborationClient): void {

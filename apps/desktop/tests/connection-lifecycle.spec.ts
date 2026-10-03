@@ -11,6 +11,7 @@ vi.mock('../src/enterprise-auth.ts', () => ({
   EnterpriseLogin: { login: async (origin: string) => { state.logins.push(origin); return { backendUrl: origin, actor, verify: state.verify, logout: state.logout, cancelRequests() {} } } },
   startEnterpriseAuthority: async () => ({ url: 'http://127.0.0.1:19898', key: 'a'.repeat(64), close: state.closed }),
 }))
+vi.mock('../src/enterprise-plugins.ts',()=>({installedEnterprisePlugins:vi.fn(()=>['workdsh-provider-identity-enterprise','workdsh-plugin-enterprise-collaboration']),composeInstalledEnterprisePlugins:vi.fn(async()=>['workdsh-provider-identity-enterprise','workdsh-plugin-enterprise-collaboration'])}))
 vi.mock('../src/owned-process.ts', () => ({ stopOwnedProcess: state.stop, cleanOwnedProcessTree: vi.fn(async () => {}) }))
 vi.mock('node:child_process', () => ({ spawn: vi.fn() }))
 vi.mock('electron', async () => {
@@ -35,7 +36,7 @@ vi.mock('electron', async () => {
   }
 })
 
-it('enforces the packaged backend, uses built-in enterprise identity, and clears locally despite remote logout failure', async () => {
+it('enforces the packaged backend, uses explicitly installed enterprise identity, and clears locally despite remote logout failure', async () => {
   const root = mkdtempSync(join(tmpdir(), 'workdsh-lifecycle-')); state.userData = join(root, 'desktop')
   const resourcesDescriptor = Object.getOwnPropertyDescriptor(process, 'resourcesPath')
   Object.defineProperty(process, 'resourcesPath', { value: join(root, 'resources'), configurable: true })
@@ -59,6 +60,9 @@ it('enforces the packaged backend, uses built-in enterprise identity, and clears
   const builtIn = join(source, 'node_modules/workdsh-provider-identity-enterprise')
   mkdirSync(builtIn, { recursive: true })
   writeFileSync(join(builtIn, 'package.json'), JSON.stringify({ exports: { './desktop': './dist/desktop.js' }, peerDependencies: { '@deepseek-ai/dsh': '0.2.0-rc.2' } }))
+  const collaboration = join(source, 'node_modules/workdsh-plugin-enterprise-collaboration')
+  mkdirSync(collaboration, {recursive:true})
+  writeFileSync(join(collaboration, 'package.json'), JSON.stringify({exports:{'./desktop':'./dist/desktop.js'},peerDependencies:{'@deepseek-ai/dsh':'0.2.0-rc.2'}}))
   vi.stubEnv('WORKDSH_BUNDLED_PROFILE', source); vi.stubEnv('WORKDSH_DSH_HOME', home)
   vi.stubEnv('WORKDSH_NODE_EXECUTABLE', process.execPath); vi.stubEnv('WORKDSH_PRIMARY_RUNTIME', root)
   const { spawn } = await import('node:child_process')
@@ -148,13 +152,11 @@ it('enforces the packaged backend, uses built-in enterprise identity, and clears
     expect(await signIn({ sender: state.windows[8].webContents }, { account: 'a', password: 'secret' })).toHaveProperty('error')
     expect(state.logout).toHaveBeenCalledTimes(3); expect(state.closed).toHaveBeenCalledTimes(2)
     expect(spawn).toHaveBeenCalledTimes(2)
-    // A local same-name package would beat the installation in the official resolver.
-    // Reject it before creating an authority or starting a Host.
+    // An incompatible installed plugin fails before authority startup, and revokes the new login.
     writeFileSync(join(enterprise.root, 'device.json'), JSON.stringify({ deviceId: enterprise.deviceId }))
-    const shadow = join(enterprise.home, 'profiles/workdsh/node_modules/workdsh-provider-identity-enterprise')
-    mkdirSync(shadow, { recursive: true })
-    writeFileSync(join(shadow, 'package.json'), JSON.stringify({ version: 'old' }))
-    expect(await signIn({ sender: state.windows[8].webContents }, { account: 'a', password: 'secret' })).toEqual({ error: expect.stringContaining('不允许覆盖同名插件') })
+    const {composeInstalledEnterprisePlugins}=await import('../src/enterprise-plugins.ts')
+    vi.mocked(composeInstalledEnterprisePlugins).mockRejectedValueOnce(new Error('企业插件与当前 DSH 不兼容'))
+    expect(await signIn({ sender: state.windows[8].webContents }, { account: 'a', password: 'secret' })).toEqual({ error: expect.stringContaining('不兼容') })
     expect(state.logout).toHaveBeenCalledTimes(4); expect(state.closed).toHaveBeenCalledTimes(2)
     expect(spawn).toHaveBeenCalledTimes(2)
   } finally {

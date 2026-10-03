@@ -15,12 +15,7 @@ const anchor = join(source, 'profile-installation.json')
 if (!existsSync(anchor)) throw new Error(`Missing bundled DSH installation: ${anchor}`)
 const installation = JSON.parse(readFileSync(anchor, 'utf8'))
 for (const name of ENTERPRISE_PACKAGES) {
-  const shipped = JSON.parse(readFileSync(join(source, 'node_modules', name, 'package.json'), 'utf8'))
-  // Official PluginManager lists dependencies, not peers. Keep enterprise hidden
-  // until the enterprise member Profile explicitly selects its bundle.
-  if (installation.dependencies?.[name] !== undefined || installation.peerDependencies?.[name] !== shipped.version) {
-    throw new Error('Enterprise package must be installation-provided without a default personal plugin toggle: ' + name)
-  }
+ if(existsSync(join(source,'node_modules',name,'package.json'))||installation.dependencies?.[name]||installation.peerDependencies?.[name])throw new Error('Base installer must not preinstall enterprise plugins: '+name)
 }
 
 process.env.DSH_HOME = runtime
@@ -56,7 +51,7 @@ try {
       throw new Error(`Community catalog integration is inactive or invalid: ${name}: ${JSON.stringify(bundle)}`)
     }
   }
-  console.log(`Verified plugin manager exposes exactly four ${installedInProfile ? 'installed' : 'installation-provided'} WorkDSH product bundles: ${names.join(', ')}`)
+  console.log(`Verified plugin manager exposes exactly five ${installedInProfile ? 'installed' : 'installation-provided'} WorkDSH product bundles: ${names.join(', ')}`)
 } finally {
   try {
     await ctx?.fiber.dispose()

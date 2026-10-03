@@ -11,7 +11,7 @@ const output = join(temp, "modules.mjs");
 await build({
   stdin: {
     contents:
-      'export {editorContent,editorBlocks,documentDiff} from "./packages/plugins/office/src/live/adapter.ts"; export {applyOperations,parse,editInput} from "./packages/plugins/office/src/content/model.ts"; export {documentDocx} from "./packages/plugins/office/src/live/docx.ts"; export {exportAndPresent} from "./packages/plugins/office/src/content/export.ts";',
+      'export {editorContent,editorBlocks,documentDiff} from "../../packages/plugins/office/src/live/adapter.ts"; export {applyOperations,parse,editInput} from "../../packages/plugins/office/src/content/model.ts"; export {documentDocx} from "../../packages/plugins/office/src/live/docx.ts"; export {exportAndPresent} from "../../packages/plugins/office/src/content/export.ts";',
     resolveDir: resolve("."),
   },
   bundle: true,

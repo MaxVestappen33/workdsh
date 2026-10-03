@@ -1,10 +1,10 @@
+import {composeInstalledEnterprisePlugins,installedEnterprisePlugins} from './enterprise-plugins.ts'
 /** Minimal Electron carrier for the bundled WorkDSH release profile. */
 
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
 import {
   existsSync,
-  lstatSync,
   mkdirSync,
   readFileSync,
   rmSync,
@@ -146,6 +146,12 @@ function openWindow(url: string, connection: DesktopConnection = { mode: 'person
   if (!carrier) {
     const origin = new URL(url).origin
     page.webContents.on('will-navigate', (event, target) => {
+      if (target === 'workdsh://entry' && window === page && !switching) {
+        event.preventDefault()
+        if (!enterprisePluginAvailable()) { dialog.showErrorBox('企业插件不可用', '请先安装兼容的企业账号插件。'); return }
+        void returnToEntry()
+        return
+      }
       try { if (new URL(target).origin === origin) return } catch { /* invalid navigation is refused */ }
       event.preventDefault()
     })
@@ -199,8 +205,11 @@ async function prepareProfile(home: string): Promise<string> {
   const source = bundledProfileDirectory()
   const result = materializeRuntimeProfile(source, home)
   if (result.changed) {
+    const entry = window
+    if (entry && !entry.isDestroyed()) await entry.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(connectionLoadingHtml('正在更新工作区插件依赖')))
     await officialCommand(home, ['plugin', '--profile', PROFILE_NAME, 'install'])
     markProfileUpdated(source, result.profile)
+    if (entry && !entry.isDestroyed()) await entry.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(connectionLoadingHtml(enterprise ? '正在启动企业工作区' : '正在启动个人工作区')))
   }
   officialLauncher(source, home, bundledNodeExecutable(), join(bundledPrimaryRuntime(), 'dependencies', 'pnpm', 'bin', 'pnpm.cjs'))
   return result.profile
@@ -319,7 +328,7 @@ function rememberBackend(backend: string): void {
 }
 
 function showConnectionEntry(): void {
-  openWindow('data:text/html;charset=utf-8,' + encodeURIComponent(connectionEntryHtml(enterprisePortal, managedBackend !== undefined)), { mode: 'personal' }, true)
+  openWindow('data:text/html;charset=utf-8,' + encodeURIComponent(connectionEntryHtml(enterprisePortal, managedBackend !== undefined, enterprisePluginAvailable())), { mode: 'personal' }, true)
   connectEntryNavigation(window!)
 }
 
@@ -358,21 +367,9 @@ function connectEntryNavigation(entry: BrowserWindow): void {
   })
 }
 
-function requireBundledEnterprisePlugin(home: string): void {
-  const profile = join(home, 'profiles', PROFILE_NAME)
-  const manifest = JSON.parse(readFileSync(join(profile, 'package.json'), 'utf8')) as { dependencies?: Record<string, string>, optionalDependencies?: Record<string, string>, peerDependencies?: Record<string, string> }
-  const name = 'workdsh-provider-identity-enterprise'
-  if ([manifest.dependencies, manifest.optionalDependencies, manifest.peerDependencies].some(dependencies => dependencies && Object.hasOwn(dependencies, name))
-    || lstatSync(join(profile, 'node_modules', name), { throwIfNoEntry: false })) {
-    throw new Error('企业账号由安装包内置提供，成员 Profile 不允许覆盖同名插件；请移除手动安装的企业账号插件后重试')
-  }
-  const pkg = join(bundledProfileDirectory(), 'node_modules', 'workdsh-provider-identity-enterprise', 'package.json')
-  if (!existsSync(pkg)) throw new Error('安装包缺少内置企业账号插件，请使用完整的当前版本安装包')
-  const installed = JSON.parse(readFileSync(pkg, 'utf8')) as { exports?: Record<string, unknown>, peerDependencies?: Record<string, string> }
-  const official = JSON.parse(readFileSync(join(bundledProfileDirectory(), 'node_modules', '@deepseek-ai', 'dsh', 'package.json'), 'utf8')) as { version: string }
-  if (installed.exports?.['./desktop'] === undefined || installed.peerDependencies?.['@deepseek-ai/dsh'] !== official.version) {
-    throw new Error('内置企业账号插件与官方 DSH 版本不一致，请更新完整安装包')
-  }
+function enterprisePluginAvailable():boolean {
+ try{return installedEnterprisePlugins(join(runtimeHome(),'profiles',PROFILE_NAME),JSON.parse(readFileSync(join(bundledProfileDirectory(),'node_modules','@deepseek-ai','dsh','package.json'),'utf8')).version).includes('workdsh-provider-identity-enterprise')}
+ catch{return false}
 }
 
 async function activateEnterprise(): Promise<void> {
@@ -380,19 +377,22 @@ async function activateEnterprise(): Promise<void> {
   if (!session) throw new Error('请重新登录企业账号')
   await session.login.verify()
   if (quitRequested) throw new Error('启动已取消')
-  requireBundledEnterprisePlugin(session.home)
+  const pluginNames=await composeInstalledEnterprisePlugins(join(runtimeHome(),'profiles',PROFILE_NAME),join(session.home,'profiles',PROFILE_NAME),JSON.parse(readFileSync(join(bundledProfileDirectory(),'node_modules','@deepseek-ai','dsh','package.json'),'utf8')).version,bundledNodeExecutable(),join(bundledPrimaryRuntime(),'dependencies','pnpm','bin','pnpm.cjs'))
+  if(quitRequested||enterprise!==session)throw new Error('企业启动已取消')
   const manifest = join(session.home, 'profiles', PROFILE_NAME, 'package.json')
   const selected = JSON.parse(readFileSync(manifest, 'utf8')) as { dsh?: { profile?: { bundles?: string[] } } }
   selected.dsh ??= {}; selected.dsh.profile ??= {}; selected.dsh.profile.bundles ??= []
   const bundles = selected.dsh.profile.bundles
   // Disable personal identity at composition, rather than allow an identity fallback.
   selected.dsh.profile.bundles = bundles.filter(name => name !== 'workdsh-provider-identity-local')
-  if (!selected.dsh.profile.bundles.includes('workdsh-provider-identity-enterprise')) selected.dsh.profile.bundles.push('workdsh-provider-identity-enterprise')
+  for (const name of pluginNames) {
+    if (!selected.dsh.profile.bundles.includes(name)) selected.dsh.profile.bundles.push(name)
+  }
   writeFileSync(manifest, JSON.stringify(selected, null, 2) + '\n', { mode: 0o600 })
   session.authority = await startEnterpriseAuthority(session.login, session.deviceId, () => { void returnToEntry() }, () => { void returnToEntry() })
   // Record before writing either file, so a partial patch failure is also cleaned.
   session.authFile = join(session.home, 'enterprise-auth.json')
-  const patch = desktopEnterprisePatch(session.home, session.authority, session.login.actor, session.login.backendUrl, session.deviceId)
+  const patch = desktopEnterprisePatch(session.home, session.authority, session.login.actor, session.login.backendUrl, session.deviceId, pluginNames.includes('workdsh-plugin-enterprise-collaboration'))
   session.authFile = patch.authFile
   const connection: DesktopConnection = { mode: 'enterprise', portalOrigin: session.login.backendUrl, organizationId: session.login.actor.organizationId, principalId: session.login.actor.id }
   if (window) await window.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(connectionLoadingHtml('正在启动企业工作区')))
@@ -401,8 +401,11 @@ async function activateEnterprise(): Promise<void> {
   verifyTimer = setInterval(() => {
     if (verifying || switching) return
     verifying = true
-    void session.login.verify().catch(() => {
-      dialog.showErrorBox('企业认证不可用', '企业账号已过期、被撤销或后台不可达。本机企业运行将停止，请重新登录。')
+    void session.login.verify().then(()=>{
+      const current=installedEnterprisePlugins(join(runtimeHome(),'profiles',PROFILE_NAME),JSON.parse(readFileSync(join(bundledProfileDirectory(),'node_modules','@deepseek-ai','dsh','package.json'),'utf8')).version)
+      if(pluginNames.some(name=>!current.includes(name)))throw new Error('企业插件已卸载，请重新安装后登录')
+    }).catch(() => {
+      dialog.showErrorBox('企业认证不可用', '企业账号已过期、被撤销、后台不可达或企业插件已卸载。本机企业运行将停止，请检查后重新登录。')
       void returnToEntry()
     }).finally(() => { verifying = false })
   }, 30_000)
@@ -435,8 +438,8 @@ function installLoginHandlers(): void {
 function installConnectionMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     ...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : []),
-    { label: '工作区', submenu: [{ label: '退出并切换使用方式', click: () => { void returnToEntry() } }] },
-    { label: '工具', submenu: [{ label: '管理 dsh 命令…', click: () => { void manageCommand(join(process.resourcesPath, 'workdsh-runtime'), enterprise ? `${enterprise.login.actor.organizationName ?? '企业'} / ${enterprise.login.actor.displayName}` : '个人工作区') } }] },
+    { label: '工作区', submenu: [{ label: '切换使用方式／退出企业', click: () => { void returnToEntry() } }] },
+    { label: '工具', submenu: [{ label: '终端命令 dsh（可选）…', click: () => { void manageCommand(join(process.resourcesPath, 'workdsh-runtime'), enterprise ? `${enterprise.login.actor.organizationName ?? '企业'} / ${enterprise.login.actor.displayName}` : '个人工作区') } }] },
     { role: 'editMenu' }, { role: 'viewMenu' }, { role: 'windowMenu' },
   ]))
 }

@@ -12,18 +12,6 @@
       "types": "./dist/client.d.ts",
       "default": "./dist/client.browser.js"
     },
-    "./process": {
-      "types": "./dist/process.d.ts",
-      "default": "./dist/process.js"
-    },
-    "./process-supervisor": {
-      "types": "./dist/process-supervisor.d.ts",
-      "default": "./dist/process-supervisor.js"
-    },
-    "./process-sessions": {
-      "types": "./dist/process-sessions.d.ts",
-      "default": "./dist/process-sessions.js"
-    },
     "./desktop": {
       "types": "./dist/desktop.d.ts",
       "default": "./dist/desktop.js"
@@ -52,7 +40,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && node ../../../apps/web/scripts/build-enterprise-identity.mjs",
+    "build": "node ../../../apps/web/scripts/clean-enterprise-build.mjs && tsc -p tsconfig.json && node ../../../apps/web/scripts/build-enterprise-identity.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test tests/*.test.mjs"
   },

@@ -21,6 +21,13 @@ WorkDSH draws on WorkBuddy's way of organizing projects, material, experts, skil
 | Reuse a team's working methods | **Experts** save role and capability settings; **skills** carry callable instructions and resources. |
 | Keep the result beyond the chat | The **deliverable workspace** previews or edits supported working copies of documents, spreadsheets, presentations, HTML, and PDF. |
 
+### What WorkDSH adds
+
+- **Desktop execution, central administration**: the Agent and tools run on the employee’s computer; the server handles accounts, authorization, collaboration data and model forwarding.
+- **The full official UI with shared feature plugins**: personal and enterprise modes reuse the same library, experts, skills, and connectors.
+- **Bundled runtime**: Desktop includes Node.js, pnpm, Python, and built-in plugins without downloading them on first login. Community skills and plugins are installed on demand.
+- **Personal and company models together**: the official Custom model API settings connect to the company endpoint while supplier keys remain in the admin backend.
+
 ### From material to deliverable
 
 ```text
@@ -58,19 +65,24 @@ WorkDSH connects two independently maintained catalogs: [SkillHub](https://skill
 
 ## Personal and enterprise use
 
-WorkDSH supports personal use, Enterprise Web and Enterprise Desktop. Personal and enterprise modes use the complete official DSH interface and the same WorkDSH feature packages. [WorkDSH Admin](https://github.com/techflag/workdsh-admin) manages company accounts, organizations, permissions and internal model APIs.
+WorkDSH supports personal use and Enterprise Desktop. Personal and enterprise modes use the complete official DSH interface and the same WorkDSH feature packages. [WorkDSH Admin](https://github.com/techflag/workdsh-admin) manages company accounts, organizations, permissions and internal model APIs.
 
 | Mode | Where the Agent and tools run | How to enter |
 | --- | --- | --- |
 | Personal Desktop | On your computer, using personal files and model settings. | Open the app and choose personal use. |
-| Enterprise Desktop | On the employee's computer, using local files and tools. | Install the company-provided desktop app and choose enterprise login. |
-| Enterprise Web | A separate account process on the company's ECS server. | Open the company Web address and sign in. |
+| Enterprise Desktop | On the employee's computer, using local files and tools. | Install the desktop app and enterprise account plugin, then choose enterprise login. |
 
-Desktop keeps personal and enterprise data and credentials in separate spaces. The enterprise account plugin is included in Desktop and activates only in enterprise mode; members do not need to install it separately. Collaboration, notifications and business applications remain independently installed plugins.
+Desktop keeps personal and enterprise data and credentials in separate spaces. Install the enterprise account plugin when needed, then sign in with the company address and account; the backend still authorizes membership. Projects are included in Desktop. Enterprise collaboration is installed on demand and activates after company login; personal mode does not activate it. Enterprise Agent execution is not deployed on ECS. Notifications and business applications remain independently installed plugins.
+
+### Install enterprise plugins
+
+The Enterprise Connection package is delivered independently through our [GitHub Releases](https://github.com/techflag/workdsh/releases), without a third-party marketplace. Download `workdsh-enterprise-connection-<version>.tgz`, retain the file and enter its full path in Add plugin. Release assets include the compatible DSH version manifest and `SHA256SUMS`.
+
+In personal mode, open **Plugins → Add plugin**, enter the administrator-provided Enterprise Connection package path or installation address, verify the source and install, then click **Enable now** when installation finishes. One package provides account and collaboration plugins. Then open **Settings → Enterprise account → Connect enterprise**, enter the backend address and sign in. Installation uses the official progress and error feedback; no terminal command is required. Enterprise plugins are not yet published to a searchable catalog.
 
 ### Enterprise login and account
 
-The company administrator presets the backend address in the Desktop package. Employees sign in with their own company accounts after installation. Enterprise Web uses the Web address provided by the administrator.
+Desktop uses one base installer. Enter personal mode and install the Enterprise Connection package through plugin management, which includes account and collaboration. Then switch modes from the workspace menu, enter the administrator-provided backend address and sign in with your company account. Administrators can also preset the address when packaging. The management console remains accessible through a browser.
 
 ![Desktop personal and enterprise entry](assets/screenshots/desktop-login.png)
 
@@ -109,15 +121,7 @@ Save the provider and select its model in the conversation. Personal model provi
 </details>
 
 <details>
-<summary>See the Enterprise Web workspace, Skills and admin console</summary>
-
-Enterprise Web — conversation workspace:
-
-![Enterprise Web conversation workspace](assets/screenshots/enterprise-web.jpg)
-
-Enterprise Web — Skills:
-
-![Enterprise Web Skills](assets/screenshots/skills.jpg)
+<summary>See the management console</summary>
 
 WorkDSH Admin — organization overview:
 
@@ -135,9 +139,11 @@ The planned desktop installer release is **2.0.6-alpha.1**. Its download links w
 | macOS Apple Silicon | [WorkDSH arm64.dmg](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.1/dsh-plugin-desktop-macos-arm64--WorkDSH-2.0.6-alpha.1-arm64.dmg) |
 | macOS Intel | [WorkDSH x64.dmg](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.1/dsh-plugin-desktop-macos-x64--WorkDSH-2.0.6-alpha.1-x64.dmg) |
 
-Desktop installers include Node.js and Python runtimes by default, so users do not need to install them separately. This is an **Alpha release**: end-to-end project document references, expert execution, and different Office formats are still being validated. The macOS DMGs are unsigned; download updates from [Releases](https://github.com/techflag/workdsh/releases). Start with the [user guide](docs/user-guide.en.md) and [FAQ](docs/faq.en.md).
+Desktop installers include Node.js, pnpm and Python runtimes by default, so users do not need to install them separately. This is an **Alpha release**: end-to-end project document references, expert execution, and different Office formats are still being validated. The macOS DMGs are unsigned; download updates from [Releases](https://github.com/techflag/workdsh/releases). Start with the [user guide](docs/user-guide.en.md) and [FAQ](docs/faq.en.md).
 
-Enterprise Desktop uses a company-provided package that includes the enterprise entry. For existing downloads, available features are described in their corresponding release notes.
+The base Desktop package does not preinstall enterprise plugins. Install them separately to enable enterprise login. For existing downloads, available features are described in their corresponding release notes.
+
+The **Tools → Terminal command dsh (optional)** menu lets you inspect, install, repair or remove the terminal command. Desktop chat does not require it; its dialog appears only when you select the menu. Installation creates a command entry using the packaged Node, pnpm and official CLI. Removing it does not delete the app or workspace. Commands display the active Desktop space; use `--workdsh-space=personal` or `--workdsh-space=enterprise` to select it explicitly. Initialize the space in Desktop first and keep Desktop signed in for enterprise operations. Plugin changes apply to that space’s Profile.
 
 ## Development and documentation
 
@@ -149,8 +155,6 @@ corepack yarn dev
 ```
 
 Run checks with `corepack yarn check`. On macOS or Windows, `corepack yarn release:pack` builds the Web Profile and Desktop package from the current commit. Once the Web package is published, use `corepack yarn release:pack:published` for the final installer. Both commands share the same [packaging script](scripts/package-desktop-release.mjs). [Contributing](CONTRIBUTING.en.md)
-
-The desktop Tools menu manages the bundled `dsh` command (inspect, install, repair, remove), using the packaged Node, pnpm and official CLI. Commands display the active Desktop space; use `--workdsh-space=personal` or `--workdsh-space=enterprise` to select it explicitly. Initialize the space in Desktop first and keep Desktop signed in for enterprise operations. Plugin changes apply to that space’s Profile.
 
 The official DSH core uses published npm packages. Desktop Node, pnpm, Python, Office resources and command helpers are extracted from official installers. `upstream.json` locks their version, URLs, sizes and SHA-512 digests; no official source checkout is required. Initial packaging downloads the platform release. Windows build machines require 7-Zip to extract the installer.
 

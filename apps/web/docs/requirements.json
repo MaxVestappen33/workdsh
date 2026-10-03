@@ -352,7 +352,6 @@
       "dataBoundary": "企业 Web 按账号进程；Desktop 本机企业空间与个人分离；后台按真实成员凭据授权。",
       "contract": "同一账号插件与页面；Desktop 不可变携带、仅企业激活，拒绝成员同名覆盖；正文同步范围显式。",
       "checks": [
-        "../../packages/providers/identity-enterprise/tests/process.test.mjs",
         "../../packages/providers/identity-enterprise/tests/desktop.test.mjs",
         "../../packages/providers/identity-enterprise/tests/backend-authentication.test.mjs"
       ],

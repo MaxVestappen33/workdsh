@@ -81,10 +81,10 @@ export async function afterPack(context: PackContext): Promise<void> {
   const selectedWorkdsh = selected.filter(name => name.startsWith('workdsh-'))
   const directWorkdsh = Object.keys(profileManifest.dependencies ?? {}).filter(name => name.startsWith('workdsh-'))
   if (selectedWorkdsh.length !== productPackages.size || selectedWorkdsh.some(name => !productPackages.has(name))) {
-    throw new Error(`Desktop must select exactly four WorkDSH product bundles, found ${selectedWorkdsh.join(', ')}`)
+    throw new Error(`Desktop must select exactly five WorkDSH product bundles, found ${selectedWorkdsh.join(', ')}`)
   }
   if (directWorkdsh.length !== productPackages.size || directWorkdsh.some(name => !productPackages.has(name))) {
-    throw new Error(`Desktop must directly install exactly four WorkDSH product bundles, found ${directWorkdsh.join(', ')}`)
+    throw new Error(`Desktop must directly install exactly five WorkDSH product bundles, found ${directWorkdsh.join(', ')}`)
   }
   const lockfile = readFileSync(join(profile, 'pnpm-lock.yaml'), 'utf8')
   for (const item of release.packages) {
@@ -105,7 +105,7 @@ export async function afterPack(context: PackContext): Promise<void> {
   const patch = readFileSync(join(profile, 'cordis.patch.yml'), 'utf8')
   verifyDefaultComposition(patch)
   for (const name of release.packages.map(item => item.name).filter(name => !productPackages.has(name) && !ENTERPRISE_PACKAGES.includes(name))) {
-    if (name === 'workdsh-provider-browser-session') continue // inserted by the bundle patch
+    if (['workdsh-contracts', 'workdsh-ui', 'workdsh-provider-browser-session'].includes(name)) continue // inserted by the bundle patch
     if (!patch.includes(`name: ${name}`)) throw new Error(`Internal WorkDSH service is missing from Profile patch: ${name}`)
   }
   if (/file:(?:\/|[a-z]:)/iu.test(lockfile)) {

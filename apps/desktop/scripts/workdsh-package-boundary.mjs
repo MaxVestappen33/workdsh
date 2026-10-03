@@ -4,12 +4,15 @@ export const PRODUCT_PACKAGES = Object.freeze([
   'workdsh-plugin-connectors',
   'workdsh-plugin-experts',
   'workdsh-plugin-library',
+  'workdsh-plugin-projects',
   'workdsh-plugin-skills',
 ])
 
-// Shipped for enterprise composition; never selected by the default personal Profile.
+// External enterprise packages: installed explicitly, never included in the base installer.
 export const ENTERPRISE_PACKAGES = Object.freeze([
   'workdsh-provider-identity-enterprise',
+  'workdsh-plugin-enterprise-collaboration',
+  'workdsh-enterprise-connection',
 ])
 
 // Keep the already shipped community catalog integrations on the same Profile.
@@ -19,6 +22,8 @@ export const CATALOG_PACKAGES = Object.freeze({
 })
 
 export const RELEASE_PACKAGES = Object.freeze([
+  'workdsh-contracts',
+  'workdsh-ui',
   'workdsh-provider-identity-local',
   'workdsh-provider-browser-session',
   'workdsh-plugin-audit',
@@ -28,10 +33,12 @@ export const RELEASE_PACKAGES = Object.freeze([
   'workdsh-plugin-connectors',
   'workdsh-plugin-library',
   'workdsh-bundle',
-  ...ENTERPRISE_PACKAGES,
+  'workdsh-plugin-projects',
 ])
 
 export const PACKAGE_DIRECTORIES = Object.freeze({
+  'workdsh-contracts': '../../packages/contracts',
+  'workdsh-ui': '../../packages/ui',
   'workdsh-provider-identity-local': '../../packages/providers/identity-local',
   'workdsh-provider-browser-session': '../../packages/providers/browser-session',
   'workdsh-plugin-audit': '../../packages/plugins/audit',
@@ -41,5 +48,7 @@ export const PACKAGE_DIRECTORIES = Object.freeze({
   'workdsh-plugin-connectors': '../../packages/plugins/connectors',
   'workdsh-plugin-library': '../../packages/plugins/library',
   'workdsh-bundle': '../../packages/bundle',
+  'workdsh-plugin-projects': '../../packages/plugins/projects',
   'workdsh-provider-identity-enterprise': '../../packages/providers/identity-enterprise',
+  'workdsh-plugin-enterprise-collaboration': '../../packages/plugins/enterprise-collaboration',
 })

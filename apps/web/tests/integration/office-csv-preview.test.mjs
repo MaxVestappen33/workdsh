@@ -9,7 +9,7 @@ import {pathToFileURL} from 'node:url';
 import {createRequire} from 'node:module';
 const req = createRequire(resolve('../../packages/plugins/office/package.json')), temp = await mkdtemp(join(tmpdir(), 'office-csv-'));
 after(() => rm(temp, {recursive: true, force: true}));
-await build({stdin: {resolveDir: resolve('.'), contents: "export * from './packages/plugins/office/src/csv/csv.ts';"}, bundle: true, platform: 'node', format: 'esm', outfile: join(temp, 'csv.mjs')});
+await build({stdin: {resolveDir: resolve('.'), contents: "export * from '../../packages/plugins/office/src/csv/csv.ts';"}, bundle: true, platform: 'node', format: 'esm', outfile: join(temp, 'csv.mjs')});
 const {decodeCsvBytes, parseCsv, csvLimits} = await import(pathToFileURL(join(temp, 'csv.mjs')));
 const bytes = array => Uint8Array.from(array);
 test('CSV decoding sniffs real-world encodings and parsing follows RFC 4180 within hard limits', () => {
@@ -48,7 +48,7 @@ test('CSV preview renders a sticky-header table, wraps on demand and reports tru
  const bundle = await build({stdin: {resolveDir: resolve('.'), contents: `
 import React from 'react';
 import {createRoot} from 'react-dom/client';
-import {CsvDocument} from './packages/plugins/office/src/csv/CsvDocument.tsx';
+import {CsvDocument} from '../../packages/plugins/office/src/csv/CsvDocument.tsx';
 const root = createRoot(document.getElementById('root'));
 window.renderCsv = (bytes, wrap) => root.render(React.createElement(CsvDocument, {
   resourceAddress: '/workspace/2021040501_可导入数据.csv',

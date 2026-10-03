@@ -15,7 +15,7 @@ import Tools from "@deepseek-ai/dsh-tools";
 import { AccessManager } from "../../../../packages/plugins/access/dist/index.js";
 import { AuditJournal } from "../../../../packages/plugins/audit/dist/index.js";
 const artifacts = new URL(
-  "../../.artifacts/office-content-tests",
+  "../../.artifacts/office-content-tests/",
   import.meta.url,
 );
 await mkdir(artifacts, { recursive: true });

@@ -16,15 +16,20 @@
     "./member": {
       "types": "./dist/member.d.ts",
       "default": "./dist/member.js"
+    },
+    "./desktop": {
+      "types": "./dist/desktop.d.ts",
+      "default": "./dist/desktop.js"
     }
   },
   "files": [
     "dist",
     "README.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "cordis.patch.yml"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && node ../../../apps/web/scripts/build-enterprise-collaboration.mjs",
+    "build": "node ../../../apps/web/scripts/clean-enterprise-build.mjs && tsc -p tsconfig.json && node ../../../apps/web/scripts/build-enterprise-collaboration.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test tests/*.test.mjs"
   },
@@ -51,7 +56,8 @@
     "@deepseek-ai/dsh-attachment": "0.2.0-rc.2",
     "@deepseek-ai/dsh-session": "0.2.0-rc.2",
     "@deepseek-ai/dsh-tool-present": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-fs": "0.2.0-rc.2"
+    "@deepseek-ai/dsh-fs": "0.2.0-rc.2",
+    "@deepseek-ai/dsh": "0.2.0-rc.2"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.4",
@@ -96,6 +102,9 @@
         "@deepseek-ai/dsh-api-workspace-controller",
         "@deepseek-ai/dsh-client-ui-input-trigger"
       ]
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
     }
   }
 }

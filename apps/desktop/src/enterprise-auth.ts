@@ -114,9 +114,10 @@ export async function startEnterpriseAuthority(login: EnterpriseLogin, deviceId:
       res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('{"local":true}')
       res.once('finish', () => { setTimeout(onLogout, 100) }); return
     }
-    const auth = url.pathname === '/auth/me' && req.method === 'GET' && !url.search
+    const auth = ['/auth/me', '/api/auth/me'].includes(url.pathname) && req.method === 'GET' && !url.search
     const ingest = url.pathname === '/visible-sessions/ingest' && ['GET', 'POST', 'DELETE'].includes(req.method ?? '')
-    if (!auth && !ingest) { reject(404, 'Unknown Desktop operation'); return }
+    const collaboration = !url.search && ((req.method === 'GET' && /^\/api\/collaboration\/(?:contract|colleagues|inbox|sent|notifications|(?:materials|handoffs)\/[\w-]{1,160}|handoffs\/[\w-]{1,160}\/messages)$/.test(url.pathname)) || (req.method === 'POST' && /^\/api\/collaboration\/(?:materials|handoffs|notifications\/[\w-]{1,160}\/read|handoffs\/[\w-]{1,160}\/(?:messages|complete))$/.test(url.pathname)));
+    if (!auth && !ingest && !collaboration) { reject(404, 'Unknown Desktop operation'); return }
     let current: EnterpriseMember
     try { current = await login.verify() } catch {
       reject(401, 'Enterprise authorization unavailable')
@@ -126,6 +127,22 @@ export async function startEnterpriseAuthority(login: EnterpriseLogin, deviceId:
     if (closing) { reject(401, 'Desktop is signing out'); return }
     if (auth) {
       res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ...current, deviceId, backendUrl: login.backendUrl })); return
+    }
+    if (collaboration) {
+      try {
+        let body: string | undefined;
+        if(req.method==='POST') {
+          if(!req.headers['content-type']?.startsWith('application/json')) { reject(400,'JSON required'); return }
+          const chunks:Buffer[]=[];let size=0;
+          for await(const part of req) { const chunk=Buffer.from(part);size+=chunk.length;if(size>8*1024*1024){reject(413,'Body too large');return}chunks.push(chunk) }
+          body=Buffer.concat(chunks).toString('utf8');JSON.parse(body);
+        }
+        const response=await login.request(url.pathname,req.method,body);
+        if(closing)return;
+        if(!response.ok){reject(response.status,'Enterprise collaboration rejected');return}
+        res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify(await response.json()));
+      } catch {reject(502,'Enterprise collaboration unavailable')}
+      return;
     }
     try {
       let body: string | undefined

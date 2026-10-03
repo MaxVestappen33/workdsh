@@ -60,6 +60,24 @@ describe('Desktop Main enterprise authority', () => {
     expect((await fetch(`${bridge.url}/visible-sessions/ingest`, { method: 'POST', headers, body: JSON.stringify({ deviceId: 'device-b' }) })).status).toBe(403)
     expect(ingested).toBe(0)
   })
+  it('relays only member collaboration operations and keeps the backend token in Main', async () => {
+    const calls:Array<{path:string;authorization:string|null}>=[]
+    const request=(async(url:string|URL|Request,init?:RequestInit)=>{
+      const path=new URL(String(url)).pathname
+      if(path.includes('/collaboration/')) { calls.push({path,authorization:new Headers(init?.headers).get('Authorization')});return json({contractVersion:1}) }
+      return path.endsWith('/login')?json({token,member:actor}):json(actor)
+    }) as typeof fetch
+    const login=await EnterpriseLogin.login('https://company.test',actor.email,'password',request)
+    bridge=await startEnterpriseAuthority(login,'device-a',()=>{},()=>{})
+    const headers={Authorization:`Bearer ${bridge.key}`,'Content-Type':'application/json'}
+    expect((await fetch(`${bridge.url}/api/collaboration/contract`,{headers})).status).toBe(200)
+    expect(calls).toEqual([{path:'/api/collaboration/contract',authorization:`Bearer ${token}`}])
+    expect((await fetch(`${bridge.url}/api/admin/members`,{headers})).status).toBe(404)
+    expect((await fetch(`${bridge.url}/api/collaboration/contract?target=other`,{headers})).status).toBe(404)
+    expect((await fetch(`${bridge.url}/api/collaboration/contract`,{headers:{...headers,Origin:'https://evil.test'}})).status).toBe(403)
+    expect(JSON.stringify(await (await fetch(`${bridge.url}/api/auth/me`,{headers})).json())).not.toContain(token)
+    expect(calls).toHaveLength(1)
+  })
   it('fails closed when the account changes or the server revokes a token', async () => {
     let revoked = false
     let invalid = 0
