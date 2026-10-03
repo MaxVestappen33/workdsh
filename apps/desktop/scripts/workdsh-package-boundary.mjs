@@ -15,7 +15,7 @@ export const ENTERPRISE_PACKAGES = Object.freeze([
 // Keep the already shipped community catalog integrations on the same Profile.
 export const CATALOG_PACKAGES = Object.freeze({
   '@cocofhu/skillhub': '0.2.16',
-  dshmarket: '1.66.1',
+  dshmarket: '1.66.8',
 })
 
 export const RELEASE_PACKAGES = Object.freeze([

@@ -60,7 +60,7 @@ function run(
 
 function defaultOptions(): MacSmokePackageOptions {
   const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-  const workspaceRoot = resolve(desktopRoot, '..')
+  const workspaceRoot = resolve(desktopRoot, '..', '..')
   const require = createRequire(import.meta.url)
   const outputDir = resolve(desktopRoot, 'dist', 'mac-smoke', process.env.WORKDSH_MAC_ARCH ?? process.arch)
   const electronDist = resolve(dirname(require.resolve('electron/package.json')), 'dist')

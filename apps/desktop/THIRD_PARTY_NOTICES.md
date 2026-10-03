@@ -16,7 +16,7 @@ The Desktop Profile bundles two separate third-party plugins:
 - [`@cocofhu/skillhub`](https://www.npmjs.com/package/@cocofhu/skillhub)
   version 0.2.16 for SkillHub integration. Source and MIT license:
   <https://github.com/cocofhu/skillhub>.
-- [`dshmarket`](https://www.npmjs.com/package/dshmarket) version 1.66.1 for
+- [`dshmarket`](https://www.npmjs.com/package/dshmarket) version 1.66.8 for
   DSH community plugin discovery. Source and MIT license:
   <https://github.com/dsh-market/dsh-market>.
 

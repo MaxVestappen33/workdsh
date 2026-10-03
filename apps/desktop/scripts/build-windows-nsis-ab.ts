@@ -377,7 +377,7 @@ function parseLabel(argv: readonly string[]): string {
 /** Resolve native defaults without changing the repository's dependency graph. */
 export function createWindowsNsisAbBuildOptions(argv = process.argv.slice(2)): WindowsNsisAbBuildOptions {
   const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-  const workspaceRoot = resolve(desktopRoot, '..')
+  const workspaceRoot = resolve(desktopRoot, '..', '..')
   const require = createRequire(import.meta.url)
   const electronBuilderRoot = dirname(require.resolve('electron-builder/package.json'))
   const appBuilderLibRoot = dirname(require.resolve('app-builder-lib/package.json'))

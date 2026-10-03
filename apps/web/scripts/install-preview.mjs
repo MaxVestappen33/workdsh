@@ -17,7 +17,7 @@ if (typeof baseVersion !== 'string') throw new Error('Missing pinned @deepseek-a
 if (typeof webAppVersion !== 'string') throw new Error('Missing pinned @deepseek-ai/dsh-web-app version in package.json pnpm.overrides.');
 const baseSpec = `@deepseek-ai/dsh-base@${baseVersion}`;
 const webAppSpec = `@deepseek-ai/dsh-web-app@${webAppVersion}`;
-const marketVersion = '1.66.1';
+const marketVersion = '1.66.8';
 const marketSpec = `dshmarket@${marketVersion}`;
 const cliVersion = JSON.parse(await readFile(join(root, 'node_modules/@deepseek-ai/dsh/package.json'), 'utf8')).version;
 if (cliVersion !== baseVersion) throw new Error('Preview CLI and Base must use the same pinned version.');

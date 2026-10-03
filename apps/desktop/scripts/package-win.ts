@@ -79,7 +79,7 @@ function run(
 /** Create the native packaging options for a verifier entry point. */
 export function createWindowsPackageOptions(verifier = './verify-win-installer.ts'): WindowsPackageOptions {
   const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-  const workspaceRoot = resolve(desktopRoot, '..')
+  const workspaceRoot = resolve(desktopRoot, '..', '..')
   const require = createRequire(import.meta.url)
   const windowsRoot = process.env.SystemRoot ?? process.env.WINDIR
   return {
