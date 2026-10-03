@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url'
 import { DSH_VERSION } from './runtime-version.mjs'
 import { CATALOG_PACKAGES, ENTERPRISE_PACKAGES, PRODUCT_PACKAGES, RELEASE_PACKAGES } from './workdsh-package-boundary.mjs'
 import { verifyDefaultComposition, verifyDefaultProfile, verifyInstalledDshVersions, verifyOfficialWebPackages, verifyPackageDshReferences, verifyProfileRelease, verifyReleaseArchives } from './verify-profile-release.mjs'
+import { runtimeArchitecture, runtimeArchitectureYaml } from './runtime-architecture.mjs'
+const architecture = runtimeArchitecture()
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const output = join(desktopRoot, 'build/workdsh-runtime')
 const profile = join(output, 'profiles/workdsh')
@@ -18,7 +20,7 @@ if (!existsSync(manifestFile)) throw new Error('Pack built current WorkDSH sourc
 const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'))
 verifyProfileRelease(manifest, DSH_VERSION, RELEASE_PACKAGES)
 verifyReleaseArchives(manifest, release)
-const marker = JSON.stringify({ harness: DSH_VERSION, layout: 'five-feature-plugins-enterprise-collaboration-v5', release: manifest })
+const marker = JSON.stringify({ harness: DSH_VERSION, layout: 'five-feature-plugins-external-enterprise-v6', architecture, release: manifest })
 const markerPath = join(profile, '.workdsh-desktop-release.json')
 const readJson = path => JSON.parse(readFileSync(path, 'utf8'))
 function run(command, args, options = {}) {
@@ -104,7 +106,7 @@ if (!prepared) {
       dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', ...PRODUCT_PACKAGES, ...Object.keys(CATALOG_PACKAGES)] } } }
     writeFileSync(join(profile, 'package.json'), JSON.stringify(pkg, null, 2) + '\n')
     const overrides = Object.entries(manifest.runtimeOverrides ?? {}).map(([name, version]) => `  ${JSON.stringify(name)}: ${JSON.stringify(version)}`).join('\n')
-    writeFileSync(join(profile, 'pnpm-workspace.yaml'), 'autoInstallPeers: true\nstrictPeerDependencies: false\noverrides:\n' + overrides + '\n')
+    writeFileSync(join(profile, 'pnpm-workspace.yaml'), 'autoInstallPeers: true\nstrictPeerDependencies: false\n' + runtimeArchitectureYaml(architecture) + 'overrides:\n' + overrides + '\n')
     run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['--yes', 'pnpm@11.7.0', '--dir', profile, 'install', '--prod', '--ignore-scripts'], { shell: process.platform === 'win32' })
     // Promote mandatory official peers into this installation's single root
     // graph, so CLI, Config Editor and Agent providers share module instances.

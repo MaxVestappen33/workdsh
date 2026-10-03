@@ -135,3 +135,14 @@ test('validates conditional exports and locale patterns without accepting missin
     assert.throws(() => verifyBuiltPackageExports(pkg, directory), /Missing built export.*locale/)
   } finally { rmSync(directory, { recursive: true, force: true }) }
 })
+
+
+test('cross-architecture macOS runtime installs target native dependencies as well as host', async () => {
+ const {runtimeArchitecture,runtimeArchitectureYaml}=await import('./runtime-architecture.mjs');
+ const target=runtimeArchitecture({WORKDSH_MAC_ARCH:'x64'},'darwin','arm64');
+ assert.deepEqual(target.cpus,['arm64','x64']);
+ assert.equal(target.targetArch,'x64');
+ assert.match(runtimeArchitectureYaml(target),/cpu:\n    - arm64\n    - x64/);
+ assert.deepEqual(runtimeArchitecture({},'win32','x64').cpus,['x64']);
+ assert.throws(()=>runtimeArchitecture({WORKDSH_MAC_ARCH:'invalid'},'darwin','arm64'),/Unsupported/);
+});

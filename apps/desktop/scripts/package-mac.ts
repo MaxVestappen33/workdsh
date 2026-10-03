@@ -74,7 +74,7 @@ function defaultOptions(): MacSmokePackageOptions {
     outputDir,
     resetOutput: () => rmSync(outputDir, { recursive: true, force: true }),
     builderCli: require.resolve('electron-builder/cli.js'),
-    ...(existsSync(resolve(electronDist, 'Electron.app')) ? { electronDist } : {}),
+    ...((process.env.WORKDSH_MAC_ARCH ?? process.arch) === process.arch && existsSync(resolve(electronDist, 'Electron.app')) ? { electronDist } : {}),
     verifier: fileURLToPath(new URL('./verify-mac-smoke.ts', import.meta.url)),
     nodeExecutable: process.execPath,
     run,
