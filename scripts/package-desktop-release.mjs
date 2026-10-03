@@ -39,7 +39,7 @@ run('Check Desktop packaging', corepack, ['yarn', 'workspace', 'dsh-plugin-deskt
 
 const version = JSON.parse(readFileSync(join(webRoot, 'package.json'), 'utf8')).version
 const commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
-const releaseDirectory = join(root, 'dsh-plugin-desktop', 'build', `workdsh-profile-release-${source}-${commit.slice(0, 12)}-${Date.now()}`)
+const releaseDirectory = join(root, 'apps/desktop', 'build', `workdsh-profile-release-${source}-${commit.slice(0, 12)}-${Date.now()}`)
 if (source === 'local') {
   run('Install Web dependencies', corepack, ['pnpm', 'install', '--frozen-lockfile'], { cwd: webRoot })
   run('Build WorkDSH Web and plugins', corepack, ['pnpm', 'build'], { cwd: webRoot })
@@ -48,10 +48,10 @@ if (source === 'local') {
   const webReleaseDirectory = join(webRoot, '.artifacts', `project-v${version}`)
   const manifest = JSON.parse(readFileSync(join(webReleaseDirectory, 'release-manifest.json'), 'utf8'))
   if (manifest.version !== version || manifest.sourceCommit !== commit || manifest.sourceDirty) {
-    const changed = execFileSync('git', ['diff', '--name-only', '--ignore-submodules=dirty', 'HEAD', '--', 'apps/web', 'upstream.json'], { cwd: root, encoding: 'utf8' }).trim()
+    const changed = execFileSync('git', ['diff', '--name-only', '--ignore-submodules=dirty', 'HEAD', '--', 'apps/web', 'packages', 'profiles', 'upstream.json'], { cwd: root, encoding: 'utf8' }).trim()
     throw new Error(`The local Web release candidate is not a clean package of this commit: version=${manifest.version}/${version}, commit=${manifest.sourceCommit}/${commit}, sourceDirty=${manifest.sourceDirty}, changed=${changed || '(none)'}`)
   }
-  run('Pack this commit\'s Desktop feature composition', process.execPath, [join(root, 'dsh-plugin-desktop', 'scripts', 'pack-workdsh-profile.mjs'), webRoot, releaseDirectory])
+  run('Pack this commit\'s Desktop feature composition', process.execPath, [join(root, 'apps/desktop', 'scripts', 'pack-workdsh-profile.mjs'), webRoot, releaseDirectory])
   const desktopManifestPath = join(releaseDirectory, 'release-manifest.json')
   const desktopManifest = JSON.parse(readFileSync(desktopManifestPath, 'utf8'))
   if (desktopManifest.sourceCommit !== commit || desktopManifest.sourceDirty) {
@@ -89,7 +89,7 @@ const runtimeEnv = { ...process.env, WORKDSH_RELEASE_DIRECTORY: releaseDirectory
 run('Prepare the single WorkDSH DSH Profile', corepack, ['yarn', 'workspace', 'dsh-plugin-desktop', 'prepare:workdsh-runtime'], { env: runtimeEnv })
 run('Prepare bundled Python and Node.js', corepack, ['yarn', 'workspace', 'dsh-plugin-desktop', 'prepare:workdsh-primary-runtime'], { env: runtimeEnv })
 run('Prepare official command management adapters', corepack, ['yarn', 'workspace', 'dsh-plugin-desktop', 'prepare:workdsh-command'], { env: runtimeEnv })
-run('Build the Desktop installer', process.execPath, [join(root, 'dsh-plugin-desktop', 'scripts', platform === 'win32' ? 'package-win.ts' : 'package-mac.ts')], {
+run('Build the Desktop installer', process.execPath, [join(root, 'apps/desktop', 'scripts', platform === 'win32' ? 'package-win.ts' : 'package-mac.ts')], {
   env: { ...runtimeEnv, DSH_PACKAGE_CHECK_ALREADY_RAN: '1' },
 })
 

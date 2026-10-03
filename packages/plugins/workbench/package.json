@@ -40,7 +40,8 @@
     "workdsh-ui": "workspace:*",
     "@deepseek-ai/dsh-client-ui-session": "0.2.0-rc.2",
     "@deepseek-ai/dsh-client-ui-chat": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-tool-todo": "0.2.0-rc.2"
+    "@deepseek-ai/dsh-tool-todo": "0.2.0-rc.2",
+    "@types/node": "22.19.0"
   },
   "description": "Adds WorkDSH navigation and workspace entry points to the DSH sidebar."
 }

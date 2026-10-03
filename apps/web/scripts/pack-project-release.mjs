@@ -28,9 +28,8 @@ await rm(destination, { recursive: true, force: true });
 await mkdir(destination, { recursive: true });
 
 for (const directory of packageDirectories) {
-  execFileSync(process.platform === 'win32' ? 'corepack.cmd' : 'corepack', ['pnpm', 'pack', '--pack-destination', destination], {
+  execFileSync(process.execPath, [join(root, 'node_modules/pnpm/bin/pnpm.cjs'), 'pack', '--pack-destination', destination], {
     cwd: join(root, directory),
-    shell: process.platform === 'win32',
     stdio: 'inherit',
   });
 }
@@ -42,7 +41,7 @@ try {
   // cleanliness covers the Web source and the DSH version inputs it consumes.
   const repositoryRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: root, encoding: 'utf8' }).trim();
   const webPath = relative(repositoryRoot, root);
-  execFileSync('git', ['diff', '--quiet', '--ignore-submodules=dirty', 'HEAD', '--', webPath || '.', 'upstream.json'], { cwd: repositoryRoot, stdio: 'ignore' });
+  execFileSync('git', ['diff', '--quiet', '--ignore-submodules=dirty', 'HEAD', '--', webPath || '.', 'packages', 'profiles', 'upstream.json'], { cwd: repositoryRoot, stdio: 'ignore' });
 } catch (error) {
   if (error.status !== 1) throw error;
   sourceDirty = true;

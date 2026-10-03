@@ -78,7 +78,9 @@
     "@deepseek-ai/dsh-client-ui-input-trigger": "0.2.0-rc.2",
     "@types/react-dom": "19.2.3",
     "react-dom": "19.2.4",
-    "@deepseek-ai/dsh-client-ui-sidebar": "0.2.0-rc.2"
+    "@deepseek-ai/dsh-client-ui-sidebar": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-agent": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-system-prompt": "0.2.0-rc.2"
   },
   "dsh": {
     "bundle": {

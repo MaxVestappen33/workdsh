@@ -74,7 +74,9 @@
     "@types/react": "19.2.14",
     "react": "19.2.4",
     "workdsh-plugin-workbench": "workspace:*",
-    "workdsh-ui": "workspace:*"
+    "workdsh-ui": "workspace:*",
+    "@types/node": "22.19.0",
+    "@deepseek-ai/dsh-agent": "0.2.0-rc.2"
   },
   "dependencies": {
     "@deepseek-ai/dsh-browser-use": "0.2.0-rc.2",
