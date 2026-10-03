@@ -26,7 +26,8 @@ WorkDSH draws on WorkBuddy's way of organizing projects, material, experts, skil
 - **Desktop execution, central administration**: the Agent and tools run on the employee’s computer; the server handles accounts, authorization, collaboration data and model forwarding.
 - **The full official UI with shared feature plugins**: personal and enterprise modes reuse the same library, experts, skills, and connectors.
 - **Bundled runtime**: Desktop includes Node.js, pnpm, Python, and built-in plugins without downloading them on first login. Community skills and plugins are installed on demand.
-- **Personal and company models together**: the official Custom model API settings connect to the company endpoint while supplier keys remain in the admin backend.
+- **Mention colleagues and share AI results**: select organization colleagues with `@`, share analysis text and files, and review received or sent shares in Collaboration. Requires the Enterprise Connection plugin and company login.
+- **Personal and company models together**: connect the company model API and select company models in the conversation model picker while retaining personal providers. Supplier keys remain in the admin backend.
 
 ### From material to deliverable
 
@@ -105,6 +106,12 @@ After signing in, use **Settings → Enterprise account** to view your name, org
 
 Enterprise Desktop synchronizes visible user and assistant conversation text to the backend under the member's account. Thinking, tool traces and attachments are not uploaded as conversation text. Authorized administrators can read their organization's synchronized text through audited, read-only access.
 
+### Mention colleagues and collaborate
+
+Install and enable the Enterprise Connection plugin, then sign in with your company account. Type `@` in the conversation composer to select organization colleagues and share analysis results and files through your task. **Collaboration** in the sidebar lists received and sent shares so you can review content and files and continue the discussion. One Enterprise Connection package provides identity and collaboration; enterprise collaboration is inactive in personal mode.
+
+![Enterprise collaboration: received and sent shares](assets/screenshots/enterprise-collaboration.png)
+
 ### Configure company models
 
 An administrator configures upstream model APIs, supplier keys, protocols and allowed model catalogs in WorkDSH Admin. Members receive an internal API address and access key, then use **Settings → Models → Custom model API**:
@@ -117,7 +124,11 @@ An administrator configures upstream model APIs, supplier keys, protocols and al
 | API key | The internal access key supplied by the administrator. |
 | Model catalog | Fetch available models, or add the allowed model IDs provided by the administrator. |
 
-Save the provider and select its model in the conversation. Personal model providers can coexist with the company provider. Real supplier keys stay on the server; company providers are configured through the official settings rather than automatically injected into DSH. Model requests go to the configured API independently of where the Agent runs.
+Save the provider, then choose a model under Company models in the conversation model picker. The same composer supports mentioning colleagues with `@`.
+
+![Mention colleagues and select a company model](assets/screenshots/enterprise-mention-model.png)
+
+ Personal model providers can coexist with the company provider. Real supplier keys stay on the server; company providers are configured through the official settings rather than automatically injected into DSH. Model requests go to the configured API independently of where the Agent runs.
 
 <details>
 <summary>See company model configuration in the official settings</summary>
