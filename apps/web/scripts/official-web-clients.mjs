@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-import {readFile,readdir} from 'node:fs/promises';
+import {readFile} from 'node:fs/promises';
 import {createRequire} from 'node:module';
 import {dirname,join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -26,23 +26,33 @@ export function patchSemantics(document){
  return semantic(document.contents);
 }
 
+/** Resolve declared dependency edges, including pnpm's shortened Windows store paths. */
+export async function resolveLockedOfficialPackage(name,version,anchors){
+ for(const anchor of anchors){
+  let path;
+  try{path=createRequire(anchor).resolve(name+'/package.json')}
+  catch(error){if(error.code==='MODULE_NOT_FOUND')continue;throw error}
+  const manifest=JSON.parse(await readFile(path,'utf8'));
+  if(manifest.name!==name||manifest.version!==version)throw Error('Official package identity/version mismatch: '+name);
+  return {path,manifest};
+ }
+ throw Error('Install the locked official package first: '+name+'@'+version);
+}
+
 /** Read the locked published base/Web composition; never a second UI list. */
 export async function officialWebClients(){
  const project=JSON.parse(await readFile(join(root,'package.json'),'utf8'));
  const version=project.pnpm.overrides['@deepseek-ai/dsh'];
  if(typeof version!=='string'||!/^[0-9]+\.[0-9]+\.[0-9]+(?:-[\w.]+)?$/.test(version))throw Error('Pin the official DSH release exactly');
  for(const name of ['@deepseek-ai/dsh-base','@deepseek-ai/dsh-web-app'])if(project.pnpm.overrides[name]!==version)throw Error('Official base/Web version must match the locked DSH release: '+name);
- const catalog=await readdir(join(root,'node_modules/.pnpm'));
+ const anchors=[join(root,'package.json')];
+ const dsh=await resolveLockedOfficialPackage('@deepseek-ai/dsh',version,anchors);
+ anchors.push(dsh.path);
  const cache=new Map();
  async function packageManifest(name){
   if(cache.has(name))return cache.get(name);
-  const prefix=name.replace('/','+')+'@'+version;
-  const entries=catalog.filter(entry=>entry===prefix||entry.startsWith(prefix+'_')).sort();
-  if(!entries.length)throw Error('Install the locked official package first: '+name+'@'+version);
-  const path=join(root,'node_modules/.pnpm',entries[0],'node_modules',name,'package.json');
-  const manifest=JSON.parse(await readFile(path,'utf8'));
-  if(manifest.name!==name||manifest.version!==version)throw Error('Official package identity/version mismatch: '+name);
-  const located={path,manifest};cache.set(name,located);return located;
+  const located=await resolveLockedOfficialPackage(name,version,anchors);
+  cache.set(name,located);anchors.push(located.path);return located;
  }
  const sources=[],rows=new Map();
  for(const name of ['@deepseek-ai/dsh-base','@deepseek-ai/dsh-web-app']){
