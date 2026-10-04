@@ -842,15 +842,15 @@ importers:
 
   ../../packages/plugins/library:
     dependencies:
+      exceljs:
+        specifier: 4.4.0
+        version: 4.4.0
       jszip:
         specifier: 3.10.1
         version: 3.10.1
       pdfjs-dist:
         specifier: 5.4.624
         version: 5.4.624
-      workdsh-plugin-office:
-        specifier: workspace:*
-        version: link:../office
       zod:
         specifier: 4.4.3
         version: 4.4.3
@@ -933,6 +933,9 @@ importers:
       workdsh-contracts:
         specifier: workspace:*
         version: link:../../contracts
+      workdsh-plugin-office:
+        specifier: workspace:*
+        version: link:../office
       workdsh-ui:
         specifier: workspace:*
         version: link:../../ui

@@ -255,3 +255,10 @@ test('tabular extraction reports truncation and never evaluates formulas', async
   const controller = new AbortController(); controller.abort();
   await assert.rejects(extractTabularText('csv', utf16, controller.signal), { name: 'AbortError' });
 });
+
+test('Library release imports tabular extraction without an unpublished Office runtime dependency', async () => {
+  const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.equal(manifest.dependencies['workdsh-plugin-office'], undefined);
+  const host = await readFile(new URL('../dist/index.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(host, /(?:from\s*|import\s*\()\s*["']workdsh-plugin-office/);
+});

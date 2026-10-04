@@ -28,7 +28,8 @@ export function LibraryReferencePage({ management, previewRegistry, useTabInfo }
           if (!active) return;
           if (params.kind === 'html') setHtml(new TextDecoder().decode(bytes));
           else if (params.kind === 'pdf') setUrl(URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'application/pdf' })));
-          else setOffice({ name: params.name ?? '资料', kind: params.kind, bytes } as LibraryOriginalPreviewInput);
+          else if (previewRegistry.canOpen(params.kind)) setOffice({ name: params.name ?? '资料', kind: params.kind, bytes } as LibraryOriginalPreviewInput);
+          else setText(await management.readText(params.assetId!, params.revisionId));
         } else setText(await management.readText(params.assetId!, params.revisionId));
       } catch (cause) { if (active) setError(cause instanceof Error ? cause.message : '资料读取失败。'); }
     };
