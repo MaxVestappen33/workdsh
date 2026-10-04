@@ -6,6 +6,8 @@
 
 [![Desktop release](https://img.shields.io/badge/Desktop-2.0.6--alpha.3-176BFF)](https://github.com/techflag/workdsh/releases/tag/desktop-v2.0.6-alpha.3) [![GitHub stars](https://img.shields.io/github/stars/techflag/workdsh?label=stars)](https://github.com/techflag/workdsh) [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
+[![GitHub Actions](https://github.com/techflag/workdsh/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/techflag/workdsh/actions/workflows/ci.yml) [![Gitee stars](https://gitee.com/techflag/workdsh/badge/star.svg?theme=dark)](https://gitee.com/techflag/workdsh/stargazers) [![Gitee forks](https://gitee.com/techflag/workdsh/badge/fork.svg?theme=dark)](https://gitee.com/techflag/workdsh/members)
+
 **个人工作台 + 可安装的企业能力，是 WorkDSH 的特色。** 资料库、项目、专家、技能和连接器共用同一套功能；企业连接插件按需安装，登录公司账号后使用协作、@同事分享正文与文件，并可在模型设置中添加公司模型。独立业务插件还能通过 `workdshEnterprise` 复用成员认证，连接自己的公司业务接口。
 
 企业插件目前**未上架插件市场**：[下载企业连接包](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.3/workdsh-enterprise-connection-0.1.0-alpha.2.tgz)，在“插件 → 添加插件”填写下载文件的完整路径，安装并启用，再到“设置 → 企业账号”连接公司后台。[安装与登录步骤](#企业连接插件下载安装与登录) · [业务插件认证调用](#企业插件开放认证服务业务插件不用重复登录) · [独立管理后台](https://github.com/techflag/workdsh-admin)
@@ -212,13 +214,17 @@ WorkDSH Admin：组织概览。
 
 ## 下载桌面版
 
-计划发布的桌面安装包版本为 **2.0.6-alpha.3**。发布 [GitHub Release](https://github.com/techflag/workdsh/releases/tag/desktop-v2.0.6-alpha.3) 后，以下下载链接才会生效：
+桌面安装包 **2.0.6-alpha.3** 已发布。[GitHub Release](https://github.com/techflag/workdsh/releases/tag/desktop-v2.0.6-alpha.3) 提供以下完整安装包：
 
 | 平台 | 下载 |
 | --- | --- |
 | Windows x64 | [WorkDSH Setup.exe](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.3/dsh-plugin-desktop-windows-x64--WorkDSH-2.0.6-alpha.3-x64-Setup.exe) |
 | macOS Apple Silicon | [WorkDSH arm64.dmg](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.3/dsh-plugin-desktop-macos-arm64--WorkDSH-2.0.6-alpha.3-arm64.dmg) |
 | macOS Intel | [WorkDSH x64.dmg](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.3/dsh-plugin-desktop-macos-x64--WorkDSH-2.0.6-alpha.3-x64.dmg) |
+
+**国内下载**：[Gitee 同步发行](https://gitee.com/techflag/workdsh/releases/tag/desktop-v2.0.6-alpha.3) 提供 Windows x64 和 macOS Apple Silicon 分卷。受当前仓库单附件 100 MB、附件总量 1 GB 限制，需下载对应平台的全部分卷及合并脚本，按发行页说明恢复安装包；脚本通过 SHA256 校验后才生成安装文件。Intel Mac 或希望下载单个完整安装包的用户，请使用上表 GitHub 链接。企业插件 TGZ/ZIP 也可从 Gitee 发行页直接下载。
+
+**开发与反馈**：GitHub 是唯一主开发仓库，Gitee 同步源码和发行包。欢迎通过 [Gitee Issues](https://gitee.com/techflag/workdsh/issues) 或 [GitHub Issues](https://github.com/techflag/workdsh/issues) 反馈问题。查看[国内发行路线图](https://gitee.com/techflag/workdsh/issues/IKJN8I)、[跨平台测试征集](https://gitee.com/techflag/workdsh/issues/IKJN8J)和[业务插件认证示例任务](https://gitee.com/techflag/workdsh/issues/IKJN8K)。Gitee 的有效代码贡献经审查纳入 GitHub 后再同步，不维护第二套产品代码。
 
 Desktop 安装包默认内置 Node.js、pnpm 和 Python 运行时，普通用户无需单独安装。当前为 **Alpha 版**：项目资料引用、专家执行及不同 Office 格式的端到端体验仍在验收中。macOS DMG 未签名；更新请从 [Releases](https://github.com/techflag/workdsh/releases) 下载。开始使用前请阅读[用户指南](docs/user-guide.md)和[常见问题](docs/faq.md)。
 
