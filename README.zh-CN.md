@@ -1,10 +1,14 @@
 <p align="center"><img src="apps/web/assets/brand/workdsh-logo.svg" width="88" alt="WorkDSH 标志"></p>
 <h1 align="center">WorkDSH</h1>
 <p align="center"><strong>WorkBuddy 式工作台，让技能、专家与插件组成更多工作场景。</strong></p>
-<p align="center">WorkDSH 将资料、专家、技能和连接器带入同一工作台；接入 SkillHub 技能目录，并支持安装 DSH 社区插件。</p>
+<p align="center">参考 WorkBuddy 的工作体验，基于 DeepSeek Harness 的开放插件体系：个人开箱使用，安装企业连接插件后接入公司模型、协作与 @同事。</p>
 <p align="center"><a href="#下载桌面版">下载桌面版</a> · <a href="#从资料到成果">了解工作流</a> · <a href="#个人与企业使用">个人与企业</a> · <a href="docs/user-guide.md">使用指南</a> · <a href="README.md">English</a></p>
 
 [![Desktop release](https://img.shields.io/badge/Desktop-2.0.6--alpha.3-176BFF)](https://github.com/techflag/workdsh/releases/tag/desktop-v2.0.6-alpha.3) [![GitHub stars](https://img.shields.io/github/stars/techflag/workdsh?label=stars)](https://github.com/techflag/workdsh) [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+**个人工作台 + 可安装的企业能力，是 WorkDSH 的特色。** 资料库、项目、专家、技能和连接器共用同一套功能；企业连接插件按需安装，登录公司账号后使用协作、@同事分享正文与文件，并可在模型设置中添加公司模型。独立业务插件还能通过 `workdshEnterprise` 复用成员认证，连接自己的公司业务接口。
+
+企业插件目前**未上架插件市场**：[下载企业连接包](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.3/workdsh-enterprise-connection-0.1.0-alpha.2.tgz)，在“插件 → 添加插件”填写下载文件的完整路径，安装并启用，再到“设置 → 企业账号”连接公司后台。[安装与登录步骤](#企业连接插件下载安装与登录) · [业务插件认证调用](#企业插件开放认证服务业务插件不用重复登录) · [独立管理后台](https://github.com/techflag/workdsh-admin)
 
 ![WorkDSH 项目主页：项目、模板与完整桌面侧栏](apps/web/assets/screenshots/workdsh-projects-alpha8-dark.png)
 
@@ -26,8 +30,40 @@ WorkDSH 参考 WorkBuddy 按项目组织资料、专家、技能和连接器的�
 - **本机执行，集中管理**：Agent 和工具在员工桌面客户端运行；服务器负责账号、权限、协作数据与模型转发。
 - **完整官方界面，共享功能插件**：个人和企业复用同一套资料库、专家、技能和连接器功能。
 - **安装即可使用运行环境**：Desktop 随包提供 Node.js、pnpm 和 Python，内置插件无需首次登录再下载；社区技能和插件按需安装。
+- **企业认证可供业务插件复用**：独立插件注入 `workdshEnterprise` 即可请求公司后台，复用当前成员登录，不读取或保存 Token。
 - **@同事，分享 AI 成果**：在对话中选择组织同事，分享分析正文和文件；在“协作”中查看收到的、发出的分享并继续交流。安装企业连接插件并登录公司账号后使用。
 - **个人与公司模型并存**：接入公司内部模型 API 后，可在对话的模型选择器中选择公司模型，也可保留个人模型；真实供应商密钥由管理后台保管。
+
+### 企业插件开放认证服务，业务插件不用重复登录
+
+企业 Desktop 的业务插件注入 **`workdshEnterprise`**，复用当前成员登录。服务不返回后台 Token、本机桥接密钥或账号密码；Desktop 主进程携带认证请求公司后台，后台检查成员与业务权限。
+
+以下代码在独立插件的 **Host 入口**执行，不在浏览器页面直接执行。企业连接插件安装、启用并登录后提供服务；普通个人空间不提供此服务。
+
+```ts
+import type { Context } from '@deepseek-ai/cordis'
+import type { EnterpriseService } from 'workdsh-contracts/enterprise'
+
+declare module '@deepseek-ai/cordis' {
+  interface Context { workdshEnterprise: EnterpriseService }
+}
+
+export default {
+  name: 'company-reports',
+  inject: ['workdshEnterprise'],
+  async apply(ctx: Context) {
+    const member = await ctx.workdshEnterprise.identity()
+    const reports = await ctx.workdshEnterprise.request<{ items: unknown[] }>({
+      plugin: 'reports',
+      operation: 'list',
+      method: 'POST',
+      body: { page: 1 },
+    })
+  },
+}
+```
+
+以上请求映射到公司后台的 `POST /api/extensions/reports/list`。开发者实现该业务接口并检查权限即可，不需要再开发一套登录。此能力从 Desktop `2.0.6-alpha.3`、企业连接包 `0.1.0-alpha.2` 开始提供。`workdsh-contracts` 当前未发布公共 npm SDK，类型包的构建与打包方式、接口限制见[企业业务插件认证接入](docs/ENTERPRISE-PLUGIN-AUTH.md)。
 
 ### 从资料到成果
 
@@ -89,6 +125,19 @@ Desktop 的个人与企业空间分别保存数据和凭据。企业账号插件
 2. 在个人空间打开“插件 → 添加插件”，填写 tgz 完整路径，安装后点击“立即启用”。
 3. 打开“设置 → 企业账号 → 连接企业”，填写公司后台地址和成员账号登录。
 4. 在“协作”查看分享，在模型设置中手动配置公司内部 API。开发者可注入 `workdshEnterprise` 复用认证，详见[调用说明](docs/ENTERPRISE-PLUGIN-AUTH.md)。
+
+**目前企业连接插件未上架插件市场，不能按名称搜索安装。这里安装的是下载到本机的 `.tgz` 文件。**
+
+例如下载到 Downloads 文件夹后，“添加插件”输入框填写：
+
+```text
+macOS：/Users/你的用户名/Downloads/workdsh-enterprise-connection-0.1.0-alpha.2.tgz
+Windows：C:\Users\你的用户名\Downloads\workdsh-enterprise-connection-0.1.0-alpha.2.tgz
+```
+
+请换成自己电脑上的真实路径，不要直接复制示例用户名。macOS 可在 Finder 选中文件，按 `Option + Command + C` 复制完整路径；Windows 可右键文件选择“复制文件地址”，若带外层引号，粘贴时去掉引号。将路径粘贴到“插件 → 添加插件”的输入框，点击安装，再点击“立即启用”。不是填写插件名称，也不是把文件上传到管理后台。
+
+[下载本版企业连接插件 tgz](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.3/workdsh-enterprise-connection-0.1.0-alpha.2.tgz)。如果浏览器自动解压，请保留或重新下载原始 `.tgz` 文件，不要填写解压后的文件夹路径。
 
 企业连接包由本项目 [GitHub Releases](https://github.com/techflag/workdsh/releases) 独立交付，不依赖第三方插件市场。下载 `workdsh-enterprise-connection-<版本>.tgz`，保留文件并在添加插件时填写完整路径；发行附件包含兼容 DSH 版本的清单及 `SHA256SUMS`。
 
