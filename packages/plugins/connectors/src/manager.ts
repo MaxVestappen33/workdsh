@@ -11,6 +11,15 @@ import { connectorDefinitionSchema, connectorSelectionsDomainSpec, connectorsDom
 declare module '@deepseek-ai/cordis' { interface Context { workdshConnectors: ConnectorManagementService; } }
 
 const serverPath = fileURLToPath(new URL('./example-server.mjs', import.meta.url));
+/** The bundled example belongs to the running package, not its installation path. */
+export function connectorProcess(definition: Pick<ConnectorDefinition, 'id' | 'serverName' | 'transport' | 'command' | 'args' | 'authorizationCredentialRef'>) {
+  const bundledExample = definition.id === 'workdsh-example' && definition.serverName === 'workdsh-example'
+    && definition.transport === 'stdio' && !definition.authorizationCredentialRef
+    && definition.args?.length === 1 && /(?:^|[\\/])example-server\.mjs$/.test(definition.args[0]!)
+    && /(?:^|[\\/])node(?:\.exe)?$/.test(definition.command ?? '');
+  return bundledExample ? { command: process.execPath, args: [serverPath] }
+    : { command: definition.command!, args: [...(definition.args ?? [])] };
+}
 type ChildFiber = { dispose(): Promise<void> };
 type Runtime = { child?: ChildFiber; state: ConnectorState; diagnostic?: string };
 type JsonRecord = Record<string, unknown>;
@@ -158,7 +167,7 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
     }
     const headers: Record<string, string> = authorization ? { Authorization: authorization.value } : {};
     const transportConfig = definition.transport === 'stdio'
-      ? { serverName: definition.serverName, transport: 'stdio' as const, command: definition.command!, args: [...(definition.args ?? [])], env: {} }
+      ? { serverName: definition.serverName, transport: 'stdio' as const, ...connectorProcess(definition), env: {} }
       : { serverName: definition.serverName, transport: 'streamable-http' as const, url: definition.url!, headers };
     const fiber = this.ctx.plugin(McpClient, { ...transportConfig, failOnStartupError: true, toolCallTimeoutMs: 10_000, maxInstructionBytes: 8_192,
       reconnect: { enabled: true, initialDelayMs: 250, maxDelayMs: 5_000, maxAttempts: 4 } }) as ChildFiber & PromiseLike<unknown>;

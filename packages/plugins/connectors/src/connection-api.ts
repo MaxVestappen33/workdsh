@@ -34,10 +34,10 @@ export function registerConnectorManagementConnection(ctx: Context): void {
         }
         return Response.json(fail('connector/invalid-request', '连接器管理请求无效。'), { status: 400 });
       } catch (cause) {
-        const known = new Set(['connector/not-found', 'connector/command-required', 'connector/url-required', 'connector/server-name-conflict']);
+        const known = new Set(['connector/not-found', 'connector/not-ready', 'connector/command-required', 'connector/url-required', 'connector/server-name-conflict']);
         const code = cause instanceof Error && known.has(cause.message) ? cause.message : 'connector/internal';
         const messages: Record<string, string> = { 'connector/not-found': '未找到该连接器。', 'connector/command-required': 'stdio 连接需要填写启动命令。', 'connector/url-required': 'HTTP 连接需要填写 MCP URL。', 'connector/server-name-conflict': '服务标识已被其他 MCP 使用。' };
-        const message = messages[code] ?? '连接器操作失败，请重试。';
+        const message = code === 'connector/not-ready' ? '所选 MCP 尚未连接，请在连接器中检查运行状态后重试。' : messages[code] ?? '连接器操作失败，请重试。';
         return Response.json(fail(code, message));
       }
     },

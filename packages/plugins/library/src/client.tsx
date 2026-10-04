@@ -1,3 +1,5 @@
+import type { ComposerHandoff, ComposerHandoffSource } from 'workdsh-contracts/composer';
+declare module '@deepseek-ai/cordis' { interface Events { 'workdsh/composer-handoff'(handoff: ComposerHandoff): Promise<void>; } }
 import type { Context } from '@deepseek-ai/cordis';
 import type {} from '@deepseek-ai/dsh-client-connection/client';
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client';
@@ -52,6 +54,16 @@ export function apply(ctx: Context): void {
     if (inserted) void management.taskSelection(sessionId).then(current => management.setTaskSelection(sessionId, [...new Set([...current.map(row => row.nodeId), value.nodeId])])).catch(() => []);
     return inserted;
   };
+  ctx.on('workdsh/composer-handoff', async handoff => {
+    const selected = await management.taskSelection(handoff.sourceSessionId);
+    const referenced = handoff.references.filter(reference => reference.source === 'workdsh-library').map(reference => decodeRef(reference.ref).nodeId);
+    await management.setTaskSelection(handoff.targetSessionId, [...new Set([...selected.map(row => row.nodeId), ...referenced])]);
+    for (const reference of handoff.references) {
+      if (reference.source !== 'workdsh-library') continue;
+      const value = decodeRef(reference.ref);
+      reference.ref = encodeRef({ ...value, sessionId: handoff.targetSessionId });
+    }
+  });
   // alpha.2: the list snapshot has no `current`; the shown Session derives from the
   // view owner's mainView retention (same rule as the official ui-session publishMain).
   const currentSessionId = () => {

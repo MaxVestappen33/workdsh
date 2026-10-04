@@ -10,6 +10,16 @@ import * as Domain from '@deepseek-ai/dsh-storage-domain';
 import { AccessManager, SessionAccessBridge } from '../../../../packages/plugins/access/dist/index.js';
 import { AuditJournal } from '../../../../packages/plugins/audit/dist/index.js';
 import { ConnectorManager } from '../../../../packages/plugins/connectors/dist/index.js';
+import { connectorProcess } from '../../../../packages/plugins/connectors/dist/manager.js';
+
+test('bundled example survives package relocation without rewriting independent MCP commands', async () => {
+ const stale = {id:'workdsh-example',serverName:'workdsh-example',transport:'stdio',command:'/removed/old-package/node',args:['/removed/old-package/example-server.mjs']};
+ const resolved=connectorProcess(stale);
+ assert.equal(resolved.command,process.execPath);
+ const {access}=await import('node:fs/promises');await access(resolved.args[0]);
+ assert.deepEqual(connectorProcess({...stale,id:'custom-example'}),{command:stale.command,args:stale.args});
+ assert.deepEqual(connectorProcess({...stale,args:['/custom/company-server.mjs']}),{command:stale.command,args:['/custom/company-server.mjs']});
+});
 
 test('fixed-member connectors authorize native empty Sessions and deny foreign or revoked selections',async()=>{
  const root=await mkdtemp(join(tmpdir(),'member-connectors-'));const ctx=new Context();let foreignTouches=0;let active=true;

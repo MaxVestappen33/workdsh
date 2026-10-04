@@ -1,3 +1,5 @@
+import type { ComposerHandoff, ComposerHandoffSource } from 'workdsh-contracts/composer';
+declare module '@deepseek-ai/cordis' { interface Events { 'workdsh/composer-handoff'(handoff: ComposerHandoff): Promise<void>; } }
 import type { ActivityPresentation } from 'workdsh-contracts/activity';
 declare module '@deepseek-ai/cordis' { interface Context { activityPresentation: ActivityPresentation; } }
 import { installExpertPresetMenu } from './client/PresetMenu.js';
@@ -19,7 +21,7 @@ import { PendingExpertDraft, pendingExpertDraftKey, pendingExpertDraftEvent, exp
 import { createExpertManagementClient } from './client/management.js';
 
 export const name = 'workdsh-experts-client';
-export const inject = ['slots', 'layout', 'sessions', 'workspaces', 'remote', 'remote.session', 'connection', 'uiWorkspace'];
+export const inject = ['slots', 'layout', 'sessions', 'workspaces', 'remote', 'remote.session', 'connection', 'uiWorkspace', 'conversation'];
 
 type SessionId = Awaited<ReturnType<ISessions['create']>>;
 
@@ -105,7 +107,7 @@ export function apply(ctx: Context): void {
     throw new Error('未能打开专家任务，请稍后在会话列表中查看。');
   };
 
-  const summon = async (expertId: string, revisionId: string | undefined, draftText: string | undefined): Promise<void> => {
+  const summon = async (expertId: string, revisionId: string | undefined, draftText: string | undefined, source?: ComposerHandoffSource): Promise<void> => {
     lifetime.signal.throwIfAborted();
     const workspace = resolveWorkspace();
     const plan = await management.prepareExecution(expertId, {
@@ -118,11 +120,25 @@ export function apply(ctx: Context): void {
     }
     const creation = await management.createExecution(plan.executionPlanId, management.newOperationId('create-execution'));
     const sessionId = creation.sessionId as SessionId;
+    const references = source?.references.map(reference => ({ ...reference })) ?? [];
+    if (source) await ctx.parallel('workdsh/composer-handoff', { sourceSessionId: source.sessionId, targetSessionId: String(sessionId), references });
     await openSession(sessionId);
     ctx.layout.selectPanel(null);
     if (creation.handoffId) {
       const handoff = await management.consumeHandoff(creation.handoffId, creation.handoffId);
-      if (handoff.text) await seedDraft(sessionId, handoff.text);
+      if (!source && handoff.text) await seedDraft(sessionId, handoff.text);
+    }
+    if (source) {
+      const binding = sessions.binding(sessionId);
+      if (!binding) throw new Error('专家任务输入框尚未就绪，请重试。');
+      const input = ctx.conversation.input.for(binding.ctx);
+      const state = input.state.getSnapshot();
+      if (state.draft || state.attachmentIds.length || state.phase !== 'plain') throw new Error('专家任务已有草稿，不能覆盖。');
+      input.setDraft(source.draft);
+      for (const reference of [...references].sort((a, b) => b.offset - a.offset)) {
+        const current = input.state.getSnapshot();
+        if (!input.insertReference(reference, { start: reference.offset, end: reference.offset + reference.length, draftRev: current.draftRev })) throw new Error('资料引用未能恢复，请在新任务中重新添加。');
+      }
     }
   };
 
