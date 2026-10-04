@@ -3,3 +3,4 @@ export * from './experts.js';
 export * from './skill-revisions.js';
 export * from './library.js';
 export * from './projects.js';
+export * from './enterprise.js';

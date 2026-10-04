@@ -28,6 +28,7 @@ async function fixture() {
     if (!state.active) return send({}, 401);
     if (request.url === '/auth/me') return send({ id: state.member, organizationId: state.organization, deviceId: state.device, backendUrl: state.backend,
       role: state.role, mustChangePassword: state.mustChangePassword, displayName: 'Member A', organizationName: 'Company A', email: 'a@company.example', unexpected: 'not-relayed' });
+    if (request.url === '/api/extensions/reports/list') return send({ reports: ['demo'] });
     if (!request.url.startsWith('/visible-sessions/ingest')) return send({}, 404);
     const id = new URL(request.url, 'http://127.0.0.1').searchParams.get('sessionId');
     if (request.method === 'DELETE') {
@@ -211,4 +212,22 @@ test('lost deletion acknowledgement persists a delete intent, pauses upload and 
     const row = (await sync.status()).sessions[0]; assert.equal(row.deleted, true); assert.equal(row.deletePending, false); assert.equal(f.state.posts.length, before);
     assert.equal(events.length, 2);
   } finally { sync?.close(); f.authority.close(); await f.close(); }
+});
+
+test('independent plugin injects public enterprise service without accessing credentials', async () => {
+  const f = await fixture(); const ctx = new Context();
+  ctx.provide('connection', { fetch: { register() { return () => {}; } } });
+  try {
+    await ctx.plugin(Identity, f.config);
+    let result;
+    await ctx.plugin({inject: ['workdshEnterprise'], async apply(consumer) {
+      assert.deepEqual(await consumer.workdshEnterprise.identity(), {memberId: 'member-a', organizationId: 'org-a'});
+      result = await consumer.workdshEnterprise.request({plugin: 'reports', operation: 'list', method: 'GET'});
+      await assert.rejects(consumer.workdshEnterprise.request({plugin: '../auth', operation: 'me', method: 'GET'}));
+      await assert.rejects(consumer.workdshEnterprise.request({plugin: 'reports', operation: 'list', method: 'GET', body: {}}));
+    }});
+    assert.deepEqual(result, {reports: ['demo']});
+    f.state.active = false;
+    await assert.rejects(ctx.workdshEnterprise.request({plugin: 'reports', operation: 'list', method: 'GET'}));
+  } finally { await ctx.fiber.dispose(); await f.close(); }
 });

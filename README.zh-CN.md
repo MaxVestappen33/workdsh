@@ -4,7 +4,7 @@
 <p align="center">WorkDSH 将资料、专家、技能和连接器带入同一工作台；接入 SkillHub 技能目录，并支持安装 DSH 社区插件。</p>
 <p align="center"><a href="#下载桌面版">下载桌面版</a> · <a href="#从资料到成果">了解工作流</a> · <a href="#个人与企业使用">个人与企业</a> · <a href="docs/user-guide.md">使用指南</a> · <a href="README.md">English</a></p>
 
-[![Desktop release](https://img.shields.io/badge/Desktop-2.0.6--alpha.2-176BFF)](https://github.com/techflag/workdsh/releases/tag/desktop-v2.0.6-alpha.2) [![GitHub stars](https://img.shields.io/github/stars/techflag/workdsh?label=stars)](https://github.com/techflag/workdsh) [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Desktop release](https://img.shields.io/badge/Desktop-2.0.6--alpha.3-176BFF)](https://github.com/techflag/workdsh/releases/tag/desktop-v2.0.6-alpha.3) [![GitHub stars](https://img.shields.io/github/stars/techflag/workdsh?label=stars)](https://github.com/techflag/workdsh) [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ![WorkDSH 项目主页：项目、模板与完整桌面侧栏](apps/web/assets/screenshots/workdsh-projects-alpha8-dark.png)
 
@@ -81,7 +81,14 @@ Desktop 的个人与企业空间分别保存数据和凭据。企业账号插件
 
 管理员请按 [workdsh-admin 的部署与使用说明](https://github.com/techflag/workdsh-admin#readme) 部署后台，并向成员提供后台地址和公司账号。成员安装本仓库的桌面端与企业连接插件后连接该地址；Agent 与工具仍在成员本机执行。
 
-### 安装企业插件
+### 企业连接插件：下载、安装与登录
+
+**企业功能通过企业连接插件按需启用，基础桌面包不预装。** 一个包提供企业账号、@同事协作，并向独立业务插件提供认证请求服务。
+
+1. 下载本次发行的 `workdsh-enterprise-connection-0.1.0-alpha.2.tgz`，保留文件。
+2. 在个人空间打开“插件 → 添加插件”，填写 tgz 完整路径，安装后点击“立即启用”。
+3. 打开“设置 → 企业账号 → 连接企业”，填写公司后台地址和成员账号登录。
+4. 在“协作”查看分享，在模型设置中手动配置公司内部 API。开发者可注入 `workdshEnterprise` 复用认证，详见[调用说明](docs/ENTERPRISE-PLUGIN-AUTH.md)。
 
 企业连接包由本项目 [GitHub Releases](https://github.com/techflag/workdsh/releases) 独立交付，不依赖第三方插件市场。下载 `workdsh-enterprise-connection-<版本>.tgz`，保留文件并在添加插件时填写完整路径；发行附件包含兼容 DSH 版本的清单及 `SHA256SUMS`。
 
@@ -156,19 +163,23 @@ WorkDSH Admin：组织概览。
 
 ## 下载桌面版
 
-计划发布的桌面安装包版本为 **2.0.6-alpha.2**。发布 [GitHub Release](https://github.com/techflag/workdsh/releases/tag/desktop-v2.0.6-alpha.2) 后，以下下载链接才会生效：
+计划发布的桌面安装包版本为 **2.0.6-alpha.3**。发布 [GitHub Release](https://github.com/techflag/workdsh/releases/tag/desktop-v2.0.6-alpha.3) 后，以下下载链接才会生效：
 
 | 平台 | 下载 |
 | --- | --- |
-| Windows x64 | [WorkDSH Setup.exe](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.2/dsh-plugin-desktop-windows-x64--WorkDSH-2.0.6-alpha.2-x64-Setup.exe) |
-| macOS Apple Silicon | [WorkDSH arm64.dmg](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.2/dsh-plugin-desktop-macos-arm64--WorkDSH-2.0.6-alpha.2-arm64.dmg) |
-| macOS Intel | [WorkDSH x64.dmg](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.2/dsh-plugin-desktop-macos-x64--WorkDSH-2.0.6-alpha.2-x64.dmg) |
+| Windows x64 | [WorkDSH Setup.exe](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.3/dsh-plugin-desktop-windows-x64--WorkDSH-2.0.6-alpha.3-x64-Setup.exe) |
+| macOS Apple Silicon | [WorkDSH arm64.dmg](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.3/dsh-plugin-desktop-macos-arm64--WorkDSH-2.0.6-alpha.3-arm64.dmg) |
+| macOS Intel | [WorkDSH x64.dmg](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.3/dsh-plugin-desktop-macos-x64--WorkDSH-2.0.6-alpha.3-x64.dmg) |
 
 Desktop 安装包默认内置 Node.js、pnpm 和 Python 运行时，普通用户无需单独安装。当前为 **Alpha 版**：项目资料引用、专家执行及不同 Office 格式的端到端体验仍在验收中。macOS DMG 未签名；更新请从 [Releases](https://github.com/techflag/workdsh/releases) 下载。开始使用前请阅读[用户指南](docs/user-guide.md)和[常见问题](docs/faq.md)。
 
 Desktop 基础包不预装企业插件，安装企业插件后启用企业登录。已有下载版本的功能以对应发行说明为准。
 
 桌面菜单“工具 → 终端命令 dsh（可选）”可查看、安装、修复和移除终端命令。普通桌面聊天无需安装此命令，只有主动点击菜单才显示管理弹窗。安装只创建命令入口，使用随包的 Node、pnpm 和官方 CLI；移除命令不会删除应用或工作区。命令默认操作当前 Desktop 工作区，启动时显示空间名称；`--workdsh-space=personal` 或 `--workdsh-space=enterprise` 可明确选择。企业空间须保持 Desktop 登录，首次使用前先在 Desktop 打开对应空间。插件安装、更新和移除遵循该空间的官方 Profile。
+
+### 开发需要企业认证的插件
+
+企业业务插件注入 `workdshEnterprise`，通过 `request({ plugin: "reports", operation: "list", method: "POST", body: { page: 1 } })` 请求公司后台。Desktop 自动携带当前成员认证，插件不读取或保存 Token；后台仍检查成员和业务权限。调用示例、SDK 类型依赖及新旧版本要求见[企业插件认证接入](docs/ENTERPRISE-PLUGIN-AUTH.md)。
 
 ## 开发与文档
 

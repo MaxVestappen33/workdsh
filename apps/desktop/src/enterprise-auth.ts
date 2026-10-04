@@ -117,7 +117,8 @@ export async function startEnterpriseAuthority(login: EnterpriseLogin, deviceId:
     const auth = ['/auth/me', '/api/auth/me'].includes(url.pathname) && req.method === 'GET' && !url.search
     const ingest = url.pathname === '/visible-sessions/ingest' && ['GET', 'POST', 'DELETE'].includes(req.method ?? '')
     const collaboration = !url.search && ((req.method === 'GET' && /^\/api\/collaboration\/(?:contract|colleagues|inbox|sent|notifications|(?:materials|handoffs)\/[\w-]{1,160}|handoffs\/[\w-]{1,160}\/messages)$/.test(url.pathname)) || (req.method === 'POST' && /^\/api\/collaboration\/(?:materials|handoffs|notifications\/[\w-]{1,160}\/read|handoffs\/[\w-]{1,160}\/(?:messages|complete))$/.test(url.pathname)));
-    if (!auth && !ingest && !collaboration) { reject(404, 'Unknown Desktop operation'); return }
+    const extension = !url.search && ['GET', 'POST'].includes(req.method ?? '') && /^\/api\/extensions\/[a-z][a-z0-9-]{0,63}\/[a-z][a-z0-9-]{0,63}$/.test(url.pathname)
+    if (!auth && !ingest && !collaboration && !extension) { reject(404, 'Unknown Desktop operation'); return }
     let current: EnterpriseMember
     try { current = await login.verify() } catch {
       reject(401, 'Enterprise authorization unavailable')
@@ -128,7 +129,7 @@ export async function startEnterpriseAuthority(login: EnterpriseLogin, deviceId:
     if (auth) {
       res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ...current, deviceId, backendUrl: login.backendUrl })); return
     }
-    if (collaboration) {
+    if (collaboration || extension) {
       try {
         let body: string | undefined;
         if(req.method==='POST') {
@@ -139,9 +140,9 @@ export async function startEnterpriseAuthority(login: EnterpriseLogin, deviceId:
         }
         const response=await login.request(url.pathname,req.method,body);
         if(closing)return;
-        if(!response.ok){reject(response.status,'Enterprise collaboration rejected');return}
+        if(!response.ok){reject(response.status, extension ? 'Enterprise extension rejected' : 'Enterprise collaboration rejected');return}
         res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify(await response.json()));
-      } catch {reject(502,'Enterprise collaboration unavailable')}
+      } catch {reject(502, extension ? 'Enterprise extension unavailable' : 'Enterprise collaboration unavailable')}
       return;
     }
     try {

@@ -127,3 +127,33 @@ describe('Desktop Main enterprise authority', () => {
     await expect(login.verify()).rejects.toThrow('已退出')
   })
 })
+
+ describe('enterprise extension transport', () => {
+  it('forwards only extension operations with Main-owned authentication and rejects other routes', async () => {
+    const calls: Array<{url: string; init?: RequestInit}> = [];
+    let active = true;
+    const request = (async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({url: String(url), ...(init ? {init} : {})});
+      if (String(url).endsWith('/login')) return json({token, member: actor});
+      if (String(url).endsWith('/me')) return json(actor, active ? 200 : 401);
+      return json({reports: [1]});
+    }) as typeof fetch;
+    const login = await EnterpriseLogin.login('https://company.test', actor.email, 'password', request);
+    bridge = await startEnterpriseAuthority(login, 'device-a', () => {}, () => {});
+    const headers = {Authorization: `Bearer ${bridge.key}`, 'Content-Type': 'application/json'};
+    const response = await fetch(`${bridge.url}/api/extensions/reports/list`, {method: 'POST', headers, body: '{"page":1}'});
+    expect(await response.json()).toEqual({reports: [1]});
+    const forwarded = calls.find(call => call.url.endsWith('/api/extensions/reports/list'))!;
+    expect(forwarded.init?.headers).toMatchObject({Authorization: `Bearer ${token}`});
+    expect(forwarded.init?.body).toBe('{"page":1}');
+    for (const path of ['/api/admin/members', '/api/extensions/reports/list?url=https://evil.test', '/api/extensions/reports/list/extra']) {
+      expect((await fetch(bridge.url + path, {headers})).status).toBe(404);
+    }
+    expect((await fetch(`${bridge.url}/api/extensions/reports/list`, {headers: {...headers, Origin: 'https://evil.test'}})).status).toBe(403);
+    expect((await fetch(`${bridge.url}/api/extensions/reports/list`, {method: 'DELETE', headers})).status).toBe(404);
+    expect(calls.filter(call => call.url.includes('/api/extensions/'))).toHaveLength(1);
+    active = false;
+    expect((await fetch(`${bridge.url}/api/extensions/reports/list`, {headers})).status).toBe(401);
+    expect(calls.filter(call => call.url.includes('/api/extensions/'))).toHaveLength(1);
+  });
+ });
