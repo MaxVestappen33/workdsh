@@ -83,11 +83,14 @@ function browserWorkerRequest(): { port: number, profile: string } | undefined {
 }
 
 function startBrowserWorker(request: { port: number, profile: string }): void {
+  // Set this before Electron becomes ready: hiding the Dock afterwards briefly
+  // registers every task's browser worker as another foreground application.
+  // Accessory permits the hidden browser window without a Dock icon or menu bar.
+  if (process.platform === 'darwin') app.setActivationPolicy('accessory')
   app.setPath('userData', request.profile)
   app.commandLine.appendSwitch('remote-debugging-address', '127.0.0.1')
   app.commandLine.appendSwitch('remote-debugging-port', String(request.port))
   void app.whenReady().then(async () => {
-    app.dock?.hide()
     const page = new BrowserWindow({
       show: false,
       width: 1280,
