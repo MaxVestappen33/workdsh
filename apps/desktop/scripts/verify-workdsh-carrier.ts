@@ -8,6 +8,7 @@ import { DSH_VERSION } from './runtime-version.mjs'
 import { ENTERPRISE_PACKAGES, PRODUCT_PACKAGES, RELEASE_PACKAGES } from './workdsh-package-boundary.mjs'
 import { verifyDefaultComposition, verifyDefaultProfile, verifyInstalledDshVersions, verifyOfficialWebPackages, verifyProfileRelease, verifyReleaseArchives } from './verify-profile-release.mjs'
 import { parseDeploymentConfig } from '../src/deployment-config.ts'
+import { prepareBrowserWorker } from './prepare-browser-worker.ts'
 
 interface PackContext {
   appOutDir: string
@@ -144,6 +145,10 @@ export async function afterPack(context: PackContext): Promise<void> {
     throw new Error(`Packaged WorkDSH plugin inventory check failed: ${String(inventory.error ?? inventory.stderr)}`)
   }
   process.stdout.write(inventory.stdout)
+  if (context.electronPlatformName === 'darwin') {
+    const contents = join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`, 'Contents')
+    await prepareBrowserWorker(contents, join(contents, 'MacOS', context.packager.appInfo.productFilename))
+  }
   console.log(`Verified thin Electron carrier and ${names.length} root / ${instances} total Harness ${DSH_VERSION} package instances`)
 }
 
