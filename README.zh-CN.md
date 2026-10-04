@@ -90,6 +90,19 @@ Desktop 的个人与企业空间分别保存数据和凭据。企业账号插件
 3. 打开“设置 → 企业账号 → 连接企业”，填写公司后台地址和成员账号登录。
 4. 在“协作”查看分享，在模型设置中手动配置公司内部 API。开发者可注入 `workdshEnterprise` 复用认证，详见[调用说明](docs/ENTERPRISE-PLUGIN-AUTH.md)。
 
+**目前企业连接插件未上架插件市场，不能按名称搜索安装。这里安装的是下载到本机的 `.tgz` 文件。**
+
+例如下载到 Downloads 文件夹后，“添加插件”输入框填写：
+
+```text
+macOS：/Users/你的用户名/Downloads/workdsh-enterprise-connection-0.1.0-alpha.2.tgz
+Windows：C:\Users\你的用户名\Downloads\workdsh-enterprise-connection-0.1.0-alpha.2.tgz
+```
+
+请换成自己电脑上的真实路径，不要直接复制示例用户名。macOS 可在 Finder 选中文件，按 `Option + Command + C` 复制完整路径；Windows 可右键文件选择“复制文件地址”，若带外层引号，粘贴时去掉引号。将路径粘贴到“插件 → 添加插件”的输入框，点击安装，再点击“立即启用”。不是填写插件名称，也不是把文件上传到管理后台。
+
+[下载本版企业连接插件 tgz](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.3/workdsh-enterprise-connection-0.1.0-alpha.2.tgz)。如果浏览器自动解压，请保留或重新下载原始 `.tgz` 文件，不要填写解压后的文件夹路径。
+
 企业连接包由本项目 [GitHub Releases](https://github.com/techflag/workdsh/releases) 独立交付，不依赖第三方插件市场。下载 `workdsh-enterprise-connection-<版本>.tgz`，保留文件并在添加插件时填写完整路径；发行附件包含兼容 DSH 版本的清单及 `SHA256SUMS`。
 
 在个人空间打开“插件 → 添加插件”，输入管理员提供的“企业连接”包路径或安装地址，确认来源并安装，安装完成后点击“立即启用”。一个包提供账号和协作，无需分别安装。完成后进入“设置 → 企业账号”，点击“连接企业”，填写后台地址并登录。安装过程复用官方进度与错误提示，不需要终端命令。目前企业插件未发布到可搜索目录，不能仅凭名称搜索安装。
