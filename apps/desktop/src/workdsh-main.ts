@@ -19,7 +19,6 @@ import { EnterpriseLogin, startEnterpriseAuthority, type Authority } from './ent
 import { desktopEnterprisePatch, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher } from './local-runtime.ts'
 import { manageCommand } from './command-management.ts'
 import { cleanOwnedProcessTree, stopOwnedProcess } from './owned-process.ts'
-import { browserWorkerExecutable } from './browser-worker.ts'
 
 const PROFILE_NAME = 'workdsh'
 const READY_PATTERN = /dsh web:\s+(http:\/\/127\.0\.0\.1:\d+\/?\?token=[^\s]+)/u
@@ -179,7 +178,7 @@ function runtimeEnvironment(home: string): NodeJS.ProcessEnv {
     DSH_HOME: home,
     DSH_AGENTS_HOME: enterprise ? join(enterprise.root, 'agents') : join(home, 'agents'),
     DSH_BUNDLED_PRIMARY_RUNTIME: bundledPrimaryRuntime(),
-    DSH_ELECTRON_EXECUTABLE: browserWorkerExecutable(process.execPath, process.platform, Boolean(process.defaultApp)),
+    DSH_ELECTRON_EXECUTABLE: process.execPath,
     ELECTRON_RUN_AS_NODE: undefined,
   }
 }
@@ -452,6 +451,9 @@ const worker = browserWorkerRequest()
 if (worker !== undefined) {
   startBrowserWorker(worker)
 } else {
+// The native bundle starts without a Dock icon so spawned browser workers cannot
+// flash one before JavaScript runs. Only the primary application becomes foreground.
+if (process.platform === 'darwin') app.setActivationPolicy('regular')
 const desktopUserData = process.env.WORKDSH_DESKTOP_USER_DATA
 if (desktopUserData) {
   if (!isAbsolute(desktopUserData)) throw new Error('Desktop user data override must be absolute')
