@@ -6,6 +6,8 @@
 
 [![Desktop release](https://img.shields.io/badge/Desktop-2.0.6--alpha.3-176BFF)](https://github.com/techflag/workdsh/releases/tag/desktop-v2.0.6-alpha.3) [![GitHub stars](https://img.shields.io/github/stars/techflag/workdsh?label=stars)](https://github.com/techflag/workdsh) [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
+[![GitHub Actions](https://github.com/techflag/workdsh/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/techflag/workdsh/actions/workflows/ci.yml) [![Gitee stars](https://gitee.com/techflag/workdsh/badge/star.svg?theme=dark)](https://gitee.com/techflag/workdsh/stargazers) [![Gitee forks](https://gitee.com/techflag/workdsh/badge/fork.svg?theme=dark)](https://gitee.com/techflag/workdsh/members)
+
 **A personal workspace with installable enterprise capabilities is a defining WorkDSH feature.** Projects, the library, experts, skills, and connectors share the same implementation. Install Enterprise Connection and sign in to share text and files with `@` colleagues and use Collaboration; add company models through model settings. Independent business plugins can also reuse member authentication through `workdshEnterprise` to call company business APIs.
 
 The enterprise plugin is **not listed in a plugin marketplace**. [Download Enterprise Connection](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.3/workdsh-enterprise-connection-0.1.0-alpha.2.tgz), enter the downloaded file’s full path in “Plugins → Add plugin”, install and activate it, then connect through “Settings → Enterprise account”. [Installation and login](#enterprise-connection-download-install-and-sign-in) · [Business plugin authentication](#enterprise-authentication-that-independent-plugins-can-reuse) · [Separate admin backend](https://github.com/techflag/workdsh-admin)
@@ -162,6 +164,17 @@ After signing in, use **Settings → Enterprise account** to view your name, org
 
 Enterprise Desktop synchronizes visible user and assistant conversation text to the backend under the member's account. Thinking, tool traces and attachments are not uploaded as conversation text. Authorized administrators can read their organization's synchronized text through audited, read-only access.
 
+### Example: share an AI analysis with a colleague
+
+This is a completed Desktop acceptance scenario, not a customer deployment claim:
+
+1. Sign in with a company account and add the administrator-provided internal API address, access key and allowed models in the official model settings.
+2. Start a conversation, select a company model, and ask AI to analyze work materials or create a deliverable. The Agent and file tools execute on the member’s computer.
+3. Mention an organization colleague with `@` and share the analysis text and files.
+4. The recipient signs in with their own company account and opens **Collaboration → Received**; the sender can review **Sent** records.
+
+The acceptance screenshots below show company model selection, colleague mentions and collaboration records using demonstration accounts and content. Plugin installation, member login and backend authorization are required; installing a plugin does not grant organization membership.
+
 ### Mention colleagues and collaborate
 
 Install and enable the Enterprise Connection plugin, then sign in with your company account. Type `@` in the conversation composer to select organization colleagues and share analysis results and files through your task. **Collaboration** in the sidebar lists received and sent shares so you can review content and files and continue the discussion. One Enterprise Connection package provides identity and collaboration; enterprise collaboration is inactive in personal mode.
@@ -204,13 +217,17 @@ WorkDSH Admin — organization overview:
 
 ## Download Desktop
 
-The planned desktop installer release is **2.0.6-alpha.3**. Its download links will become available after the [GitHub Release](https://github.com/techflag/workdsh/releases/tag/desktop-v2.0.6-alpha.3) is published:
+Desktop **2.0.6-alpha.3** is published. The [GitHub Release](https://github.com/techflag/workdsh/releases/tag/desktop-v2.0.6-alpha.3) provides these complete installers:
 
 | Platform | Download |
 | --- | --- |
 | Windows x64 | [WorkDSH Setup.exe](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.3/dsh-plugin-desktop-windows-x64--WorkDSH-2.0.6-alpha.3-x64-Setup.exe) |
 | macOS Apple Silicon | [WorkDSH arm64.dmg](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.3/dsh-plugin-desktop-macos-arm64--WorkDSH-2.0.6-alpha.3-arm64.dmg) |
 | macOS Intel | [WorkDSH x64.dmg](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.3/dsh-plugin-desktop-macos-x64--WorkDSH-2.0.6-alpha.3-x64.dmg) |
+
+**Downloads in China**: the [Gitee release](https://gitee.com/techflag/workdsh/releases/tag/desktop-v2.0.6-alpha.3) provides split archives for Windows x64 and macOS Apple Silicon. The current repository allows 100 MB per attachment and 1 GB total; download every part for your platform and its merge script, then follow the release instructions. The script verifies SHA256 before producing the installer. For Intel Mac or a complete single-file installer, use the GitHub links above. Enterprise plugin TGZ/ZIP files are also available directly on the Gitee release page.
+
+**Development and feedback**: GitHub is the sole development source; Gitee mirrors source and release assets. Report problems through [Gitee Issues](https://gitee.com/techflag/workdsh/issues) or [GitHub Issues](https://github.com/techflag/workdsh/issues). See the [China distribution roadmap](https://gitee.com/techflag/workdsh/issues/IKJN8I), [cross-platform testing request](https://gitee.com/techflag/workdsh/issues/IKJN8J), and [business-plugin authentication example task](https://gitee.com/techflag/workdsh/issues/IKJN8K). Accepted Gitee code contributions enter GitHub through review before synchronization; there is no second product codebase.
 
 Desktop installers include Node.js, pnpm and Python runtimes by default, so users do not need to install them separately. This is an **Alpha release**: end-to-end project document references, expert execution, and different Office formats are still being validated. The macOS DMGs are unsigned; download updates from [Releases](https://github.com/techflag/workdsh/releases). Start with the [user guide](docs/user-guide.en.md) and [FAQ](docs/faq.en.md).
 
