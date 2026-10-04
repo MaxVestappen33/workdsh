@@ -8,6 +8,8 @@ import { fileURLToPath } from "node:url";
 const root = new URL("../../../packages/plugins/office/", import.meta.url);
 const wordOnly = process.argv.includes("--word-only");
 await mkdir(new URL("dist/", root), { recursive: true });
+await build({ entryPoints: [fileURLToPath(new URL("src/tabular.js", root))], bundle: true, platform: "node", format: "esm", target: "node22", external: ["exceljs"], outfile: fileURLToPath(new URL("dist/tabular.js", root)) });
+await writeFile(new URL("dist/tabular.d.ts", root), await readFile(new URL("src/tabular.d.ts", root)));
 const font=await readFile(new URL("src/pdf/fonts/NotoSansSC.ttf",root));
 const fontSource=JSON.parse(await readFile(new URL("src/pdf/fonts/source.json",root),"utf8"));
 if(font.length!==fontSource.bytes||createHash("sha256").update(font).digest("hex")!==fontSource.sha256)throw Error("Bundled PDF font integrity mismatch");

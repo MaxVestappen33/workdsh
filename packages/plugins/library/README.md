@@ -17,7 +17,7 @@
 
 ## 验收与下一步
 
-完成对应 PLAN 任务及 [验收矩阵](../../../apps/web/docs/ACCEPTANCE.md) 场景，记录真实测试证据后才更新为完成。当前 Host 与 Client 入口可加载，数据保存到 `$DSH_HOME/library`。支持 MD、TXT、HTML、PDF、DOCX、PPTX；所有格式保留原件并生成独立检索文本。HTML 在无 Host 权限、无网络访问的沙箱中按原始样式和内联交互展示；PDF 可直接预览；安装 Office 插件时，Word 使用 `docx-preview`、PowerPoint 使用 `pptx-react-viewer` 打开原件，未安装时回退为派生检索文本和原件下载。Library 与 Office 通过公开可选预览注册表协作，不互相导入运行时内部实现。
+完成对应 PLAN 任务及 [验收矩阵](../../../apps/web/docs/ACCEPTANCE.md) 场景，记录真实测试证据后才更新为完成。当前 Host 与 Client 入口可加载，数据保存到 `$DSH_HOME/library`。支持 MD、TXT、HTML、PDF、DOCX、PPTX、CSV、XLSX；所有格式保留原件并生成独立检索文本。HTML 在无 Host 权限、无网络访问的沙箱中按原始样式和内联交互展示；PDF 可直接预览；安装 Office 插件时，Word 使用 `docx-preview`、PowerPoint 使用 `pptx-react-viewer` 打开原件，未安装时回退为派生检索文本和原件下载。Library 与 Office 通过公开可选预览注册表协作，不互相导入运行时内部实现。
 
 发布包可通过 `corepack pnpm probe:library` 验证独立安装、两次冷启动、卸载保留 `$DSH_HOME/library`、重新安装和资料恢复。页面支持搜索、最近、本地产物、完整目录树、目录内新建与导入、移动、添加到当前任务、停用与重新启用；停用会立即阻断历史任务引用的正文读取。搜索结果显示目录、类型、来源、修订、转换状态和页/段/幻灯片位置。
 
@@ -36,3 +36,9 @@
 ### 可选 Host 成员服务选择
 
 公开 registerLibraryConnection、registerLibraryTools、registerLibraryContextInjection 接受可选可信选择器，返回服务端 actor、LibraryService 和 verify。工具与上下文使用实际 Agent 选择，不从模型参数读取主体；操作前后核验，拒绝不匹配的会话上下文。默认 apply 不传选择器，保持个人行为。企业装配必须提供隔离存储和可撤权身份；这些入口本身不是文件执行沙箱。
+
+## 表格资料
+
+CSV/XLSX 可上传、按类型检索并引用到任务；原始文件按字节保留。Host 转换在构建时复用 Office 的公开 `workdsh-plugin-office/tabular` 入口的 CSV 解码/解析；表格提取模块随 Library 构建，运行时复用 ExcelJS，无需安装或激活 Office 插件即可导入和检索。CSV 支持 UTF-8、GB18030、UTF-16，以及逗号、分号和制表符；XLSX 提取工作表名称和单元格已有值，公式不重新计算，图表、图片和格式不进入检索文本。检索文本最多 1500 行/120 列/24000 单元格，XLSX 最多 20 个工作表；截取会显示警告，完整原件仍可下载。
+
+原件预览通过公开可选注册表复用 Office：CSV 为只读表格，XLSX 使用现有隔离编辑器，导出为副本，不覆盖资料库修订。未启用 Office 预览时显示检索文本。个人与企业 Desktop、Web 复用相同导入和预览实现，实际资料授权保持不变。

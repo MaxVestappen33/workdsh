@@ -1,3 +1,4 @@
+import { extractTabularText } from 'workdsh-plugin-office/tabular';
 import JSZip from 'jszip';
 import type { LibraryAssetKind } from 'workdsh-contracts/library';
 
@@ -127,6 +128,11 @@ export async function convertToMarkdown(kind: LibraryAssetKind, bytes: Uint8Arra
   if (kind === 'markdown' || kind === 'text') {
     try { return { markdown: new TextDecoder('utf-8', { fatal: true }).decode(bytes).replace(/\r\n?/g, '\n'), warnings: [], locations: [] }; }
     catch { throw new Error('library/invalid-text'); }
+  }
+  if (kind === 'csv' || kind === 'xlsx') {
+    if (kind === 'xlsx') { const zip = await safeZip(bytes, signal); if (!zip.file('xl/workbook.xml')) throw new Error('library/invalid-xlsx'); }
+    const converted = await extractTabularText(kind, bytes, signal);
+    return { ...converted, locations: [] };
   }
   if (kind === 'docx') return docx(bytes, signal);
   if (kind === 'pptx') return pptx(bytes, signal);
