@@ -1,6 +1,7 @@
 import type { ActivityPresentation } from 'workdsh-contracts/activity';
 declare module '@deepseek-ai/cordis' { interface Context { activityPresentation: ActivityPresentation; } }
 import { installExpertPresetMenu } from './client/PresetMenu.js';
+import { ConversationExperts } from './client/ConversationExperts.js';
 import { parseDocument } from 'yaml';
 import type { Context } from '@deepseek-ai/cordis';
 import type {} from '@deepseek-ai/dsh-client-connection/client';
@@ -173,4 +174,5 @@ export function apply(ctx: Context): void {
     inject: () => ({ toggleNavigation: () => ctx.layout.toggleSidebar(), management, openCapability, hasCapability, summon, createExpertTask, editExpertTask }),
   }, ExpertsPanel));
   ctx.slots.inject('conversation.input.overlay', () => ctx.slots.register({ name: 'conversation.input.overlay', id: 'workdsh-expert-draft' }, PendingExpertDraft));
+  ctx.slots.inject('conversation.input.left', () => ctx.slots.register({ name: 'conversation.input.left', id: 'workdsh-summon-expert', order: 25, inject: () => ({ management, summon, openManagement: () => openCapability('workdsh-experts') }) }, ConversationExperts));
 }
