@@ -1,3 +1,5 @@
+import type { ComposerHandoff, ComposerHandoffSource } from 'workdsh-contracts/composer';
+declare module '@deepseek-ai/cordis' { interface Events { 'workdsh/composer-handoff'(handoff: ComposerHandoff): Promise<void>; } }
 import type { Context } from '@deepseek-ai/cordis';
 import type {} from '@deepseek-ai/dsh-client-connection/client';
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client';
@@ -15,6 +17,10 @@ export function apply(ctx: Context): void {
   const lifetime = new AbortController();
   ctx.effect(() => () => lifetime.abort(), 'workdsh.connectors.client');
   const management = createConnectorManagementClient(ctx, lifetime.signal);
+  ctx.on('workdsh/composer-handoff', async handoff => {
+    const selected = await management.selection(handoff.sourceSessionId);
+    await management.setSelection(handoff.targetSessionId, selected);
+  });
   const openCapability = (key: string) => ctx.layout.selectPanel(key as Parameters<typeof ctx.layout.selectPanel>[0]);
   const hasCapability = (key: string) => ctx.slots.entriesOfSlot('main').some(entry => entry.options.key === key);
   ctx.slots.inject('main', () => ctx.slots.register({
