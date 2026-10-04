@@ -1,9 +1,9 @@
 {
   "name": "workdsh-enterprise-connection",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "private": true,
   "type": "module",
-  "description": "企业连接：安装后连接公司账号与协作，权限由后台登录验证",
+  "description": "\u4f01\u4e1a\u8fde\u63a5\uff1a\u5b89\u88c5\u540e\u8fde\u63a5\u516c\u53f8\u8d26\u53f7\u4e0e\u534f\u4f5c\uff0c\u6743\u9650\u7531\u540e\u53f0\u767b\u5f55\u9a8c\u8bc1",
   "exports": {
     ".": "./index.mjs",
     "./client": "./client.browser.js"
@@ -32,7 +32,7 @@
     }
   },
   "dependencies": {
-    "workdsh-provider-identity-enterprise": "0.1.0-alpha.2",
+    "workdsh-provider-identity-enterprise": "0.1.0-alpha.3",
     "workdsh-plugin-enterprise-collaboration": "0.1.0-alpha.1"
   },
   "bundledDependencies": [

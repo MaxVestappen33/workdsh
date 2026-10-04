@@ -4,7 +4,7 @@
 <p align="center">WorkDSH brings material, experts, skills, and connectors into one workspace, with the SkillHub catalog and installable DSH community plugins.</p>
 <p align="center"><a href="#download-desktop">Download Desktop</a> · <a href="#from-material-to-deliverable">Explore the workflow</a> · <a href="#personal-and-enterprise-use">Personal and enterprise</a> · <a href="docs/user-guide.en.md">User guide</a> · <a href="README.zh-CN.md">简体中文</a></p>
 
-[![Desktop release](https://img.shields.io/badge/Desktop-2.0.6--alpha.2-176BFF)](https://github.com/techflag/workdsh/releases/tag/desktop-v2.0.6-alpha.2) [![GitHub stars](https://img.shields.io/github/stars/techflag/workdsh?label=stars)](https://github.com/techflag/workdsh) [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Desktop release](https://img.shields.io/badge/Desktop-2.0.6--alpha.3-176BFF)](https://github.com/techflag/workdsh/releases/tag/desktop-v2.0.6-alpha.3) [![GitHub stars](https://img.shields.io/github/stars/techflag/workdsh?label=stars)](https://github.com/techflag/workdsh) [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ![WorkDSH projects home with project templates and the complete desktop sidebar](apps/web/assets/screenshots/workdsh-projects-alpha8-dark.png)
 
@@ -81,7 +81,14 @@ The enterprise backend is developed and deployed independently in **[techflag/wo
 
 Administrators should follow the [workdsh-admin deployment and usage guide](https://github.com/techflag/workdsh-admin#readme), then provide members with the backend address and company accounts. Members install this repository's desktop app and Enterprise Connection plugin and connect to that address; the Agent and tools continue to run on their computer.
 
-### Install enterprise plugins
+### Enterprise Connection: download, install and sign in
+
+**Enterprise features are enabled by an explicitly installed Enterprise Connection plugin, not bundled in the base Desktop.** One package provides company accounts, colleague collaboration and authenticated requests for independent business plugins.
+
+1. Download `workdsh-enterprise-connection-0.1.0-alpha.2.tgz` from this release and retain the file.
+2. In personal mode, open Plugins → Add plugin, enter the full tgz path, install and click Enable now.
+3. Open Settings → Enterprise account → Connect enterprise and sign in using the company backend address and member account.
+4. Open Collaboration to review shares and configure the company API manually in model settings. Developers can inject `workdshEnterprise`; see the [integration guide](docs/ENTERPRISE-PLUGIN-AUTH.md).
 
 The Enterprise Connection package is delivered independently through our [GitHub Releases](https://github.com/techflag/workdsh/releases), without a third-party marketplace. Download `workdsh-enterprise-connection-<version>.tgz`, retain the file and enter its full path in Add plugin. Release assets include the compatible DSH version manifest and `SHA256SUMS`.
 
@@ -148,13 +155,13 @@ WorkDSH Admin — organization overview:
 
 ## Download Desktop
 
-The planned desktop installer release is **2.0.6-alpha.2**. Its download links will become available after the [GitHub Release](https://github.com/techflag/workdsh/releases/tag/desktop-v2.0.6-alpha.2) is published:
+The planned desktop installer release is **2.0.6-alpha.3**. Its download links will become available after the [GitHub Release](https://github.com/techflag/workdsh/releases/tag/desktop-v2.0.6-alpha.3) is published:
 
 | Platform | Download |
 | --- | --- |
-| Windows x64 | [WorkDSH Setup.exe](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.2/dsh-plugin-desktop-windows-x64--WorkDSH-2.0.6-alpha.2-x64-Setup.exe) |
-| macOS Apple Silicon | [WorkDSH arm64.dmg](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.2/dsh-plugin-desktop-macos-arm64--WorkDSH-2.0.6-alpha.2-arm64.dmg) |
-| macOS Intel | [WorkDSH x64.dmg](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.2/dsh-plugin-desktop-macos-x64--WorkDSH-2.0.6-alpha.2-x64.dmg) |
+| Windows x64 | [WorkDSH Setup.exe](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.3/dsh-plugin-desktop-windows-x64--WorkDSH-2.0.6-alpha.3-x64-Setup.exe) |
+| macOS Apple Silicon | [WorkDSH arm64.dmg](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.3/dsh-plugin-desktop-macos-arm64--WorkDSH-2.0.6-alpha.3-arm64.dmg) |
+| macOS Intel | [WorkDSH x64.dmg](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.3/dsh-plugin-desktop-macos-x64--WorkDSH-2.0.6-alpha.3-x64.dmg) |
 
 Desktop installers include Node.js, pnpm and Python runtimes by default, so users do not need to install them separately. This is an **Alpha release**: end-to-end project document references, expert execution, and different Office formats are still being validated. The macOS DMGs are unsigned; download updates from [Releases](https://github.com/techflag/workdsh/releases). Start with the [user guide](docs/user-guide.en.md) and [FAQ](docs/faq.en.md).
 
