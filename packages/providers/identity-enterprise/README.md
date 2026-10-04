@@ -40,3 +40,7 @@
 构建和类型检查必须覆盖本包以及共同 access；身份测试覆盖后台认证、固定成员、同步重试和删除、过期和撤权拒绝、认证文件保护以及 process 生命周期。通过源码和 headless 检查后，仍需分别验收企业服务器部署与 Desktop 安装、登录、退出、重启、升级及 Windows/macOS 图形行为。模型和工具任务须通过实际授权的完整官方客户端验收；文件目录或 Profile 名称不能替代身份与资源授权。
 
 共享功能与交付要求见 [功能开发契约](../../../apps/web/docs/FEATURE-DEVELOPMENT-CONTRACT.md)、[企业需求](../../../apps/web/docs/ENTERPRISE-REQUIREMENTS.md) 和 [验收要求](../../../apps/web/docs/ACCEPTANCE.md)。
+
+## 独立业务插件认证
+
+Desktop 身份入口提供 `workdshEnterprise` 服务，业务插件通过 Cordis 注入，使用 `identity()` 与 `request()` 调用当前公司后台。凭据留在 Main，不读取 Token；允许的路径为 `/api/extensions/<plugin>/<operation>`。完整代码、后台权限要求及版本限制见[企业插件认证接入](../../../docs/ENTERPRISE-PLUGIN-AUTH.md)。

@@ -170,6 +170,10 @@ Desktop 基础包不预装企业插件，安装企业插件后启用企业登录
 
 桌面菜单“工具 → 终端命令 dsh（可选）”可查看、安装、修复和移除终端命令。普通桌面聊天无需安装此命令，只有主动点击菜单才显示管理弹窗。安装只创建命令入口，使用随包的 Node、pnpm 和官方 CLI；移除命令不会删除应用或工作区。命令默认操作当前 Desktop 工作区，启动时显示空间名称；`--workdsh-space=personal` 或 `--workdsh-space=enterprise` 可明确选择。企业空间须保持 Desktop 登录，首次使用前先在 Desktop 打开对应空间。插件安装、更新和移除遵循该空间的官方 Profile。
 
+### 开发需要企业认证的插件
+
+企业业务插件注入 `workdshEnterprise`，通过 `request({ plugin: "reports", operation: "list", method: "POST", body: { page: 1 } })` 请求公司后台。Desktop 自动携带当前成员认证，插件不读取或保存 Token；后台仍检查成员和业务权限。调用示例、SDK 类型依赖及新旧版本要求见[企业插件认证接入](docs/ENTERPRISE-PLUGIN-AUTH.md)。
+
 ## 开发与文档
 
 源码分工：[WorkDSH 功能包与 Web](apps/web/README.zh-CN.md) · [Desktop 外壳](apps/desktop/README.zh.md) · [架构](docs/architecture.md) · [全部文档](docs/README.md)。从源码运行需要 Node.js 22.19+ 或 24+、Corepack 和 Yarn 4.18.0：

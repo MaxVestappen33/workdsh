@@ -1,5 +1,5 @@
 import { Service, type Context } from '@deepseek-ai/cordis';
-import type { IdentityResolutionContext, IdentityService } from 'workdsh-contracts';
+import type { EnterpriseService, EnterpriseRequest, IdentityResolutionContext, IdentityService } from 'workdsh-contracts';
 import type {} from '@deepseek-ai/dsh-client-connection';
 import type {} from '@deepseek-ai/dsh-api-session-controller';
 import { EnterpriseMemberIdentity } from './member-identity.js';
@@ -7,7 +7,7 @@ import { DesktopAuthority, type EnterpriseDesktopConfig } from './desktop-author
 import { DesktopBodySync, observeDesktopSessions } from './desktop-body-sync.js';
 export type { EnterpriseDesktopConfig } from './desktop-authority.js';
 
-declare module '@deepseek-ai/cordis' { interface Context { workdshIdentity: IdentityService } }
+declare module '@deepseek-ai/cordis' { interface Context { workdshIdentity: IdentityService; workdshEnterprise: EnterpriseService } }
 type SessionAccess = { inspect: Context['sessionController']['inspect'] };
 
 /** Explicit enterprise Desktop composition. It cannot authenticate as a personal identity. */
@@ -22,6 +22,8 @@ export default class EnterpriseDesktopIdentity extends Service implements Identi
   constructor(ctx: Context, config: EnterpriseDesktopConfig) {
     super(ctx, 'workdshIdentity');
     this.authority = new DesktopAuthority(Object.freeze({ ...config }));
+    ctx.plugin(EnterpriseTransport, this);
+
     ctx.effect(() => () => { this.identity?.revoke(); this.authority.close(); this.sync?.close(); }, 'workdsh.enterprise-desktop.authority');
     const register = (path: string, methods: Array<'GET' | 'POST'>, fetch: (request: Request) => Promise<Response>) => {
       ctx.effect(() => ctx.connection.fetch.register({ path, methods, requestBody: 'buffered', fetch }), `workdsh.enterprise-desktop.${path}`);
@@ -66,6 +68,14 @@ export default class EnterpriseDesktopIdentity extends Service implements Identi
       } catch { this.syncError = '正文同步初始化失败；请检查企业认证及受保护的本机同步文件。'; }
     });
   }
+  async enterpriseIdentity(signal?: AbortSignal) {
+    await this.resolve(undefined, signal);
+    return { memberId: this.authority.config.principalId, organizationId: this.authority.config.organizationId };
+  }
+  async enterpriseRequest<T = unknown>(input: EnterpriseRequest): Promise<T> {
+    await this.resolve(undefined, input.signal);
+    return this.authority.extension<T>(input);
+  }
   collaborationBinding(signal?: AbortSignal) { return this.authority.collaborationBinding(signal); }
   profile() { if (!this.identity) throw new Error('Enterprise Desktop authentication required'); return this.identity.profile(); }
   membership(organizationId: string, principalId: string) { return this.identity?.membership(organizationId, principalId); }
@@ -73,4 +83,11 @@ export default class EnterpriseDesktopIdentity extends Service implements Identi
     if (!this.identity) throw new Error('Enterprise Desktop authentication required');
     return this.identity.resolve(evidence, signal);
   }
+}
+
+/** Public plugin dependency. Lifecycle is scoped to the installed enterprise identity. */
+class EnterpriseTransport extends Service implements EnterpriseService {
+  constructor(ctx: Context, private readonly owner: EnterpriseDesktopIdentity) { super(ctx, 'workdshEnterprise'); }
+  identity(signal?: AbortSignal) { return this.owner.enterpriseIdentity(signal); }
+  request<T = unknown>(input: EnterpriseRequest): Promise<T> { return this.owner.enterpriseRequest<T>(input); }
 }

@@ -162,6 +162,10 @@ The base Desktop package does not preinstall enterprise plugins. Install them se
 
 The **Tools → Terminal command dsh (optional)** menu lets you inspect, install, repair or remove the terminal command. Desktop chat does not require it; its dialog appears only when you select the menu. Installation creates a command entry using the packaged Node, pnpm and official CLI. Removing it does not delete the app or workspace. Commands display the active Desktop space; use `--workdsh-space=personal` or `--workdsh-space=enterprise` to select it explicitly. Initialize the space in Desktop first and keep Desktop signed in for enterprise operations. Plugin changes apply to that space’s Profile.
 
+### Build plugins with enterprise authentication
+
+Host plugins inject `workdshEnterprise` and call `request({ plugin: "reports", operation: "list", method: "POST", body: { page: 1 } })`. Desktop attaches the current member authentication without exposing tokens. The backend must authorize every business operation. See the [integration guide](docs/ENTERPRISE-PLUGIN-AUTH.md) for code, type-package setup and the required new Desktop/plugin versions.
+
 ## Development and documentation
 
 Source ownership: [WorkDSH feature packages and Web](apps/web/README.md) · [Desktop carrier](apps/desktop/README.md) · [Architecture](docs/architecture.en.md) · [All documentation](docs/README.en.md). Running from source requires Node.js 22.19+ or 24+, Corepack, and Yarn 4.18.0:
