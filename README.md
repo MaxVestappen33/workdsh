@@ -164,6 +164,17 @@ After signing in, use **Settings → Enterprise account** to view your name, org
 
 Enterprise Desktop synchronizes visible user and assistant conversation text to the backend under the member's account. Thinking, tool traces and attachments are not uploaded as conversation text. Authorized administrators can read their organization's synchronized text through audited, read-only access.
 
+### Example: share an AI analysis with a colleague
+
+This is a completed Desktop acceptance scenario, not a customer deployment claim:
+
+1. Sign in with a company account and add the administrator-provided internal API address, access key and allowed models in the official model settings.
+2. Start a conversation, select a company model, and ask AI to analyze work materials or create a deliverable. The Agent and file tools execute on the member’s computer.
+3. Mention an organization colleague with `@` and share the analysis text and files.
+4. The recipient signs in with their own company account and opens **Collaboration → Received**; the sender can review **Sent** records.
+
+The acceptance screenshots below show company model selection, colleague mentions and collaboration records using demonstration accounts and content. Plugin installation, member login and backend authorization are required; installing a plugin does not grant organization membership.
+
 ### Mention colleagues and collaborate
 
 Install and enable the Enterprise Connection plugin, then sign in with your company account. Type `@` in the conversation composer to select organization colleagues and share analysis results and files through your task. **Collaboration** in the sidebar lists received and sent shares so you can review content and files and continue the discussion. One Enterprise Connection package provides identity and collaboration; enterprise collaboration is inactive in personal mode.
