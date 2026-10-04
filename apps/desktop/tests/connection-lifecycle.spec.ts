@@ -30,7 +30,7 @@ vi.mock('electron', async () => {
   return {
     BrowserWindow: Window,
     ipcMain: { handle: (name: string, fn: any) => { state.handlers[name] = fn } },
-    app: Object.assign(new EventEmitter(), { setName: vi.fn(), requestSingleInstanceLock: () => true, whenReady: async () => {}, quit: vi.fn(), relaunch: vi.fn(), getPath: () => state.userData }),
+    app: Object.assign(new EventEmitter(), { setActivationPolicy: vi.fn(), setName: vi.fn(), requestSingleInstanceLock: () => true, whenReady: async () => {}, quit: vi.fn(), relaunch: vi.fn(), getPath: () => state.userData }),
     shell: { openExternal: vi.fn() }, dialog: { showErrorBox: vi.fn(), showOpenDialog: vi.fn(async () => ({ canceled: true, filePaths: [] })) },
     Menu: { buildFromTemplate: (menu: any[]) => { state.menu = menu; return menu }, setApplicationMenu: vi.fn() },
   }
@@ -73,6 +73,9 @@ it('enforces the packaged backend, uses explicitly installed enterprise identity
   })
   try {
     await import('../src/workdsh-main.ts')
+    const { app: startupApp } = await import('electron')
+    if (process.platform === 'darwin') expect(startupApp.setActivationPolicy).toHaveBeenCalledWith('regular')
+    else expect(startupApp.setActivationPolicy).not.toHaveBeenCalled()
     await vi.waitFor(() => expect(state.windows).toHaveLength(1))
     const entry = state.windows[0]
     expect(decodeURIComponent(entry.url)).toContain('<p>https://company.test</p>')
