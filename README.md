@@ -1,10 +1,14 @@
 <p align="center"><img src="apps/web/assets/brand/workdsh-logo.svg" width="88" alt="WorkDSH logo"></p>
 <h1 align="center">WorkDSH</h1>
 <p align="center"><strong>A WorkBuddy-style workspace where skills, experts, and plugins shape new workflows.</strong></p>
-<p align="center">WorkDSH brings material, experts, skills, and connectors into one workspace, with the SkillHub catalog and installable DSH community plugins.</p>
+<p align="center">Inspired by WorkBuddy’s workflow and built on DeepSeek Harness plugins: start with personal use, then install Enterprise Connection for company models, collaboration, and colleague mentions.</p>
 <p align="center"><a href="#download-desktop">Download Desktop</a> · <a href="#from-material-to-deliverable">Explore the workflow</a> · <a href="#personal-and-enterprise-use">Personal and enterprise</a> · <a href="docs/user-guide.en.md">User guide</a> · <a href="README.zh-CN.md">简体中文</a></p>
 
 [![Desktop release](https://img.shields.io/badge/Desktop-2.0.6--alpha.3-176BFF)](https://github.com/techflag/workdsh/releases/tag/desktop-v2.0.6-alpha.3) [![GitHub stars](https://img.shields.io/github/stars/techflag/workdsh?label=stars)](https://github.com/techflag/workdsh) [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+**A personal workspace with installable enterprise capabilities is a defining WorkDSH feature.** Projects, the library, experts, skills, and connectors share the same implementation. Install Enterprise Connection and sign in to share text and files with `@` colleagues and use Collaboration; add company models through model settings. Independent business plugins can also reuse member authentication through `workdshEnterprise` to call company business APIs.
+
+The enterprise plugin is **not listed in a plugin marketplace**. [Download Enterprise Connection](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.3/workdsh-enterprise-connection-0.1.0-alpha.2.tgz), enter the downloaded file’s full path in “Plugins → Add plugin”, install and activate it, then connect through “Settings → Enterprise account”. [Installation and login](#enterprise-connection-download-install-and-sign-in) · [Business plugin authentication](#enterprise-authentication-that-independent-plugins-can-reuse) · [Separate admin backend](https://github.com/techflag/workdsh-admin)
 
 ![WorkDSH projects home with project templates and the complete desktop sidebar](apps/web/assets/screenshots/workdsh-projects-alpha8-dark.png)
 

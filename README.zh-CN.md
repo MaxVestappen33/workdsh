@@ -1,10 +1,14 @@
 <p align="center"><img src="apps/web/assets/brand/workdsh-logo.svg" width="88" alt="WorkDSH 标志"></p>
 <h1 align="center">WorkDSH</h1>
 <p align="center"><strong>WorkBuddy 式工作台，让技能、专家与插件组成更多工作场景。</strong></p>
-<p align="center">WorkDSH 将资料、专家、技能和连接器带入同一工作台；接入 SkillHub 技能目录，并支持安装 DSH 社区插件。</p>
+<p align="center">参考 WorkBuddy 的工作体验，基于 DeepSeek Harness 的开放插件体系：个人开箱使用，安装企业连接插件后接入公司模型、协作与 @同事。</p>
 <p align="center"><a href="#下载桌面版">下载桌面版</a> · <a href="#从资料到成果">了解工作流</a> · <a href="#个人与企业使用">个人与企业</a> · <a href="docs/user-guide.md">使用指南</a> · <a href="README.md">English</a></p>
 
 [![Desktop release](https://img.shields.io/badge/Desktop-2.0.6--alpha.3-176BFF)](https://github.com/techflag/workdsh/releases/tag/desktop-v2.0.6-alpha.3) [![GitHub stars](https://img.shields.io/github/stars/techflag/workdsh?label=stars)](https://github.com/techflag/workdsh) [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+**个人工作台 + 可安装的企业能力，是 WorkDSH 的特色。** 资料库、项目、专家、技能和连接器共用同一套功能；企业连接插件按需安装，登录公司账号后使用协作、@同事分享正文与文件，并可在模型设置中添加公司模型。独立业务插件还能通过 `workdshEnterprise` 复用成员认证，连接自己的公司业务接口。
+
+企业插件目前**未上架插件市场**：[下载企业连接包](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.3/workdsh-enterprise-connection-0.1.0-alpha.2.tgz)，在“插件 → 添加插件”填写下载文件的完整路径，安装并启用，再到“设置 → 企业账号”连接公司后台。[安装与登录步骤](#企业连接插件下载安装与登录) · [业务插件认证调用](#企业插件开放认证服务业务插件不用重复登录) · [独立管理后台](https://github.com/techflag/workdsh-admin)
 
 ![WorkDSH 项目主页：项目、模板与完整桌面侧栏](apps/web/assets/screenshots/workdsh-projects-alpha8-dark.png)
 
