@@ -327,6 +327,10 @@ jobs:
           cat > release-notes.md <<'EOF'
           WorkDSH Desktop 将 WorkBuddy 风格的项目、资料、专家、技能和连接器工作台与 DeepSeek Harness 插件能力结合。
 
+          - 修复 macOS 召唤或切换专家时的 Dock 闪动，后台浏览器从原生启动阶段保持无 Dock 图标，主窗口正常显示。
+          - 对话框可直接召唤专家并显示当前专家名称；切换专家保留资料库的可点击引用和 MCP 选择。
+          - 资料库支持 CSV/XLSX 导入；专家、资料库和 MCP 的选择浮层保持一致。
+          - 内置 MCP 示例随当前安装包定位运行文件，避免升级后引用旧路径。
           - 技能页接入 SkillHub 目录，可查看技能图标、来源、版本与安装入口；本地技能仍可单独管理。
           - 现有插件页可直接发现 DSH 社区插件，并打开第三方 dsh-market 目录进行搜索和安装。
           - Desktop 使用与源码锁一致的官方 DSH Profile；内置 Node.js 和 Python，不额外打包浏览器。
