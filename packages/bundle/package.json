@@ -41,7 +41,9 @@
         "@deepseek-ai/dsh-client-ui-sidebar-right",
         "@deepseek-ai/dsh-client-ui-session",
         "@deepseek-ai/dsh-api-remotes",
-        "@deepseek-ai/dsh-api-session-controller"
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-api-workspace-controller",
+        "@deepseek-ai/dsh-client-ui-workspace"
       ]
     }
   },
@@ -76,7 +78,8 @@
     "workdsh-plugin-workbench": "workspace:*",
     "workdsh-ui": "workspace:*",
     "@types/node": "22.19.0",
-    "@deepseek-ai/dsh-agent": "0.2.0-rc.2"
+    "@deepseek-ai/dsh-agent": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-workspace": "0.2.0-rc.2"
   },
   "dependencies": {
     "@deepseek-ai/dsh-browser-use": "0.2.0-rc.2",
