@@ -26,8 +26,40 @@ WorkDSH draws on WorkBuddy's way of organizing projects, material, experts, skil
 - **Desktop execution, central administration**: the Agent and tools run on the employee’s computer; the server handles accounts, authorization, collaboration data and model forwarding.
 - **The full official UI with shared feature plugins**: personal and enterprise modes reuse the same library, experts, skills, and connectors.
 - **Bundled runtime**: Desktop includes Node.js, pnpm, Python, and built-in plugins without downloading them on first login. Community skills and plugins are installed on demand.
+- **Reusable enterprise authentication for business plugins**: independent plugins inject `workdshEnterprise` to call the company backend using the current member login, without reading or storing tokens.
 - **Mention colleagues and share AI results**: select organization colleagues with `@`, share analysis text and files, and review received or sent shares in Collaboration. Requires the Enterprise Connection plugin and company login.
 - **Personal and company models together**: connect the company model API and select company models in the conversation model picker while retaining personal providers. Supplier keys remain in the admin backend.
+
+### Enterprise authentication that independent plugins can reuse
+
+Enterprise Desktop exposes **`workdshEnterprise`** to Host plugins. It reuses the current member login without returning backend tokens, local bridge credentials or passwords. Desktop Main authenticates requests; the backend enforces member and business permissions.
+
+Run this example in your plugin's **Host entry**, not in its browser page. The Enterprise Connection plugin provides the service after installation, activation and company login; personal mode does not provide it.
+
+```ts
+import type { Context } from '@deepseek-ai/cordis'
+import type { EnterpriseService } from 'workdsh-contracts/enterprise'
+
+declare module '@deepseek-ai/cordis' {
+  interface Context { workdshEnterprise: EnterpriseService }
+}
+
+export default {
+  name: 'company-reports',
+  inject: ['workdshEnterprise'],
+  async apply(ctx: Context) {
+    const member = await ctx.workdshEnterprise.identity()
+    const reports = await ctx.workdshEnterprise.request<{ items: unknown[] }>({
+      plugin: 'reports',
+      operation: 'list',
+      method: 'POST',
+      body: { page: 1 },
+    })
+  },
+}
+```
+
+This calls `POST /api/extensions/reports/list` on the company backend. Implement the business endpoint and its authorization without another login flow. Requires Desktop `2.0.6-alpha.3` and Enterprise Connection `0.1.0-alpha.2`. `workdsh-contracts` is not a published public npm SDK; see the [integration guide](docs/ENTERPRISE-PLUGIN-AUTH.md) for packaging the type dependency and request restrictions.
 
 ### From material to deliverable
 

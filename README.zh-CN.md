@@ -26,8 +26,40 @@ WorkDSH 参考 WorkBuddy 按项目组织资料、专家、技能和连接器的�
 - **本机执行，集中管理**：Agent 和工具在员工桌面客户端运行；服务器负责账号、权限、协作数据与模型转发。
 - **完整官方界面，共享功能插件**：个人和企业复用同一套资料库、专家、技能和连接器功能。
 - **安装即可使用运行环境**：Desktop 随包提供 Node.js、pnpm 和 Python，内置插件无需首次登录再下载；社区技能和插件按需安装。
+- **企业认证可供业务插件复用**：独立插件注入 `workdshEnterprise` 即可请求公司后台，复用当前成员登录，不读取或保存 Token。
 - **@同事，分享 AI 成果**：在对话中选择组织同事，分享分析正文和文件；在“协作”中查看收到的、发出的分享并继续交流。安装企业连接插件并登录公司账号后使用。
 - **个人与公司模型并存**：接入公司内部模型 API 后，可在对话的模型选择器中选择公司模型，也可保留个人模型；真实供应商密钥由管理后台保管。
+
+### 企业插件开放认证服务，业务插件不用重复登录
+
+企业 Desktop 的业务插件注入 **`workdshEnterprise`**，复用当前成员登录。服务不返回后台 Token、本机桥接密钥或账号密码；Desktop 主进程携带认证请求公司后台，后台检查成员与业务权限。
+
+以下代码在独立插件的 **Host 入口**执行，不在浏览器页面直接执行。企业连接插件安装、启用并登录后提供服务；普通个人空间不提供此服务。
+
+```ts
+import type { Context } from '@deepseek-ai/cordis'
+import type { EnterpriseService } from 'workdsh-contracts/enterprise'
+
+declare module '@deepseek-ai/cordis' {
+  interface Context { workdshEnterprise: EnterpriseService }
+}
+
+export default {
+  name: 'company-reports',
+  inject: ['workdshEnterprise'],
+  async apply(ctx: Context) {
+    const member = await ctx.workdshEnterprise.identity()
+    const reports = await ctx.workdshEnterprise.request<{ items: unknown[] }>({
+      plugin: 'reports',
+      operation: 'list',
+      method: 'POST',
+      body: { page: 1 },
+    })
+  },
+}
+```
+
+以上请求映射到公司后台的 `POST /api/extensions/reports/list`。开发者实现该业务接口并检查权限即可，不需要再开发一套登录。此能力从 Desktop `2.0.6-alpha.3`、企业连接包 `0.1.0-alpha.2` 开始提供。`workdsh-contracts` 当前未发布公共 npm SDK，类型包的构建与打包方式、接口限制见[企业业务插件认证接入](docs/ENTERPRISE-PLUGIN-AUTH.md)。
 
 ### 从资料到成果
 
