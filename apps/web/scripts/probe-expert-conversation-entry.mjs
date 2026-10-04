@@ -206,6 +206,7 @@ try {
   const comboResponse = page.waitForResponse(response => response.url().endsWith('/api/workdsh-experts') && response.request().postDataJSON()?.endpoint === 'create-execution');
   await choice.click();
   const comboCreation = (await (await comboResponse).json()).value;
+  await expect(picker).toHaveCount(0);
   await expect(editor).toContainText('组合任务草稿');
   await expect(editor.locator('[data-composer-chip="workdsh-library"]')).toHaveCount(1);
   await expect(page.getByRole('button', { name: '连接器：浮层 MCP 验收', exact: true })).toBeVisible();
