@@ -260,6 +260,27 @@ jobs:
       - name: Build independent enterprise connection download
         working-directory: apps/web
         run: node scripts/pack-enterprise-connection.mjs ../../output/enterprise-plugin
+      - name: Create matching enterprise plugin ZIP
+        run: |
+          python3 - <<'PYZIP'
+          from pathlib import Path
+          import tarfile, zipfile
+          archive, = Path('output/enterprise-plugin').glob('*.tgz')
+          with tarfile.open(archive) as source, zipfile.ZipFile(archive.with_suffix('.zip'), 'w') as target:
+              for member in source.getmembers():
+                  if not member.name.startswith('package/') or '..' in Path(member.name).parts or member.issym() or member.islnk():
+                      raise ValueError('Unsupported archive member: ' + member.name)
+                  if member.isfile():
+                      info = zipfile.ZipInfo(member.name)
+                      info.external_attr = (member.mode | 0o100000) << 16
+                      info.compress_type = zipfile.ZIP_DEFLATED
+                      target.writestr(info, source.extractfile(member).read())
+          with tarfile.open(archive) as source, zipfile.ZipFile(archive.with_suffix('.zip')) as target:
+              assert target.testzip() is None
+              for member in source.getmembers():
+                  if member.isfile():
+                      assert source.extractfile(member).read() == target.read(member.name)
+          PYZIP
       - uses: actions/upload-artifact@v4
         with:
           name: workdsh-enterprise-plugin
