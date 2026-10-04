@@ -111,6 +111,7 @@
       ],
       "category": "public.app-category.developer-tools",
       "extendInfo": {
+        "LSUIElement": true,
         "CFBundleAllowMixedLocalizations": true,
         "CFBundleDevelopmentRegion": "en",
         "CFBundleLocalizations": [

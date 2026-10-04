@@ -451,6 +451,9 @@ const worker = browserWorkerRequest()
 if (worker !== undefined) {
   startBrowserWorker(worker)
 } else {
+// The native bundle starts without a Dock icon so spawned browser workers cannot
+// flash one before JavaScript runs. Only the primary application becomes foreground.
+if (process.platform === 'darwin') app.setActivationPolicy('regular')
 const desktopUserData = process.env.WORKDSH_DESKTOP_USER_DATA
 if (desktopUserData) {
   if (!isAbsolute(desktopUserData)) throw new Error('Desktop user data override must be absolute')
