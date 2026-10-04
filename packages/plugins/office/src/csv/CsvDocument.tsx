@@ -59,7 +59,7 @@ const Grid = React.memo(function Grid({ table }: { table: CsvTable }) {
 });
 
 /** Read-only CSV table body for the right-Sidebar document seat, owned by the official preview registry. */
-export function CsvDocument(props: DocumentPreviewProps) {
+export function CsvDocument(props: Pick<DocumentPreviewProps, 'content' | 'wrap' | 'scrollportRef'>) {
   const { content, wrap, scrollportRef } = props;
   const decoded = useMemo(
     () => {

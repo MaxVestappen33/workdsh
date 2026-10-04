@@ -11,7 +11,11 @@
       "default": "./dist/client.browser.js"
     },
     "./package.json": "./package.json",
-    "./locale/*.json": "./locale/*.json"
+    "./locale/*.json": "./locale/*.json",
+    "./tabular": {
+      "types": "./dist/tabular.d.ts",
+      "default": "./dist/tabular.js"
+    }
   },
   "files": [
     "dist",

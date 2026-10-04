@@ -144,6 +144,9 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
       - working-directory: apps/web
         run: pnpm test:integration
+      - name: Library import, search and task reference tests
+        working-directory: apps/web
+        run: node --test ../../packages/plugins/library/tests/*.test.mjs
       - name: Enterprise desktop identity and collaboration tests
         working-directory: apps/web
         run: node --test ../../packages/providers/identity-enterprise/tests/*.test.mjs ../../packages/plugins/enterprise-collaboration/tests/*.test.mjs

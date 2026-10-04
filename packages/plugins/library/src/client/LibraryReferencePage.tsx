@@ -23,7 +23,7 @@ export function LibraryReferencePage({ management, previewRegistry, useTabInfo }
     let active = true;
     const run = async () => {
       try {
-        if (params.kind === 'html' || params.kind === 'pdf' || params.kind === 'docx' || params.kind === 'pptx') {
+        if (params.kind === 'html' || params.kind === 'pdf' || params.kind === 'docx' || params.kind === 'pptx' || params.kind === 'csv' || params.kind === 'xlsx') {
           const bytes = await management.readOriginal(params.assetId!, params.revisionId);
           if (!active) return;
           if (params.kind === 'html') setHtml(new TextDecoder().decode(bytes));

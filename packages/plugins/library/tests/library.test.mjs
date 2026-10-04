@@ -213,3 +213,45 @@ test('selected library revisions and an explicitly invoked skill coexist in one 
     assert.equal(userMessage, '/material-organizer 整理已添加资料，输出结构化摘要。');
   } finally { if (ctx) await ctx.fiber.dispose(); await rm(root, { recursive: true, force: true }); }
 });
+
+test('CSV and XLSX import preserve originals, search cells and supply task context', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'library-tables-'));
+  const ctx = await boot(join(root, 'storage'), join(root, 'library'));
+  try {
+    const { createRequire } = await import('node:module');
+    const ExcelJS = createRequire(new URL('../../office/package.json', import.meta.url))('exceljs');
+    const book = new ExcelJS.Workbook();
+    const sheet = book.addWorksheet('季度销售');
+    sheet.addRow(['客户', '金额']); sheet.addRow(['Xlsx客户甲', 42]);
+    sheet.getCell('B3').value = { formula: 'B2*2', result: 84 };
+    const other = book.addWorksheet('备注'); other.addRow(['Xlsx第二页']);
+    const xlsx = new Uint8Array(await book.xlsx.writeBuffer());
+    const csv = new TextEncoder().encode('\ufeff客户;备注\r\nCsv客户乙;"多行\n含|竖线"\r\n');
+    for (const [name, bytes, kind, query] of [['数据.CSV', csv, 'csv', 'Csv客户乙'], ['销售.xlsx', xlsx, 'xlsx', 'Xlsx第二页']]) {
+      const row = await ctx.workdshLibrary.importAsset(actor, { name, bytes, operationId: name });
+      assert.equal(row.asset.kind, kind); assert.equal(row.revision.conversionStatus, 'ready');
+      assert.deepEqual(await ctx.workdshLibrary.readOriginal(actor, row.asset.id), bytes);
+      assert.equal((await ctx.workdshLibrary.search(actor, query, { kinds: [kind] }))[0].name, name);
+      await ctx.workdshLibrary.setTaskSelection(actor, 'tables-session', [row.id]);
+      assert.match(await buildLibrarySelectionContext(ctx.workdshLibrary, actor, 'tables-session'), new RegExp(query));
+    }
+    const hits = await ctx.workdshLibrary.search(actor, 'Xlsx客户甲');
+    assert.match(await ctx.workdshLibrary.readText(actor, hits[0].assetId), /84/);
+    await assert.rejects(ctx.workdshLibrary.importAsset(actor, { name: 'fake.xlsx', bytes: new TextEncoder().encode('not a zip'), operationId: 'bad-table' }), /library\/invalid-office-file/);
+  } finally { await ctx.fiber.dispose(); await rm(root, { recursive: true, force: true }); }
+});
+
+test('tabular extraction reports truncation and never evaluates formulas', async () => {
+  const { extractTabularText } = await import('workdsh-plugin-office/tabular');
+  const text = '名称,备注\n客户,"换行\n含|<script>"\n';
+  const utf16 = new Uint8Array(Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, 'utf16le')]));
+  const decoded = await extractTabularText('csv', utf16);
+  assert.match(decoded.markdown, /客户/);
+  assert.match(decoded.markdown, /&#124;&lt;script&gt;/);
+  const clipped = await extractTabularText('csv', new TextEncoder().encode('a,b\n' + 'value,other\n'.repeat(1600)));
+  assert.equal(clipped.warnings.length, 1);
+  assert.match(clipped.warnings[0], /前缀/);
+  await assert.rejects(extractTabularText('csv', new Uint8Array([65, 0, 66])), /invalid-csv/);
+  const controller = new AbortController(); controller.abort();
+  await assert.rejects(extractTabularText('csv', utf16, controller.signal), { name: 'AbortError' });
+});

@@ -848,6 +848,9 @@ importers:
       pdfjs-dist:
         specifier: 5.4.624
         version: 5.4.624
+      workdsh-plugin-office:
+        specifier: workspace:*
+        version: link:../office
       zod:
         specifier: 4.4.3
         version: 4.4.3

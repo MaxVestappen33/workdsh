@@ -81,7 +81,8 @@
   "dependencies": {
     "jszip": "3.10.1",
     "pdfjs-dist": "5.4.624",
-    "zod": "4.4.3"
+    "zod": "4.4.3",
+    "workdsh-plugin-office": "workspace:*"
   },
   "dsh": {
     "bundle": {
