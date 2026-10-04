@@ -227,6 +227,15 @@ try {
   await connectors.getByRole('button', { name: '管理连接器', exact: true }).click();
   await expect(connectors).toHaveCount(0);
   pass('MCP management footer dismisses the picker and opens management');
+  await featureApi('connectors', 'set-selection', { sessionId: comboCreation.sessionId, connectorIds: selectedMcp });
+  await page.getByText('New Session', { exact: true }).first().click();
+  await expect(page.getByRole('button', { name: '召唤专家', exact: true })).toHaveText('');
+  await expect(page.getByRole('button', { name: '连接器', exact: true })).toBeVisible();
+  await expect(editor).toHaveText('');
+  await expect(editor.locator('[data-composer-chip="workdsh-library"]')).toHaveCount(0);
+  assert.equal((await featureApi('library', 'task-selection', { sessionId: comboCreation.sessionId })).length, 1);
+  assert.deepEqual(await featureApi('connectors', 'selection', { sessionId: comboCreation.sessionId }), selectedMcp);
+  pass('New Session starts without expert, MCP or Library draft while retaining the previous task references');
   assert.deepEqual(browserErrors, []);
   await writeFile(join(artifacts, 'report.json'), JSON.stringify({ checks, sessionId: creation.sessionId, home }, null, 2));
 } catch (error) {
