@@ -1,3 +1,7 @@
+import React from "react";
+import { createRoot } from "react-dom/client";
+import { CsvDocument } from "./csv/CsvDocument.js";
+import editorHtml from "./editor.html";
 import {downloadPdf} from "./pdf/download.js";
 import {downloadHtml} from "./html/preview.js";
 import {createPresentationModel} from "./presentation/client-model.js";
@@ -45,8 +49,23 @@ export const inject = [
   "inputTriggers",
 ];
 export function apply(ctx: Context): void {
-  ctx.inject(["workdshLibraryPreview"], scope => scope.effect(() => scope.workdshLibraryPreview.register(["docx", "pptx"], async (target, input) => {
+  ctx.inject(["workdshLibraryPreview"], scope => scope.effect(() => scope.workdshLibraryPreview.register(wordOnlyRelease ? ["docx"] : ["docx", "pptx", "csv", "xlsx"], async (target, input) => {
     target.replaceChildren();
+    if (input.kind === "csv") {
+      const root = createRoot(target);
+      root.render(<CsvDocument content={{ kind: "bytes", data: Uint8Array.from(input.bytes) }} wrap={true} scrollportRef={() => undefined} />);
+      return () => root.unmount();
+    }
+    if (input.kind === "xlsx") {
+      const frame = document.createElement("iframe");
+      frame.title = input.name; frame.setAttribute("sandbox", "allow-scripts allow-downloads");
+      frame.style.cssText = "width:100%;height:100%;border:0";
+      const ready = (event: MessageEvent) => {
+        if (event.source === frame.contentWindow && event.data?.type === "workdsh-office-ready") frame.contentWindow?.postMessage({ type: "workdsh-office-open", extension: "xlsx", bytes: input.bytes.slice() }, "*");
+      };
+      window.addEventListener("message", ready); frame.srcdoc = editorHtml; target.append(frame);
+      return () => { window.removeEventListener("message", ready); frame.remove(); };
+    }
     if (input.kind === "docx") {
       const style = document.createElement("style"); style.textContent = ".docx-wrapper{background:#e9ecf1!important;padding:24px!important;min-height:100%;box-sizing:border-box}.docx-wrapper>section.docx{width:min(816px,calc(100% - 20px))!important;min-height:1056px!important;margin:0 auto 20px!important;padding:72px 80px!important;box-sizing:border-box!important;box-shadow:0 2px 14px #0003}.docx-wrapper table{width:100%!important;table-layout:auto!important}.docx-wrapper td,.docx-wrapper th{min-width:72px!important;word-break:normal!important;overflow-wrap:break-word!important;white-space:normal!important}.docx-wrapper p{word-break:normal!important;overflow-wrap:break-word!important}";
       target.append(style);
@@ -62,9 +81,9 @@ export function apply(ctx: Context): void {
   ctx.effect(() =>
     ctx.documentPreviews.register({
       id: "workdsh-office",
-      extensions: wordOnlyRelease ? ["docx"] : ["xlsx", "docx", "pptx"],
+      extensions: wordOnlyRelease ? ["docx"] : ["xlsx", "docx", "pptx", "csv"],
       title: () => "Office 浏览器编辑",
-      binaryExtensions: wordOnlyRelease ? ["docx"] : ["xlsx", "docx", "pptx"],
+      binaryExtensions: wordOnlyRelease ? ["docx"] : ["xlsx", "docx", "pptx", "csv"],
       priority: "extension",
       loading: "bytes-complete",
     }),

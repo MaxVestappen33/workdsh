@@ -23,12 +23,13 @@ export function LibraryReferencePage({ management, previewRegistry, useTabInfo }
     let active = true;
     const run = async () => {
       try {
-        if (params.kind === 'html' || params.kind === 'pdf' || params.kind === 'docx' || params.kind === 'pptx') {
+        if (params.kind === 'html' || params.kind === 'pdf' || params.kind === 'docx' || params.kind === 'pptx' || params.kind === 'csv' || params.kind === 'xlsx') {
           const bytes = await management.readOriginal(params.assetId!, params.revisionId);
           if (!active) return;
           if (params.kind === 'html') setHtml(new TextDecoder().decode(bytes));
           else if (params.kind === 'pdf') setUrl(URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'application/pdf' })));
-          else setOffice({ name: params.name ?? '资料', kind: params.kind, bytes } as LibraryOriginalPreviewInput);
+          else if (previewRegistry.canOpen(params.kind)) setOffice({ name: params.name ?? '资料', kind: params.kind, bytes } as LibraryOriginalPreviewInput);
+          else setText(await management.readText(params.assetId!, params.revisionId));
         } else setText(await management.readText(params.assetId!, params.revisionId));
       } catch (cause) { if (active) setError(cause instanceof Error ? cause.message : '资料读取失败。'); }
     };

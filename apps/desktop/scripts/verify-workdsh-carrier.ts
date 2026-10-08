@@ -20,6 +20,11 @@ export function normalizeAsarEntry(entry: string): string {
 }
 
 export async function afterPack(context: PackContext): Promise<void> {
+  if (context.electronPlatformName === 'darwin') {
+    const plist = join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`, 'Contents', 'Info.plist')
+    const nativeRole = spawnSync('/usr/libexec/PlistBuddy', ['-c', 'Print :LSUIElement', plist], { encoding: 'utf8' })
+    if (nativeRole.status !== 0 || nativeRole.stdout.trim() !== 'true') throw new Error('macOS carrier must start as a native UIElement before browser worker JavaScript runs')
+  }
   const resources = context.electronPlatformName === 'darwin'
     ? join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`, 'Contents', 'Resources')
     : join(context.appOutDir, 'resources')

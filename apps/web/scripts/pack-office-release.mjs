@@ -21,7 +21,7 @@ const manifest = JSON.parse(await readFile(join(plugin, "package.json"), "utf8")
 delete manifest.devDependencies;
 delete manifest.scripts;
 manifest.description = "Independent Harness plugin: browser Office working copies and native PPTX templates (alpha preview)";
-manifest.workdshRelease = {scope: "office-browser-preview", wordOnly: false, formats: ["docx", "pptx", "xlsx", "pdf", "html"]};
+manifest.workdshRelease = {scope: "office-browser-preview", wordOnly: false, formats: ["docx", "pptx", "xlsx", "csv", "pdf", "html"]};
 await writeFile(join(stage, "package.json"), JSON.stringify(manifest, null, 2) + "\n");
 for (const file of manifest.files) await cp(join(plugin, file), join(stage, file), {recursive: true});
 execFileSync("corepack", ["pnpm", "pack", "--pack-destination", destination], {cwd: stage, stdio: "inherit"});

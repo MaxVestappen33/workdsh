@@ -1,3 +1,4 @@
+import { CsvDocument } from './csv/CsvDocument.js';
 import {ImportedPptx} from './presentation/ImportedPptx.js';
 import React, { useEffect, useRef, useState } from 'react';
 import type { DocumentPreviewProps } from '@deepseek-ai/dsh-client-ui-sidebar-documentpreview/client';
@@ -25,6 +26,7 @@ import { importDocx } from './live/import-docx.js';
 import { officeCss } from './live/style.js';
 import type { OfficeClient } from './live/model.js';
 export function OfficeDocument(props: DocumentPreviewProps & {office: OfficeClient}) {
+  if (/\.csv(?:$|[?&#/])/i.test(decodeURIComponent(props.resourceAddress))) return <CsvDocument {...props} />;
   const docx = /\.docx(?:$|[?&#/])/i.test(decodeURIComponent(props.resourceAddress));
   if (/\.pptx(?:$|[?&#/])/i.test(decodeURIComponent(props.resourceAddress))) return <ImportedPptx key={props.resourceAddress} {...props}/>;
   return docx ? <ImportedDocument key={props.resourceAddress} {...props} /> : <LegacyOfficeDocument {...props} />;

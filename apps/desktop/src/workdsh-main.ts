@@ -83,11 +83,14 @@ function browserWorkerRequest(): { port: number, profile: string } | undefined {
 }
 
 function startBrowserWorker(request: { port: number, profile: string }): void {
+  // Set this before Electron becomes ready: hiding the Dock afterwards briefly
+  // registers every task's browser worker as another foreground application.
+  // Accessory permits the hidden browser window without a Dock icon or menu bar.
+  if (process.platform === 'darwin') app.setActivationPolicy('accessory')
   app.setPath('userData', request.profile)
   app.commandLine.appendSwitch('remote-debugging-address', '127.0.0.1')
   app.commandLine.appendSwitch('remote-debugging-port', String(request.port))
   void app.whenReady().then(async () => {
-    app.dock?.hide()
     const page = new BrowserWindow({
       show: false,
       width: 1280,
@@ -448,6 +451,9 @@ const worker = browserWorkerRequest()
 if (worker !== undefined) {
   startBrowserWorker(worker)
 } else {
+// The native bundle starts without a Dock icon so spawned browser workers cannot
+// flash one before JavaScript runs. Only the primary application becomes foreground.
+if (process.platform === 'darwin') app.setActivationPolicy('regular')
 const desktopUserData = process.env.WORKDSH_DESKTOP_USER_DATA
 if (desktopUserData) {
   if (!isAbsolute(desktopUserData)) throw new Error('Desktop user data override must be absolute')

@@ -1,6 +1,6 @@
 import type { ActorContext, ResourceOwner } from './governance.js';
 
-export type LibraryAssetKind = 'markdown' | 'text' | 'pdf' | 'docx' | 'pptx' | 'html';
+export type LibraryAssetKind = 'markdown' | 'text' | 'pdf' | 'docx' | 'pptx' | 'html' | 'csv' | 'xlsx';
 export type LibraryConversionStatus = 'ready' | 'pending' | 'failed';
 export type LibraryAssetStatus = 'active' | 'disabled';
 
@@ -114,7 +114,7 @@ export interface LibraryDraft {
 
 export interface LibraryOriginalPreviewInput {
   readonly name: string;
-  readonly kind: Extract<LibraryAssetKind, 'docx' | 'pptx'>;
+  readonly kind: Extract<LibraryAssetKind, 'docx' | 'pptx' | 'csv' | 'xlsx'>;
   readonly bytes: Uint8Array;
 }
 

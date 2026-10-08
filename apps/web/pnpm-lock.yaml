@@ -469,6 +469,9 @@ importers:
       '@deepseek-ai/dsh-client-ui-slots':
         specifier: 0.2.0-rc.2
         version: 0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)
+      '@deepseek-ai/dsh-client-ui-workspace':
+        specifier: 0.2.0-rc.2
+        version: 0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)
       '@deepseek-ai/dsh-llm':
         specifier: 0.2.0-rc.2
         version: 0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)
@@ -642,6 +645,9 @@ importers:
       react:
         specifier: 19.2.4
         version: 19.2.4
+      workdsh-contracts:
+        specifier: workspace:*
+        version: link:../../contracts
       workdsh-ui:
         specifier: workspace:*
         version: link:../../ui
@@ -842,6 +848,9 @@ importers:
 
   ../../packages/plugins/library:
     dependencies:
+      exceljs:
+        specifier: 4.4.0
+        version: 4.4.0
       jszip:
         specifier: 3.10.1
         version: 3.10.1
@@ -930,6 +939,9 @@ importers:
       workdsh-contracts:
         specifier: workspace:*
         version: link:../../contracts
+      workdsh-plugin-office:
+        specifier: workspace:*
+        version: link:../office
       workdsh-ui:
         specifier: workspace:*
         version: link:../../ui

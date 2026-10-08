@@ -17,7 +17,7 @@ delete manifest.devDependencies; delete manifest.scripts;
 manifest.workdshRelease = {
   scope: 'local-library-alpha',
   storage: '$DSH_HOME/library',
-  formats: ['md', 'markdown', 'txt', 'html', 'htm', 'pdf', 'docx', 'pptx'],
+  formats: ['md', 'markdown', 'txt', 'html', 'htm', 'pdf', 'docx', 'pptx', 'csv', 'xlsx'],
   preservesOriginals: true,
 };
 await writeFile(join(stage, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`);

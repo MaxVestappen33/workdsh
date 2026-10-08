@@ -1,3 +1,4 @@
+import type { EnterpriseRequest } from 'workdsh-contracts';
 import { readProtectedFile } from './protected-file.js';
 import { isAbsolute } from 'node:path';
 import type { VerifiedMember } from './request-context.js';
@@ -101,6 +102,16 @@ export class DesktopAuthority {
     const path = method === 'POST' ? '/visible-sessions/ingest' : `/visible-sessions/ingest?sessionId=${encodeURIComponent(sessionId)}`;
     const value = await this.request(path, method, body, signal);
     await this.account(signal); return value;
+  }
+  async extension<T = unknown>(input: EnterpriseRequest): Promise<T> {
+    const identifier = /^[a-z][a-z0-9-]{0,63}$/;
+    if (!identifier.test(input.plugin) || !identifier.test(input.operation)) throw new Error('Invalid enterprise extension operation');
+    const path = `/api/extensions/${input.plugin}/${input.operation}`;
+    if (!['GET', 'POST'].includes(input.method) || (input.method === 'GET' && input.body !== undefined)) throw new Error('Invalid enterprise extension request');
+    await this.account(input.signal);
+    const value = await this.request(path, input.method, input.body, input.signal);
+    await this.account(input.signal);
+    return value as T;
   }
   async collaborationBinding(signal?: AbortSignal): Promise<{url:string;authorization:string}> {
     await this.account(signal);

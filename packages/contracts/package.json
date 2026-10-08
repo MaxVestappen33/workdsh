@@ -34,6 +34,14 @@
     "./projects": {
       "types": "./dist/projects.d.ts",
       "default": "./dist/projects.js"
+    },
+    "./enterprise": {
+      "types": "./dist/enterprise.d.ts",
+      "default": "./dist/enterprise.js"
+    },
+    "./composer": {
+      "types": "./dist/composer.d.ts",
+      "default": "./dist/composer.js"
     }
   },
   "files": [

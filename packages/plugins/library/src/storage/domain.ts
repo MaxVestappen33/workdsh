@@ -14,7 +14,7 @@ const node = z.object({
   assetId: id.optional(), createdAt: iso, updatedAt: iso,
 });
 const asset = z.object({
-  id, spaceId: id, nodeId: id, kind: z.enum(['markdown', 'text', 'pdf', 'docx', 'pptx', 'html']),
+  id, spaceId: id, nodeId: id, kind: z.enum(['markdown', 'text', 'pdf', 'docx', 'pptx', 'html', 'csv', 'xlsx']),
   mediaType: id, byteLength: z.number().int().nonnegative(), owner, currentRevisionId: id,
   status: z.enum(['active', 'disabled']).default('active'),
   source: z.enum(['upload', 'task', 'created']), sourceTaskId: id.optional(), createdAt: iso, updatedAt: iso,

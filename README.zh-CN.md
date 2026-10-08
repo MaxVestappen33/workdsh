@@ -1,10 +1,16 @@
 <p align="center"><img src="apps/web/assets/brand/workdsh-logo.svg" width="88" alt="WorkDSH 标志"></p>
 <h1 align="center">WorkDSH</h1>
 <p align="center"><strong>WorkBuddy 式工作台，让技能、专家与插件组成更多工作场景。</strong></p>
-<p align="center">WorkDSH 将资料、专家、技能和连接器带入同一工作台；接入 SkillHub 技能目录，并支持安装 DSH 社区插件。</p>
+<p align="center">参考 WorkBuddy 的工作体验，基于 DeepSeek Harness 的开放插件体系：个人开箱使用，安装企业连接插件后接入公司模型、协作与 @同事。</p>
 <p align="center"><a href="#下载桌面版">下载桌面版</a> · <a href="#从资料到成果">了解工作流</a> · <a href="#个人与企业使用">个人与企业</a> · <a href="docs/user-guide.md">使用指南</a> · <a href="README.md">English</a></p>
 
-[![Desktop release](https://img.shields.io/badge/Desktop-2.0.6--alpha.2-176BFF)](https://github.com/techflag/workdsh/releases/tag/desktop-v2.0.6-alpha.2) [![GitHub stars](https://img.shields.io/github/stars/techflag/workdsh?label=stars)](https://github.com/techflag/workdsh) [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Desktop release](https://img.shields.io/badge/Desktop-2.0.6--alpha.5-176BFF)](https://github.com/techflag/workdsh/releases/tag/desktop-v2.0.6-alpha.5) [![GitHub stars](https://img.shields.io/github/stars/techflag/workdsh?label=stars)](https://github.com/techflag/workdsh) [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+[![GitHub Actions](https://github.com/techflag/workdsh/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/techflag/workdsh/actions/workflows/ci.yml) [![Gitee stars](https://gitee.com/techflag/workdsh/badge/star.svg?theme=dark)](https://gitee.com/techflag/workdsh/stargazers) [![Gitee forks](https://gitee.com/techflag/workdsh/badge/fork.svg?theme=dark)](https://gitee.com/techflag/workdsh/members)
+
+**个人工作台 + 可安装的企业能力，是 WorkDSH 的特色。** 资料库、项目、专家、技能和连接器共用同一套功能；企业连接插件按需安装，登录公司账号后使用协作、@同事分享正文与文件，并可在模型设置中添加公司模型。独立业务插件还能通过 `workdshEnterprise` 复用成员认证，连接自己的公司业务接口。
+
+企业插件目前**未上架插件市场**：[下载企业连接包](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.5/workdsh-enterprise-connection-0.1.0-alpha.2.tgz)，在“插件 → 添加插件”填写下载文件的完整路径，安装并启用，再到“设置 → 企业账号”连接公司后台。[安装与登录步骤](#企业连接插件下载安装与登录) · [业务插件认证调用](#企业插件开放认证服务业务插件不用重复登录) · [独立管理后台](https://github.com/techflag/workdsh-admin)
 
 ![WorkDSH 项目主页：项目、模板与完整桌面侧栏](apps/web/assets/screenshots/workdsh-projects-alpha8-dark.png)
 
@@ -26,8 +32,40 @@ WorkDSH 参考 WorkBuddy 按项目组织资料、专家、技能和连接器的�
 - **本机执行，集中管理**：Agent 和工具在员工桌面客户端运行；服务器负责账号、权限、协作数据与模型转发。
 - **完整官方界面，共享功能插件**：个人和企业复用同一套资料库、专家、技能和连接器功能。
 - **安装即可使用运行环境**：Desktop 随包提供 Node.js、pnpm 和 Python，内置插件无需首次登录再下载；社区技能和插件按需安装。
+- **企业认证可供业务插件复用**：独立插件注入 `workdshEnterprise` 即可请求公司后台，复用当前成员登录，不读取或保存 Token。
 - **@同事，分享 AI 成果**：在对话中选择组织同事，分享分析正文和文件；在“协作”中查看收到的、发出的分享并继续交流。安装企业连接插件并登录公司账号后使用。
 - **个人与公司模型并存**：接入公司内部模型 API 后，可在对话的模型选择器中选择公司模型，也可保留个人模型；真实供应商密钥由管理后台保管。
+
+### 企业插件开放认证服务，业务插件不用重复登录
+
+企业 Desktop 的业务插件注入 **`workdshEnterprise`**，复用当前成员登录。服务不返回后台 Token、本机桥接密钥或账号密码；Desktop 主进程携带认证请求公司后台，后台检查成员与业务权限。
+
+以下代码在独立插件的 **Host 入口**执行，不在浏览器页面直接执行。企业连接插件安装、启用并登录后提供服务；普通个人空间不提供此服务。
+
+```ts
+import type { Context } from '@deepseek-ai/cordis'
+import type { EnterpriseService } from 'workdsh-contracts/enterprise'
+
+declare module '@deepseek-ai/cordis' {
+  interface Context { workdshEnterprise: EnterpriseService }
+}
+
+export default {
+  name: 'company-reports',
+  inject: ['workdshEnterprise'],
+  async apply(ctx: Context) {
+    const member = await ctx.workdshEnterprise.identity()
+    const reports = await ctx.workdshEnterprise.request<{ items: unknown[] }>({
+      plugin: 'reports',
+      operation: 'list',
+      method: 'POST',
+      body: { page: 1 },
+    })
+  },
+}
+```
+
+以上请求映射到公司后台的 `POST /api/extensions/reports/list`。开发者实现该业务接口并检查权限即可，不需要再开发一套登录。此能力从 Desktop `2.0.6-alpha.3`、企业连接包 `0.1.0-alpha.2` 开始提供。`workdsh-contracts` 当前未发布公共 npm SDK，类型包的构建与打包方式、接口限制见[企业业务插件认证接入](docs/ENTERPRISE-PLUGIN-AUTH.md)。
 
 ### 从资料到成果
 
@@ -81,9 +119,29 @@ Desktop 的个人与企业空间分别保存数据和凭据。企业账号插件
 
 管理员请按 [workdsh-admin 的部署与使用说明](https://github.com/techflag/workdsh-admin#readme) 部署后台，并向成员提供后台地址和公司账号。成员安装本仓库的桌面端与企业连接插件后连接该地址；Agent 与工具仍在成员本机执行。
 
-### 安装企业插件
+### 企业连接插件：下载、安装与登录
 
-企业连接包由本项目 [GitHub Releases](https://github.com/techflag/workdsh/releases) 独立交付，不依赖第三方插件市场。下载 `workdsh-enterprise-connection-<版本>.tgz`，保留文件并在添加插件时填写完整路径；发行附件包含兼容 DSH 版本的清单及 `SHA256SUMS`。
+**企业功能通过企业连接插件按需启用，基础桌面包不预装。** 一个包提供企业账号、@同事协作，并向独立业务插件提供认证请求服务。
+
+1. 下载本次发行的 `workdsh-enterprise-connection-0.1.0-alpha.2.tgz`，保留文件。
+2. 在个人空间打开“插件 → 添加插件”，填写 tgz 完整路径，安装后点击“立即启用”。
+3. 打开“设置 → 企业账号 → 连接企业”，填写公司后台地址和成员账号登录。
+4. 在“协作”查看分享，在模型设置中手动配置公司内部 API。开发者可注入 `workdshEnterprise` 复用认证，详见[调用说明](docs/ENTERPRISE-PLUGIN-AUTH.md)。
+
+**目前企业连接插件未上架插件市场，不能按名称搜索安装。这里安装的是下载到本机的 `.tgz` 文件。**
+
+例如下载到 Downloads 文件夹后，“添加插件”输入框填写：
+
+```text
+macOS：/Users/你的用户名/Downloads/workdsh-enterprise-connection-0.1.0-alpha.2.tgz
+Windows：C:\Users\你的用户名\Downloads\workdsh-enterprise-connection-0.1.0-alpha.2.tgz
+```
+
+请换成自己电脑上的真实路径，不要直接复制示例用户名。macOS 可在 Finder 选中文件，按 `Option + Command + C` 复制完整路径；Windows 可右键文件选择“复制文件地址”，若带外层引号，粘贴时去掉引号。将路径粘贴到“插件 → 添加插件”的输入框，点击安装，再点击“立即启用”。不是填写插件名称，也不是把文件上传到管理后台。
+
+[下载本版企业连接插件 tgz](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.5/workdsh-enterprise-connection-0.1.0-alpha.2.tgz)。如果浏览器自动解压，请保留或重新下载原始 `.tgz` 文件，不要填写解压后的文件夹路径。
+
+企业连接包由本项目 [GitHub Releases](https://github.com/techflag/workdsh/releases) 独立交付，不依赖第三方插件市场。下载 `workdsh-enterprise-connection-<版本>.tgz`，在添加插件时填写完整路径；Desktop 2.0.6-alpha.5 起会将本地插件包复制到应用自己的账号缓存目录，安装成功后移动或删除原始下载文件不会影响后续插件安装；发行附件包含兼容 DSH 版本的清单及 `SHA256SUMS`。
 
 在个人空间打开“插件 → 添加插件”，输入管理员提供的“企业连接”包路径或安装地址，确认来源并安装，安装完成后点击“立即启用”。一个包提供账号和协作，无需分别安装。完成后进入“设置 → 企业账号”，点击“连接企业”，填写后台地址并登录。安装过程复用官方进度与错误提示，不需要终端命令。目前企业插件未发布到可搜索目录，不能仅凭名称搜索安装。
 
@@ -105,6 +163,17 @@ Desktop 使用同一个基础安装包。先进入个人空间，在插件管理
 </details>
 
 企业 Desktop 按当前成员身份向后台同步用户和助手已显示的会话文字，不将思考、工具轨迹或附件作为正文上传。本组织有权限的管理员可只读查看已同步正文，每次访问记录审计。
+
+### 使用案例：把 AI 分析分享给同事
+
+下面是已完成的 Desktop 演示验收流程，不是客户部署案例：
+
+1. 成员登录公司账号，在官方模型设置中添加管理员提供的内部 API 地址、访问 Key 和允许使用的模型。
+2. 新建对话，选择公司模型，让 AI 分析工作资料或创建成果文件。Agent 与文件工具在成员电脑上执行。
+3. 在对话中输入 `@` 并选择组织同事，分享分析正文与文件。
+4. 接收方登录自己的公司账号，在“协作 → 收到的”查看内容；发送方在“发出的”查看分享记录。
+
+已有验收截图展示了公司模型选择、@同事和协作记录；截图中的账号及内容均为演示数据。企业插件安装、成员登录和后台授权仍是前提，安装插件本身不授予组织权限。
 
 ### @同事与企业协作
 
@@ -156,19 +225,27 @@ WorkDSH Admin：组织概览。
 
 ## 下载桌面版
 
-计划发布的桌面安装包版本为 **2.0.6-alpha.2**。发布 [GitHub Release](https://github.com/techflag/workdsh/releases/tag/desktop-v2.0.6-alpha.2) 后，以下下载链接才会生效：
+桌面安装包 **2.0.6-alpha.5** 已发布。[GitHub Release](https://github.com/techflag/workdsh/releases/tag/desktop-v2.0.6-alpha.5) 提供以下完整安装包：
 
 | 平台 | 下载 |
 | --- | --- |
-| Windows x64 | [WorkDSH Setup.exe](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.2/dsh-plugin-desktop-windows-x64--WorkDSH-2.0.6-alpha.2-x64-Setup.exe) |
-| macOS Apple Silicon | [WorkDSH arm64.dmg](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.2/dsh-plugin-desktop-macos-arm64--WorkDSH-2.0.6-alpha.2-arm64.dmg) |
-| macOS Intel | [WorkDSH x64.dmg](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.2/dsh-plugin-desktop-macos-x64--WorkDSH-2.0.6-alpha.2-x64.dmg) |
+| Windows x64 | [WorkDSH Setup.exe](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.5/dsh-plugin-desktop-windows-x64--WorkDSH-2.0.6-alpha.5-x64-Setup.exe) |
+| macOS Apple Silicon | [WorkDSH arm64.dmg](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.5/dsh-plugin-desktop-macos-arm64--WorkDSH-2.0.6-alpha.5-arm64.dmg) |
+| macOS Intel | [WorkDSH x64.dmg](https://github.com/techflag/workdsh/releases/download/desktop-v2.0.6-alpha.5/dsh-plugin-desktop-macos-x64--WorkDSH-2.0.6-alpha.5-x64.dmg) |
+
+**国内下载**：[Gitee 2.0.6-alpha.3 发行](https://gitee.com/techflag/workdsh/releases/tag/desktop-v2.0.6-alpha.3) 提供 Windows x64 和 macOS Apple Silicon 分卷。受当前仓库单附件 100 MB、附件总量 1 GB 限制，需下载对应平台的全部分卷及合并脚本，按发行页说明恢复安装包；脚本通过 SHA256 校验后才生成安装文件。Intel Mac 或希望下载单个完整安装包的用户，请使用上表 GitHub 链接。企业插件 TGZ/ZIP 也可从 Gitee 发行页直接下载。
+
+**开发与反馈**：GitHub 是唯一主开发仓库，Gitee 同步源码和发行包。欢迎通过 [Gitee Issues](https://gitee.com/techflag/workdsh/issues) 或 [GitHub Issues](https://github.com/techflag/workdsh/issues) 反馈问题。查看[国内发行路线图](https://gitee.com/techflag/workdsh/issues/IKJN8I)、[跨平台测试征集](https://gitee.com/techflag/workdsh/issues/IKJN8J)和[业务插件认证示例任务](https://gitee.com/techflag/workdsh/issues/IKJN8K)。Gitee 的有效代码贡献经审查纳入 GitHub 后再同步，不维护第二套产品代码。
 
 Desktop 安装包默认内置 Node.js、pnpm 和 Python 运行时，普通用户无需单独安装。当前为 **Alpha 版**：项目资料引用、专家执行及不同 Office 格式的端到端体验仍在验收中。macOS DMG 未签名；更新请从 [Releases](https://github.com/techflag/workdsh/releases) 下载。开始使用前请阅读[用户指南](docs/user-guide.md)和[常见问题](docs/faq.md)。
 
 Desktop 基础包不预装企业插件，安装企业插件后启用企业登录。已有下载版本的功能以对应发行说明为准。
 
 桌面菜单“工具 → 终端命令 dsh（可选）”可查看、安装、修复和移除终端命令。普通桌面聊天无需安装此命令，只有主动点击菜单才显示管理弹窗。安装只创建命令入口，使用随包的 Node、pnpm 和官方 CLI；移除命令不会删除应用或工作区。命令默认操作当前 Desktop 工作区，启动时显示空间名称；`--workdsh-space=personal` 或 `--workdsh-space=enterprise` 可明确选择。企业空间须保持 Desktop 登录，首次使用前先在 Desktop 打开对应空间。插件安装、更新和移除遵循该空间的官方 Profile。
+
+### 开发需要企业认证的插件
+
+企业业务插件注入 `workdshEnterprise`，通过 `request({ plugin: "reports", operation: "list", method: "POST", body: { page: 1 } })` 请求公司后台。Desktop 自动携带当前成员认证，插件不读取或保存 Token；后台仍检查成员和业务权限。调用示例、SDK 类型依赖及新旧版本要求见[企业插件认证接入](docs/ENTERPRISE-PLUGIN-AUTH.md)。
 
 ## 开发与文档
 

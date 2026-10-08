@@ -1,3 +1,5 @@
+import type { ComposerHandoff, ComposerHandoffSource } from 'workdsh-contracts/composer';
+declare module '@deepseek-ai/cordis' { interface Events { 'workdsh/composer-handoff'(handoff: ComposerHandoff): Promise<void>; } }
 import type { Context } from '@deepseek-ai/cordis';
 import type {} from '@deepseek-ai/dsh-client-connection/client';
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client';
@@ -52,6 +54,16 @@ export function apply(ctx: Context): void {
     if (inserted) void management.taskSelection(sessionId).then(current => management.setTaskSelection(sessionId, [...new Set([...current.map(row => row.nodeId), value.nodeId])])).catch(() => []);
     return inserted;
   };
+  ctx.on('workdsh/composer-handoff', async handoff => {
+    const selected = await management.taskSelection(handoff.sourceSessionId);
+    const referenced = handoff.references.filter(reference => reference.source === 'workdsh-library').map(reference => decodeRef(reference.ref).nodeId);
+    await management.setTaskSelection(handoff.targetSessionId, [...new Set([...selected.map(row => row.nodeId), ...referenced])]);
+    for (const reference of handoff.references) {
+      if (reference.source !== 'workdsh-library') continue;
+      const value = decodeRef(reference.ref);
+      reference.ref = encodeRef({ ...value, sessionId: handoff.targetSessionId });
+    }
+  });
   // alpha.2: the list snapshot has no `current`; the shown Session derives from the
   // view owner's mainView retention (same rule as the official ui-session publishMain).
   const currentSessionId = () => {
@@ -147,6 +159,6 @@ export function apply(ctx: Context): void {
   ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'workdsh-library', inject: () => ({ management, previewRegistry, toggleNavigation: () => ctx.layout.toggleSidebar(), startConversation }) }, LibraryPanel));
   ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
     name: 'conversation.input.left', id: 'workdsh-library-picker', order: 35,
-    inject: () => ({ management, openLibrary: () => ctx.layout.selectPanel('workdsh-library' as Parameters<typeof ctx.layout.selectPanel>[0]), openPicker: (sessionId: string, draft: string, draftRev: number) => { const binding = sessions.binding(sessionId as never); if (!binding) return; const offset = draft.length; ctx.inputTriggers.sessionOf(binding.ctx).toggleSource('workdsh-library', { trigger: '@', query: '', quoted: false, position: offset === 0 ? 'leading' : 'inline', span: { start: offset, end: offset, draftRev } }); } }),
+    inject: () => ({ management, openLibrary: () => ctx.layout.selectPanel('workdsh-library' as Parameters<typeof ctx.layout.selectPanel>[0]), addReference: (sessionId: string, entry: import('workdsh-contracts/library').LibraryTreeEntry) => entry.asset && entry.revision ? insertReference(sessionId, { assetId: entry.asset.id, revisionId: entry.revision.id, nodeId: entry.id, name: entry.name, kind: entry.asset.kind }) : false }),
   }, LibraryPicker));
 }

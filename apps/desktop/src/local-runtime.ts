@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { load, dump } from 'js-yaml'
 import { syncBundledCompatibility } from './runtime-compatibility.ts'
+import { cachedPackageManager } from './plugin-archive-cache.ts'
 import { enterpriseNamespace } from './connection-mode.ts'
 import type { EnterpriseMember, Authority } from './enterprise-auth.ts'
 
@@ -142,8 +143,8 @@ export function enterpriseEnvironment(root: string, executable: string, parent: 
 
 export function officialLauncher(source: string, home: string, executable: string, packageManager: string = join(dirname(executable), '..', '..', 'pnpm', 'bin', 'pnpm.cjs')): string {
   const cli = join(source, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
-  const pnpm = packageManager
-  if (!existsSync(cli) || !existsSync(pnpm)) throw new Error('安装包缺少官方 DSH 或锁定的插件安装工具')
+  if (!existsSync(cli) || !existsSync(packageManager)) throw new Error('安装包缺少官方 DSH 或锁定的插件安装工具')
+  const pnpm = cachedPackageManager(home, packageManager)
   const launcher = join(home, '.workdsh-launch.mjs')
   writeFileSync(launcher, `import { runCli } from ${JSON.stringify(pathToFileURL(cli).href)};\nawait runCli({ manageDesktopProfile: true, packageManager: { command: ${JSON.stringify(executable)}, args: [${JSON.stringify(pnpm)}] } });\n`, { mode: 0o600 })
   return launcher
@@ -157,6 +158,7 @@ export function officialHostLauncher(source: string, home: string, executable: s
   const anchor = join(source, 'profile-installation.json'), profile = join(home, 'profiles', 'workdsh')
   if (!existsSync(anchor)) throw new Error('安装包缺少完整官方与 WorkDSH 安装清单')
   const launcher = join(home, '.workdsh-host.mjs')
+  packageManager = cachedPackageManager(home, packageManager)
   writeFileSync(launcher, `import { runProfile } from ${JSON.stringify(pathToFileURL(boot).href)};\nimport { loadProfileDirectory, loadLayeredEnv, reportSkippedBundles } from ${JSON.stringify(pathToFileURL(appBoot).href)};\nconst installAnchor = ${JSON.stringify(anchor)};\nconst profile = loadProfileDirectory('dsh', ${JSON.stringify(profile)}, installAnchor);\nreportSkippedBundles('dsh', profile);\nawait runProfile({ environment: loadLayeredEnv('dsh'), profile: 'workdsh', resolvedProfile: { profile, installAnchor }, patchFiles: ${JSON.stringify(patches)}, args: process.argv.slice(2), packageManager: { command: ${JSON.stringify(executable)}, args: [${JSON.stringify(packageManager)}] } });\n`, { mode: 0o600 })
   return launcher
 }
