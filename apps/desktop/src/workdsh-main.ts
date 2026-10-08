@@ -179,6 +179,9 @@ function runtimeEnvironment(home: string): NodeJS.ProcessEnv {
     DSH_AGENTS_HOME: enterprise ? join(enterprise.root, 'agents') : join(home, 'agents'),
     DSH_BUNDLED_PRIMARY_RUNTIME: bundledPrimaryRuntime(),
     DSH_ELECTRON_EXECUTABLE: process.execPath,
+    // A packaged carrier embeds the WorkDSH entry point, but a development
+    // Electron binary needs the app directory as the worker's first argument.
+    DSH_ELECTRON_APP_PATH: app.isPackaged ? undefined : app.getAppPath(),
     ELECTRON_RUN_AS_NODE: undefined,
   }
 }

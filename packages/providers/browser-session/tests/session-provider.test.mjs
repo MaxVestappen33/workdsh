@@ -33,7 +33,10 @@ test('official Agent Sessions receive isolated managed Playwright tools', {
       await ctx.plugin(plugin);
     }
     await ctx.plugin(BrowserSession, process.env.DSH_ELECTRON_TEST_EXECUTABLE
-      ? { electronExecutable: process.env.DSH_ELECTRON_TEST_EXECUTABLE }
+      ? {
+        electronExecutable: process.env.DSH_ELECTRON_TEST_EXECUTABLE,
+        electronAppPath: process.env.DSH_ELECTRON_TEST_APP_PATH,
+      }
       : { executablePath: process.env.DSH_BROWSER_EXECUTABLE });
     assert.equal(route?.path, '/api/workdsh-browser-session');
     const first = await ctx.agents.create({ sessionId: randomUUID() });

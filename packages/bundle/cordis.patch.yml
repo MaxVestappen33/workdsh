@@ -19,6 +19,7 @@
       disabled: !!js "!process.env.DSH_ELECTRON_EXECUTABLE"
       config:
         electronExecutable: !!js "process.env.DSH_ELECTRON_EXECUTABLE"
+        electronAppPath: !!js "process.env.DSH_ELECTRON_APP_PATH"
     - id: auto-review
       name: '@deepseek-ai/dsh-experimental-auto-review'
 - id: ui-sidebar-browser

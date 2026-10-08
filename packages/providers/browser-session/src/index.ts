@@ -46,6 +46,8 @@ export const inject = ['browserUse', 'agents', 'tools', 'systemPrompt'];
 export interface Config {
   /** Desktop reuses its own Electron Chromium in a private worker process. */
   electronExecutable?: string;
+  /** Application directory for an unpackaged Electron binary; omitted by a packaged Desktop. */
+  electronAppPath?: string;
   /** Web-only fallback when Desktop's Electron worker is unavailable. */
   executablePath?: string;
   toolCallTimeoutMs?: number;
@@ -144,7 +146,7 @@ export function apply(ctx: Context, config: Config): void {
       exclusive: false,
       async open(agent, signal) {
         const browser = config.electronExecutable?.trim()
-          ? await launchManagedElectron(config.electronExecutable, signal)
+          ? await launchManagedElectron(config.electronExecutable, config.electronAppPath, signal)
           : await launchManagedChromium(config.executablePath!, signal);
         const scope = createScope(ctx, agent);
         try {
