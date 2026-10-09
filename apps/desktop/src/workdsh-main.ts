@@ -182,6 +182,12 @@ function runtimeEnvironment(home: string): NodeJS.ProcessEnv {
     // A packaged carrier embeds the WorkDSH entry point, but a development
     // Electron binary needs the app directory as the worker's first argument.
     DSH_ELECTRON_APP_PATH: app.isPackaged ? undefined : app.getAppPath(),
+    // WorkDSH 定制：为预置的本地模型提供商注入凭据。
+    // cordis.patch.yml 里只写 apiKeyEnv 引用名（DEEPSEEK_V4_FLASH_0731_W8A8_API_KEY），密钥本体不落配置文件。
+    // 官方凭据解析优先级为「继承的进程环境变量 > $DSH_HOME/.credentials.yaml > .env」，
+    // 环境层最高且只读，所以在这里注入即可生效，且完全不改动用户的凭据文件。
+    // 该本地服务不校验密钥值（任意值均可访问），故此处取固定占位值。
+    DEEPSEEK_V4_FLASH_0731_W8A8_API_KEY: '123456',
     ELECTRON_RUN_AS_NODE: undefined,
   }
 }
@@ -336,6 +342,29 @@ function rememberBackend(backend: string): void {
 function showConnectionEntry(): void {
   openWindow('data:text/html;charset=utf-8,' + encodeURIComponent(connectionEntryHtml(enterprisePortal, managedBackend !== undefined, enterprisePluginAvailable())), { mode: 'personal' }, true)
   connectEntryNavigation(window!)
+}
+
+/**
+ * 跳过「选择使用方式」入口页，启动时直接进入个人工作区。
+ * 显示「正在启动个人工作区」loading 页面（图二），而非入口选择页（图一）。
+ * 若 prepareProfile 或 startRuntime 失败，则回退到入口选择页供用户手动操作。
+ */
+async function autoStartPersonalWorkspace(): Promise<void> {
+  const home = runtimeHome()
+  // 直接加载 loading 页面，跳过入口选择页
+  openWindow('data:text/html;charset=utf-8,' + encodeURIComponent(connectionLoadingHtml('正在启动个人工作区')), { mode: 'personal' }, true)
+  // 保留入口页导航监听，运行时失败后返回入口页时仍可正常工作
+  connectEntryNavigation(window!)
+  try {
+    // 准备 Profile 并启动运行时
+    await prepareProfile(home)
+    entrySurface = false
+    startRuntime(home, { mode: 'personal' })
+  } catch (error) {
+    // 启动失败时回退到「选择使用方式」入口页
+    dialog.showErrorBox('无法进入', error instanceof Error ? error.message : '请检查运行环境')
+    showConnectionEntry()
+  }
 }
 
 function connectEntryNavigation(entry: BrowserWindow): void {
@@ -512,7 +541,16 @@ if (!app.requestSingleInstanceLock()) {
     }
     installConnectionMenu()
     installLoginHandlers()
-    showConnectionEntry()
+    // 个人使用场景：跳过「选择使用方式」入口页，直接启动个人工作区。
+    // 例外：若已配置企业后台（随包预置的 workdsh-config.json，或本机记住的企业地址），
+    // 必须保留入口页，否则用户没有任何入口可以登录企业空间。
+    if (enterprisePortal) {
+      showConnectionEntry()
+    } else {
+      void autoStartPersonalWorkspace()
+    }
+    // 原始逻辑（无条件显示入口页，由用户手动选择）：
+    // showConnectionEntry()
   }).catch(cause => {
     process.stderr.write(`WorkDSH failed to start: ${cause instanceof Error ? cause.stack ?? cause.message : String(cause)}\n`)
     app.quit()
