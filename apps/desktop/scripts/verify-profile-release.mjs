@@ -1,6 +1,6 @@
 import { ENTERPRISE_PACKAGES, PRODUCT_PACKAGES, RELEASE_PACKAGES } from './workdsh-package-boundary.mjs'
 import { createHash } from 'node:crypto'
-import { existsSync, globSync, readFileSync, readdirSync, realpathSync } from 'node:fs'
+import { existsSync, globSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 export function verifyReleaseArchives(manifest, directory) {
@@ -112,4 +112,25 @@ export function verifyBuiltPackageExports(pkg, directory) {
     }
   }
   verify(pkg.exports)
+}
+
+/**
+ * Packing archives whatever sits in dist/ would silently ship stale code when
+ * changed sources were never rebuilt (the dev Electron browser worker once
+ * shipped without its app-path fix this way). Refuse when any source file is
+ * newer than the newest built artifact.
+ */
+export function verifyBuiltPackageFreshness(pkg, directory) {
+  const source = join(directory, 'src')
+  const output = join(directory, 'dist')
+  if (!existsSync(source) || !existsSync(output)) return
+  const newestMtime = dir => readdirSync(dir, { withFileTypes: true, recursive: true })
+    .filter(entry => entry.isFile())
+    .reduce((newest, entry) => {
+      const mtime = statSync(join(entry.parentPath, entry.name)).mtimeMs
+      return mtime > newest ? mtime : newest
+    }, 0)
+  if (newestMtime(source) > newestMtime(output)) {
+    throw new Error(`Stale build for ${pkg.name}: dist/ is older than src/; rebuild WorkDSH packages ("corepack pnpm build" in apps/web) before packing`)
+  }
 }
