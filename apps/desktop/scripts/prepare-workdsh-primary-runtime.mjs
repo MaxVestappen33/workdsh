@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import { cpSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { cpSync, existsSync, readFileSync, readdirSync, readlinkSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { prepareOfficialRelease } from './official-desktop-release.mjs'
@@ -19,8 +20,43 @@ const profileMarker = join(profile, '.workdsh-desktop-release.json')
 if (!existsSync(profileMarker) || JSON.parse(readFileSync(profileMarker, 'utf8')).harness !== DSH_VERSION) {
   throw new Error('Prepare and verify the target WorkDSH Profile before its primary runtime')
 }
+/**
+ * 已落盘的载荷来自同一份校验锁定的官方产物时无需反复拷贝：primary-runtime 与
+ * office-skills 合计约 1 GB / 1 万个文件，重复拷贝会让每次 yarn dev 多等数十秒。
+ * 逐项比对相对路径与大小（软链比目标）一致时直接复用；任何差异都退回完整拷贝，
+ * 其后的完整性、版本与 pnpm 校验照常执行。
+ */
+const payloadNames = ['primary-runtime', 'office-skills']
+function fingerprintPayload(root) {
+  const digest = createHash('sha256')
+  const walk = (directory, prefix) => {
+    const entries = readdirSync(directory, { withFileTypes: true }).sort((left, right) => (left.name < right.name ? -1 : 1))
+    for (const entry of entries) {
+      const relative = prefix === '' ? entry.name : `${prefix}/${entry.name}`
+      const absolute = join(directory, entry.name)
+      if (entry.isDirectory()) {
+        digest.update(`directory ${relative}\n`)
+        walk(absolute, relative)
+      } else if (entry.isSymbolicLink()) {
+        digest.update(`link ${relative} ${readlinkSync(absolute)}\n`)
+      } else if (entry.isFile()) {
+        digest.update(`file ${relative} ${statSync(absolute).size}\n`)
+      }
+    }
+  }
+  walk(root, '')
+  return digest.digest('hex')
+}
 const released = await prepareOfficialRelease(desktopRoot, target)
-for (const name of ['primary-runtime', 'office-skills']) cpSync(join(released, 'runtime', name), join(output, name), { recursive: true, force: true, dereference: false })
+const materialized = payloadNames.every(name => {
+  const destination = join(output, name)
+  return existsSync(destination) && fingerprintPayload(destination) === fingerprintPayload(join(released, 'runtime', name))
+})
+if (materialized) {
+  console.log(`Reused unchanged official DeepSeek Harness ${target} primary runtime payload at ${output}`)
+} else {
+  for (const name of payloadNames) cpSync(join(released, 'runtime', name), join(output, name), { recursive: true, force: true, dereference: false })
+}
 const manifestPath = join(output, 'primary-runtime', 'runtime.json')
 if (!existsSync(manifestPath) || !existsSync(join(output, 'office-skills'))) {
   throw new Error('Official primary runtime payload is incomplete')

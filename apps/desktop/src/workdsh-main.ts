@@ -104,6 +104,7 @@ function startBrowserWorker(request: { port: number, profile: string }): void {
         webSecurity: true,
       },
     })
+    disableSpellcheckDictionaryDownloads(page)
     page.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
     await page.loadURL('about:blank')
     process.stdout.write('WORKDSH_BROWSER_WORKER_READY\n')
@@ -111,6 +112,16 @@ function startBrowserWorker(request: { port: number, profile: string }): void {
     process.stderr.write(`WorkDSH browser worker failed: ${String(error)}\n`)
     app.exit(1)
   })
+}
+
+/**
+ * Chromium 会在页面出现可编辑元素时到 Google CDN 拉取拼写词典
+ * (https://redirector.gvt1.com/edgedl/chrome/dict/...)。该域名在部分网络下不可达，
+ * TLS 握手会被对端关闭 (net_error -100)，启动期因此出现重试停顿与报错刷屏。
+ * 清空词典语言列表即不会发起该下载；仅设置 webPreferences.spellcheck: false 无法阻止。
+ */
+function disableSpellcheckDictionaryDownloads(page: BrowserWindow): void {
+  page.webContents.session.setSpellCheckerLanguages([])
 }
 
 function openWindow(url: string, connection: DesktopConnection = { mode: 'personal' }, carrier = false): void {
@@ -136,6 +147,7 @@ function openWindow(url: string, connection: DesktopConnection = { mode: 'person
     },
   })
   const page = window
+  disableSpellcheckDictionaryDownloads(page)
   entrySurface = carrier
   window.on('page-title-updated', event => {
     event.preventDefault()
