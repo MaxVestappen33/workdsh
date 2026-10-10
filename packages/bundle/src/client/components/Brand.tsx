@@ -10,5 +10,5 @@ export function BrandMark() {
 }
 
 export function DiagnosticsMark() {
-  return <span aria-hidden>W</span>;
+  return <LogoMark size={20} />;
 }

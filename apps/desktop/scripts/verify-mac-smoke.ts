@@ -13,8 +13,8 @@ export interface MacSmokeVerificationOptions {
   readonly distDir: string
   /** Architecture expected in this DMG. */
   readonly targetArch: 'x64' | 'arm64'
-  /** Installed application name inside the mounted image. */
-  readonly productName: string
+  /** Installed application bundle and executable name inside the mounted image. */
+  readonly executableName: string
   /** Return regular DMG files in the distribution directory. */
   readonly listDmgs: (distDir: string) => readonly string[]
   /** Create a private empty mount point. */
@@ -55,7 +55,7 @@ function defaultOptions(): MacSmokeVerificationOptions {
       ? join(packageRoot, 'dist', 'mac-smoke')
       : resolve(process.argv[2]),
     targetArch: process.argv[3] === 'x64' ? 'x64' : 'arm64',
-    productName: 'WorkDSH',
+    executableName: 'PoliceAssistant',
     listDmgs,
     makeMountPoint: () => mkdtempSync(join(tmpdir(), 'dsh-desktop-dmg-smoke-')),
     run,
@@ -90,7 +90,7 @@ export function verifyMacSmoke(
 
   const dmgPath = dmgs[0]!
   const mountPoint = options.makeMountPoint()
-  const appPath = join(mountPoint, `${options.productName}.app`)
+  const appPath = join(mountPoint, `${options.executableName}.app`)
   let mounted = false
   let failure: unknown
 
@@ -108,7 +108,7 @@ export function verifyMacSmoke(
     if (!options.exists(macosDirectory)) {
       throw new Error(`packaged application is missing ${macosDirectory}`)
     }
-    const executablePath = join(macosDirectory, options.productName)
+    const executablePath = join(macosDirectory, options.executableName)
     if (!options.exists(executablePath)) {
       throw new Error(`packaged application is missing its main executable: ${executablePath}`)
     }

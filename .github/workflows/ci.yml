@@ -346,7 +346,7 @@ jobs:
         run: |
           VERSION="${TAG#desktop-v}"
           cat > release-notes.md <<'EOF'
-          WorkDSH Desktop 将 WorkBuddy 风格的项目、资料、专家、技能和连接器工作台与 DeepSeek Harness 插件能力结合。
+          警务助手 Desktop 将 WorkBuddy 风格的项目、资料、专家、技能和连接器工作台与 DeepSeek Harness 插件能力结合。
 
           - 本地插件压缩包按内容校验后保存到应用管理目录，安装后移动或删除原始下载文件不再阻挡后续安装。
           - 新会话创建独立空白会话，不沿用旧草稿的专家、MCP 或资料选择；明确切换专家仍保留当前草稿与引用。
@@ -360,10 +360,10 @@ jobs:
           - 企业连接作为独立 tgz 附件下载，在个人空间“插件 → 添加插件”输入下载文件的完整路径安装，再进入“设置 → 企业账号 → 连接企业”；无需第三方市场。基础安装包不预装企业插件。
           - 提供 Windows x64 安装包，以及 macOS Intel x64、Apple Silicon arm64 未签名 DMG。
 
-          SkillHub 和 dsh-market 是独立第三方来源；目录内容并非全部预装或经 WorkDSH 审核。安装前请检查许可、依赖和版本兼容性。本次为 Alpha 预发布，升级前请备份本地配置和数据。所有文件的 SHA-256 见 `SHA256SUMS`。
+          SkillHub 和 dsh-market 是独立第三方来源；目录内容并非全部预装或经警务助手审核。安装前请检查许可、依赖和版本兼容性。本次为 Alpha 预发布，升级前请备份本地配置和数据。所有文件的 SHA-256 见 `SHA256SUMS`。
           EOF
           gh release create "$TAG" release-assets/* \
             --repo "$GITHUB_REPOSITORY" \
-            --title "WorkDSH Desktop ${VERSION}" \
+            --title "警务助手 Desktop ${VERSION}" \
             --notes-file release-notes.md \
             --latest

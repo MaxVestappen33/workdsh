@@ -21,13 +21,13 @@ interface AppFixture {
 function fixture(): AppFixture {
   const root = mkdtempSync(join(tmpdir(), 'dsh-mac-smoke-'))
   temporaryRoots.push(root)
-  const contents = join(root, 'WorkDSH.app', 'Contents')
+  const contents = join(root, 'PoliceAssistant.app', 'Contents')
   const macos = join(contents, 'MacOS')
   const resources = join(contents, 'Resources')
   mkdirSync(macos, { recursive: true })
   mkdirSync(resources, { recursive: true })
   const infoPlist = join(contents, 'Info.plist')
-  const executable = join(macos, 'WorkDSH')
+  const executable = join(macos, 'PoliceAssistant')
   const appAsar = join(resources, 'app.asar')
   const modeOverrides = new Map<string, number>()
   writeFileSync(infoPlist, '<?xml version="1.0" encoding="UTF-8"?>')
@@ -57,8 +57,8 @@ function options(
   const value: MacSmokeVerificationOptions = {
     distDir: '/release/dist',
     targetArch: 'arm64',
-    productName: 'WorkDSH',
-    listDmgs: () => ['/release/dist/WorkDSH-2.0.1-arm64.dmg'],
+    executableName: 'PoliceAssistant',
+    listDmgs: () => ['/release/dist/PoliceAssistant-2.0.1-arm64.dmg'],
     makeMountPoint: () => '/private/tmp/dsh-desktop-dmg-smoke-test',
     run: (command, args) => { calls.push({ command, args: [...args] }) },
     removeMountPoint,
@@ -100,18 +100,18 @@ describe('macOS DMG smoke artifact verification', () => {
   it('mounts one DMG and accepts a well-formed unsigned application bundle', () => {
     const value = fixture()
     const harness = options({ makeMountPoint: () => value.root }, value.modeOverrides)
-    const appPath = join(value.root, 'WorkDSH.app')
+    const appPath = join(value.root, 'PoliceAssistant.app')
 
     expect(verifyMacSmoke(harness.value)).toEqual({
       appPath,
-      dmgPath: '/release/dist/WorkDSH-2.0.1-arm64.dmg',
+      dmgPath: '/release/dist/PoliceAssistant-2.0.1-arm64.dmg',
     })
 
     expect(harness.calls).toEqual([
       {
         command: 'hdiutil',
         args: [
-          'attach', '/release/dist/WorkDSH-2.0.1-arm64.dmg',
+          'attach', '/release/dist/PoliceAssistant-2.0.1-arm64.dmg',
           '-mountpoint', value.root, '-nobrowse', '-readonly',
         ],
       },
@@ -122,7 +122,7 @@ describe('macOS DMG smoke artifact verification', () => {
       },
       ...['python/bin/python3', 'node/bin/node'].map(entry => ({
         command: 'lipo',
-        args: [join(value.root, 'WorkDSH.app', 'Contents', 'Resources', 'workdsh-runtime', 'primary-runtime', 'dependencies', entry), '-verify_arch', 'arm64'],
+        args: [join(value.root, 'PoliceAssistant.app', 'Contents', 'Resources', 'workdsh-runtime', 'primary-runtime', 'dependencies', entry), '-verify_arch', 'arm64'],
       })),
       { command: 'hdiutil', args: ['detach', value.root] },
     ])
@@ -131,7 +131,7 @@ describe('macOS DMG smoke artifact verification', () => {
 
   it('checks only the Intel executable and native modules for an x64 DMG', () => {
     const value = fixture()
-    writeFileSync(join(value.root, 'WorkDSH.app', 'Contents', 'Resources', 'workdsh-runtime', 'primary-runtime', 'runtime.json'), JSON.stringify({ desktopVersion: DSH_VERSION, platform: 'darwin', arch: 'x64', python: '3.12.14', node: '24.21.0' }))
+    writeFileSync(join(value.root, 'PoliceAssistant.app', 'Contents', 'Resources', 'workdsh-runtime', 'primary-runtime', 'runtime.json'), JSON.stringify({ desktopVersion: DSH_VERSION, platform: 'darwin', arch: 'x64', python: '3.12.14', node: '24.21.0' }))
     const harness = options({ targetArch: 'x64', makeMountPoint: () => value.root }, value.modeOverrides)
     verifyMacSmoke(harness.value)
     const lipoCalls = harness.calls.filter(call => call.command === 'lipo')
@@ -156,7 +156,7 @@ describe('macOS DMG smoke artifact verification', () => {
     expect(harness.calls).toEqual([
       {
         command: 'hdiutil',
-        args: ['attach', '/release/dist/WorkDSH-2.0.1-arm64.dmg', '-mountpoint', value.root, '-nobrowse', '-readonly'],
+        args: ['attach', '/release/dist/PoliceAssistant-2.0.1-arm64.dmg', '-mountpoint', value.root, '-nobrowse', '-readonly'],
       },
       { command: 'hdiutil', args: ['detach', value.root] },
     ])
@@ -193,7 +193,7 @@ describe('macOS DMG smoke artifact verification', () => {
 
   it('rejects a missing bundled Node binary', () => {
     const value = fixture()
-    rmSync(join(value.root, 'WorkDSH.app', 'Contents', 'Resources', 'workdsh-runtime', 'primary-runtime', 'dependencies', 'node', 'bin', 'node'))
+    rmSync(join(value.root, 'PoliceAssistant.app', 'Contents', 'Resources', 'workdsh-runtime', 'primary-runtime', 'dependencies', 'node', 'bin', 'node'))
     const harness = options({ makeMountPoint: () => value.root }, value.modeOverrides)
 
     expectSmokeFailure(harness, 'missing bundled Node')

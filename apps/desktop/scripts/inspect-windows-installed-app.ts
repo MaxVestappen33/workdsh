@@ -47,7 +47,7 @@ export function inspectInstalledWindowsApp(
   const root = resolve(installRoot)
   const normalizedIgnoredPaths = ignoreRelativePaths.map(normalizeWindowsNsisAbRelativePath)
   const resourcesPath = join(root, 'resources')
-  const executablePath = join(root, 'WorkDSH.exe')
+  const executablePath = join(root, 'PoliceAssistant.exe')
   const asarPath = join(resourcesPath, 'app.asar')
   const unpackedPath = join(resourcesPath, 'app.asar.unpacked')
   const errors: string[] = []
@@ -73,7 +73,7 @@ export function inspectInstalledWindowsApp(
       closeSync(descriptor)
     }
     const header = headerBuffer.toString('ascii')
-    if (header !== 'MZ') errors.push('WorkDSH.exe does not have a Windows PE header')
+    if (header !== 'MZ') errors.push('PoliceAssistant.exe does not have a Windows PE header')
   } catch (cause) {
     errors.push(`application executable is unavailable: ${message(cause)}`)
   }

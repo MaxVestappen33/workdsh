@@ -74,10 +74,7 @@ export function assertPortableExecutable(path: string, label: string): void {
 
 function defaultOptions(): WindowsInstallerVerificationOptions {
   const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-  return {
-    desktopRoot,
-    version: readVersion(desktopRoot),
-  }
+  return { desktopRoot, version: readVersion(desktopRoot) }
 }
 
 /**
@@ -91,9 +88,9 @@ export function verifyWindowsInstaller(
   const distDir = join(options.desktopRoot, 'dist')
   const installerPath = join(
     distDir,
-    `WorkDSH-${options.version}-x64-Setup.exe`,
+    `PoliceAssistant-${options.version}-x64-Setup.exe`,
   )
-  const applicationPath = join(distDir, 'win-unpacked', 'WorkDSH.exe')
+  const applicationPath = join(distDir, 'win-unpacked', 'PoliceAssistant.exe')
 
   assertPortableExecutable(installerPath, 'Windows NSIS installer')
   assertPortableExecutable(applicationPath, 'unpacked Windows application')

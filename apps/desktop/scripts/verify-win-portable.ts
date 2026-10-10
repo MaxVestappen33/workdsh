@@ -35,7 +35,7 @@ export function verifyWindowsPortable(
   const portablePath = join(
     options.desktopRoot,
     'dist',
-    `WorkDSH-${options.version}-x64-Portable.zip`,
+    `PoliceAssistant-${options.version}-x64-Portable.zip`,
   )
   const stat = statSync(portablePath)
   if (!stat.isFile() || stat.size === 0) {
@@ -43,9 +43,9 @@ export function verifyWindowsPortable(
   }
   const archive = new AdmZip(portablePath)
   const entries = archive.getEntries().filter(entry => !entry.isDirectory)
-  const executable = entries.find(entry => entry.entryName.replaceAll('\\', '/') === 'WorkDSH.exe')
+  const executable = entries.find(entry => entry.entryName.replaceAll('\\', '/') === 'PoliceAssistant.exe')
   if (executable === undefined) {
-    throw new Error(`Windows portable archive is missing WorkDSH.exe: ${portablePath}`)
+    throw new Error(`Windows portable archive is missing PoliceAssistant.exe: ${portablePath}`)
   }
   if (!entries.some(entry => entry.entryName.replaceAll('\\', '/') === 'resources/app.asar')) {
     throw new Error(`Windows portable archive is missing resources/app.asar: ${portablePath}`)
@@ -53,7 +53,7 @@ export function verifyWindowsPortable(
   assertPortableExecutableBuffer(
     executable.getData(),
     'Windows portable application',
-    `${portablePath}:WorkDSH.exe`,
+    `${portablePath}:PoliceAssistant.exe`,
   )
   return portablePath
 }

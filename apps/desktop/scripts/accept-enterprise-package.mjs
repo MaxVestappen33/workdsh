@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, createWriteStream } from 'node:fs'
 import { join } from 'node:path'
 const require=createRequire(new URL('../../web/package.json',import.meta.url))
 const {chromium}=require('@playwright/test')
-const app=process.env.WORKDSH_TEST_APP ?? new URL('../dist/mac-smoke/arm64/mac-arm64/WorkDSH.app',import.meta.url).pathname
+const app=process.env.WORKDSH_TEST_APP ?? new URL('../dist/mac-smoke/arm64/mac-arm64/PoliceAssistant.app',import.meta.url).pathname
 const directory=mkdtempSync('/private/tmp/workdsh-package-gui-')
 const report={app,directory,checks:{}}
 const env={...process.env,WORKDSH_DESKTOP_USER_DATA:join(directory,'user-data'),npm_config_registry:'https://registry.npmmirror.com'}
@@ -14,7 +14,7 @@ const collaboration=process.env.WORKDSH_TEST_COLLABORATION_ARCHIVE
 if(!identity||!collaboration) throw new Error('Provide WORKDSH_TEST_IDENTITY_ARCHIVE and WORKDSH_TEST_COLLABORATION_ARCHIVE for explicit test installation')
 execFileSync(process.execPath,['--experimental-strip-types',new URL('./prepare-enterprise-acceptance.ts',import.meta.url).pathname,app,join(env.WORKDSH_DESKTOP_USER_DATA,'dsh-home'),identity,collaboration],{env,stdio:'pipe',timeout:240000})
 const log=createWriteStream(join(directory,'application.log'))
-const child=spawn(join(app,'Contents/MacOS/WorkDSH'),['--remote-debugging-port=19531','--remote-debugging-address=127.0.0.1'],{env,stdio:['ignore','pipe','pipe']})
+const child=spawn(join(app,'Contents/MacOS/PoliceAssistant'),['--remote-debugging-port=19531','--remote-debugging-address=127.0.0.1'],{env,stdio:['ignore','pipe','pipe']})
 child.stdout.pipe(log); child.stderr.pipe(log)
 let browser
 try {

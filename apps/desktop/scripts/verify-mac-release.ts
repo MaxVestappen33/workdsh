@@ -12,8 +12,8 @@ export interface MacReleaseVerificationOptions {
   readonly distDir: string
   /** Architecture expected in this DMG. */
   readonly targetArch: 'x64' | 'arm64'
-  /** Installed application name inside the mounted image. */
-  readonly productName: string
+  /** Installed application bundle and executable name inside the mounted image. */
+  readonly executableName: string
   /** Return regular DMG files in the distribution directory. */
   readonly listDmgs: (distDir: string) => readonly string[]
   /** Create a private empty mount point. */
@@ -46,7 +46,7 @@ function defaultOptions(): MacReleaseVerificationOptions {
       ? join(packageRoot, 'dist', 'mac-release')
       : resolve(process.argv[2]),
     targetArch: process.argv[3] === 'x64' ? 'x64' : 'arm64',
-    productName: 'WorkDSH',
+    executableName: 'PoliceAssistant',
     listDmgs,
     makeMountPoint: () => mkdtempSync(join(tmpdir(), 'dsh-desktop-dmg-')),
     run,
@@ -74,14 +74,14 @@ export function verifyMacRelease(
 
   const dmgPath = dmgs[0]!
   const mountPoint = options.makeMountPoint()
-  const appPath = join(mountPoint, `${options.productName}.app`)
+  const appPath = join(mountPoint, `${options.executableName}.app`)
   let mounted = false
   let failure: unknown
 
   try {
     options.run('hdiutil', ['attach', dmgPath, '-mountpoint', mountPoint, '-nobrowse', '-readonly'])
     mounted = true
-    const executablePath = join(appPath, 'Contents', 'MacOS', options.productName)
+    const executablePath = join(appPath, 'Contents', 'MacOS', options.executableName)
     const binaryArch = options.targetArch === 'x64' ? 'x86_64' : 'arm64'
     options.run('lipo', [executablePath, '-verify_arch', binaryArch])
     options.run('codesign', ['--verify', '--deep', '--strict', '--verbose=2', appPath])

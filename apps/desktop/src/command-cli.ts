@@ -16,7 +16,7 @@ export function selectCommandSpace(context: { personalHome: string; active?: Com
   return space
 }
 async function main(): Promise<void> {
-  const userData = process.env.WORKDSH_DESKTOP_USER_DATA ?? (process.platform === 'win32' ? join(process.env.APPDATA ?? '', 'WorkDSH') : join(homedir(), 'Library/Application Support/WorkDSH'))
+  const userData = process.env.WORKDSH_DESKTOP_USER_DATA ?? (process.platform === 'win32' ? join(process.env.APPDATA ?? '', 'PoliceAssistant') : join(homedir(), 'Library/Application Support/PoliceAssistant'))
   const context = JSON.parse(readFileSync(join(userData, 'command-context.json'), 'utf8')) as { personalHome: string; active?: CommandSpace }
   const args = process.argv.slice(2), spaceOption = args.findIndex(value => value.startsWith('--workdsh-space='))
   const request = spaceOption < 0 ? undefined : args.splice(spaceOption, 1)[0]!.slice('--workdsh-space='.length)

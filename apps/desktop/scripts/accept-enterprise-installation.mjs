@@ -6,14 +6,14 @@ import { join } from 'node:path'
 import { once } from 'node:events'
 const require=createRequire(new URL('../../web/package.json',import.meta.url))
 const {chromium}=require('@playwright/test')
-const app=process.env.WORKDSH_TEST_APP ?? new URL('../dist/mac-smoke/arm64/mac-arm64/WorkDSH.app',import.meta.url).pathname
+const app=process.env.WORKDSH_TEST_APP ?? new URL('../dist/mac-smoke/arm64/mac-arm64/PoliceAssistant.app',import.meta.url).pathname
 for(const key of ['WORKDSH_TEST_ENTERPRISE_ARCHIVE','WORKDSH_TEST_ACCOUNTS','WORKDSH_TEST_BACKEND']) if(!process.env[key]) throw new Error('Missing acceptance configuration: '+key)
 const directory=mkdtempSync('/private/tmp/workdsh-package-gui-')
 const report={app,directory,checks:{}}
 const env={...process.env,WORKDSH_DESKTOP_USER_DATA:join(directory,'user-data'),npm_config_registry:'https://registry.npmmirror.com'}
 for(const key of Object.keys(env)) if(/KEY|SECRET|TOKEN|PASSWORD|^DSH_|^NODE_OPTIONS$|^NODE_PATH$/.test(key)) delete env[key]
 const log=createWriteStream(join(directory,'application.log'))
-let child=spawn(join(app,'Contents/MacOS/WorkDSH'),['--remote-debugging-port=19531','--remote-debugging-address=127.0.0.1'],{env,stdio:['ignore','pipe','pipe']})
+let child=spawn(join(app,'Contents/MacOS/PoliceAssistant'),['--remote-debugging-port=19531','--remote-debugging-address=127.0.0.1'],{env,stdio:['ignore','pipe','pipe']})
 child.stdout.pipe(log); child.stderr.pipe(log)
 let browser
 try {
@@ -78,7 +78,7 @@ try {
  report.checks.enterpriseLogout=true;
  await browser.close();browser=undefined;
  const stopped=once(child,'exit');child.kill('SIGTERM');await stopped;
- child=spawn(join(app,'Contents/MacOS/WorkDSH'),['--remote-debugging-port=19531','--remote-debugging-address=127.0.0.1'],{env,stdio:['ignore','pipe','pipe']});child.stdout.pipe(log);child.stderr.pipe(log);
+ child=spawn(join(app,'Contents/MacOS/PoliceAssistant'),['--remote-debugging-port=19531','--remote-debugging-address=127.0.0.1'],{env,stdio:['ignore','pipe','pipe']});child.stdout.pipe(log);child.stderr.pipe(log);
  for(let pass=0;pass<100;pass++){try{browser=await chromium.connectOverCDP('http://127.0.0.1:19531');break}catch{await new Promise(r=>setTimeout(r,200))}}
  if(!browser)throw new Error('Restart did not expose test endpoint');
  const restarted=await waitPage(p=>p.getByRole('heading',{name:'选择使用方式'}).count(),30000);

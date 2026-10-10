@@ -20,9 +20,9 @@ function fixture(version = '2.0.0'): { readonly root: string; readonly portable:
   temporaryRoots.push(root)
   const dist = join(root, 'dist')
   mkdirSync(dist, { recursive: true })
-  const portable = join(dist, `WorkDSH-${version}-x64-Portable.zip`)
+  const portable = join(dist, `PoliceAssistant-${version}-x64-Portable.zip`)
   const archive = new AdmZip()
-  archive.addFile('WorkDSH.exe', portableExecutable())
+  archive.addFile('PoliceAssistant.exe', portableExecutable())
   archive.addFile('resources/app.asar', Buffer.from('asar'))
   archive.writeZip(portable)
   return { root, portable }
@@ -43,7 +43,17 @@ describe('Windows portable artifact verification', () => {
     const value = fixture('1.9.0')
 
     expect(() => verifyWindowsPortable({ desktopRoot: value.root, version: '2.0.0' }))
-      .toThrow('WorkDSH-2.0.0-x64-Portable.zip')
+      .toThrow('PoliceAssistant-2.0.0-x64-Portable.zip')
+  })
+
+  it('rejects a portable archive without the application entry', () => {
+    const value = fixture()
+    const archive = new AdmZip()
+    archive.addFile('resources/app.asar', Buffer.from('asar'))
+    archive.writeZip(value.portable)
+
+    expect(() => verifyWindowsPortable({ desktopRoot: value.root, version: '2.0.0' }))
+      .toThrow('missing PoliceAssistant.exe')
   })
 
   it('rejects an application entry without a Windows PE header', () => {
@@ -51,7 +61,7 @@ describe('Windows portable artifact verification', () => {
     const invalid = portableExecutable()
     invalid.write('NO', 0, 'ascii')
     const archive = new AdmZip()
-    archive.addFile('WorkDSH.exe', invalid)
+    archive.addFile('PoliceAssistant.exe', invalid)
     archive.addFile('resources/app.asar', Buffer.from('asar'))
     archive.writeZip(value.portable)
 

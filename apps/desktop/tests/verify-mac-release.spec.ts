@@ -11,8 +11,8 @@ function options(overrides: Partial<MacReleaseVerificationOptions> = {}) {
   const value: MacReleaseVerificationOptions = {
     distDir: '/release/dist',
     targetArch: 'arm64',
-    productName: 'WorkDSH',
-    listDmgs: () => ['/release/dist/WorkDSH-2.0.0-arm64.dmg'],
+    executableName: 'PoliceAssistant',
+    listDmgs: () => ['/release/dist/PoliceAssistant-2.0.0-arm64.dmg'],
     makeMountPoint: () => '/private/tmp/dsh-desktop-dmg-test',
     run: (command, args) => { calls.push({ command, args: [...args] }) },
     removeMountPoint,
@@ -24,24 +24,24 @@ function options(overrides: Partial<MacReleaseVerificationOptions> = {}) {
 describe('macOS release artifact verification', () => {
   it('mounts one DMG and verifies signature, Gatekeeper, and the stapled ticket', () => {
     const harness = options()
-    const appPath = join('/private/tmp/dsh-desktop-dmg-test', 'WorkDSH.app')
+    const appPath = join('/private/tmp/dsh-desktop-dmg-test', 'PoliceAssistant.app')
 
     expect(verifyMacRelease(harness.value)).toEqual({
       appPath,
-      dmgPath: '/release/dist/WorkDSH-2.0.0-arm64.dmg',
+      dmgPath: '/release/dist/PoliceAssistant-2.0.0-arm64.dmg',
     })
 
     expect(harness.calls).toEqual([
       {
         command: 'hdiutil',
         args: [
-          'attach', '/release/dist/WorkDSH-2.0.0-arm64.dmg',
+          'attach', '/release/dist/PoliceAssistant-2.0.0-arm64.dmg',
           '-mountpoint', '/private/tmp/dsh-desktop-dmg-test', '-nobrowse', '-readonly',
         ],
       },
       {
         command: 'lipo',
-        args: [join(appPath, 'Contents', 'MacOS', 'WorkDSH'), '-verify_arch', 'arm64'],
+        args: [join(appPath, 'Contents', 'MacOS', 'PoliceAssistant'), '-verify_arch', 'arm64'],
       },
       {
         command: 'codesign',

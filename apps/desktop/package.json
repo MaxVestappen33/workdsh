@@ -1,8 +1,12 @@
 {
   "name": "dsh-plugin-desktop",
-  "version": "2.0.6-alpha.5",
-  "description": "WorkDSH Electron carrier for a pinned DeepSeek Harness runtime Profile",
+  "version": "1.0.0",
+  "description": "警务助手 —— 面向公安业务场景的智能工作台",
+  "homepage": "http://56.82.2.232:3100",
   "license": "MIT",
+  "author": {
+    "name": "同云（北京）数字科技有限公司"
+  },
   "publishConfig": {
     "registry": "https://registry.npmjs.org"
   },
@@ -17,7 +21,6 @@
     "build/app-icon.ico",
     "build/app-icon.png",
     "build/app-icon-mac.png",
-    "build/tray-icon.svg",
     "build/tray-icon*.png",
     "lib/workdsh-main.js",
     "lib/connection-preload.cjs",
@@ -65,7 +68,8 @@
   },
   "build": {
     "appId": "io.techflag.dsh.ssh",
-    "productName": "WorkDSH",
+    "productName": "警务助手",
+    "executableName": "PoliceAssistant",
     "asar": {
       "smartUnpack": true
     },
@@ -92,7 +96,6 @@
       "build/app-icon.ico",
       "build/app-icon.png",
       "build/app-icon-mac.png",
-      "build/tray-icon.svg",
       "build/tray-icon*.png",
       "lib/workdsh-main.js",
       "lib/connection-preload.cjs",
@@ -100,7 +103,7 @@
       "!node_modules/**"
     ],
     "mac": {
-      "artifactName": "WorkDSH-${version}-${arch}.${ext}",
+      "artifactName": "PoliceAssistant-${version}-${arch}.${ext}",
       "asarUnpack": [
         "build/app-icon-mac.png",
         "build/tray-iconTemplate.png",
@@ -145,7 +148,7 @@
           ]
         }
       ],
-      "artifactName": "WorkDSH-${version}-${arch}-Portable.${ext}",
+      "artifactName": "PoliceAssistant-${version}-${arch}-Portable.${ext}",
       "icon": "build/app-icon.ico"
     },
     "nsis": {
@@ -159,10 +162,10 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "differentialPackage": false,
-      "shortcutName": "WorkDSH",
+      "shortcutName": "警务助手",
       "uninstallerIcon": "build/app-icon.ico",
       "useZip": false,
-      "artifactName": "WorkDSH-${version}-${arch}-Setup.${ext}"
+      "artifactName": "PoliceAssistant-${version}-${arch}-Setup.${ext}"
     },
     "linux": {
       "asarUnpack": [

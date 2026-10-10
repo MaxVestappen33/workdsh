@@ -15,7 +15,10 @@ function portableExecutable(): Buffer {
   return executable
 }
 
-function fixture(version = '2.0.0'): {
+function fixture(
+  version = '2.0.0',
+  runtimeVersion: string = DSH_VERSION,
+): {
   readonly root: string
   readonly installer: string
   readonly application: string
@@ -25,14 +28,14 @@ function fixture(version = '2.0.0'): {
   const dist = join(root, 'dist')
   const unpacked = join(dist, 'win-unpacked')
   mkdirSync(unpacked, { recursive: true })
-  const installer = join(dist, `WorkDSH-${version}-x64-Setup.exe`)
-  const application = join(unpacked, 'WorkDSH.exe')
+  const installer = join(dist, `PoliceAssistant-${version}-x64-Setup.exe`)
+  const application = join(unpacked, 'PoliceAssistant.exe')
   writeFileSync(installer, portableExecutable())
   writeFileSync(application, portableExecutable())
   const runtime = join(unpacked, 'resources', 'workdsh-runtime', 'primary-runtime')
   mkdirSync(join(runtime, 'dependencies', 'python'), { recursive: true })
   mkdirSync(join(runtime, 'dependencies', 'node', 'bin'), { recursive: true })
-  writeFileSync(join(runtime, 'runtime.json'), JSON.stringify({ desktopVersion: DSH_VERSION, platform: 'win32', arch: 'x64', python: '3.12.14', node: '24.21.0' }))
+  writeFileSync(join(runtime, 'runtime.json'), JSON.stringify({ desktopVersion: runtimeVersion, platform: 'win32', arch: 'x64', python: '3.12.14', node: '24.21.0' }))
   writeFileSync(join(runtime, 'dependencies', 'python', 'python.exe'), portableExecutable())
   writeFileSync(join(runtime, 'dependencies', 'node', 'bin', 'node.exe'), portableExecutable())
   return { root, installer, application }
@@ -56,7 +59,14 @@ describe('Windows installer artifact verification', () => {
     const value = fixture('1.9.0')
 
     expect(() => verifyWindowsInstaller({ desktopRoot: value.root, version: '2.0.0' }))
-      .toThrow('WorkDSH-2.0.0-x64-Setup.exe')
+      .toThrow('PoliceAssistant-2.0.0-x64-Setup.exe')
+  })
+
+  it('rejects an installer whose bundled primary runtime targets another version', () => {
+    const value = fixture('2.0.0', '0.0.0-other')
+
+    expect(() => verifyWindowsInstaller({ desktopRoot: value.root, version: '2.0.0' }))
+      .toThrow('mismatched bundled primary runtime')
   })
 
   it('rejects an artifact without a Windows PE header', () => {
