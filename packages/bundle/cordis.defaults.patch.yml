@@ -2,16 +2,16 @@
   name: "@deepseek-ai/dsh-llm-pi-ai"
   config:
     providers:
-      deepseek:
+      deepseek-v4-flash:
         displayName: DeepSeek
         api: openai-completions
         baseURL: http://56.88.100.118:8001/v1
-        apiKeyEnv: DEEPSEEK_V4_FLASH_API_KEY
+        apiKeyEnv: LAIYANG_DEEPSEEK_V4_FLASH_API_KEY
         models:
           - id: DeepSeek-V4-Flash
             name: DeepSeek-V4-Flash
 - id: agent-default-model
   name: "@deepseek-ai/dsh-agent-default-model"
   config:
-    provider: deepseek
+    provider: deepseek-v4-flash
     model: DeepSeek-V4-Flash

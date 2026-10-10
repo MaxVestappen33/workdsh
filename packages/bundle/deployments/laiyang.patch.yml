@@ -3,7 +3,7 @@
   config:
     providers:
       deepseek-v4-flash:
-        displayName: DeepSeek-V4-Flash
+        displayName: DeepSeek
         api: openai-completions
         baseURL: http://56.88.100.118:8001/v1
         apiKeyEnv: LAIYANG_DEEPSEEK_V4_FLASH_API_KEY
