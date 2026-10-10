@@ -8,6 +8,7 @@ import { DSH_VERSION } from './runtime-version.mjs'
 import { ENTERPRISE_PACKAGES, PRODUCT_PACKAGES, RELEASE_PACKAGES } from './workdsh-package-boundary.mjs'
 import { verifyDefaultComposition, verifyDefaultProfile, verifyInstalledDshVersions, verifyOfficialWebPackages, verifyProfileRelease, verifyReleaseArchives } from './verify-profile-release.mjs'
 import { parseDeploymentConfig } from '../src/deployment-config.ts'
+import { MODEL_CREDENTIALS_FILENAME, parseModelCredentials } from '../src/model-credentials.ts'
 
 interface PackContext {
   appOutDir: string
@@ -33,6 +34,10 @@ export async function afterPack(context: PackContext): Promise<void> {
   const generatedDeployment = readFileSync(fileURLToPath(new URL('../build/deployment/workdsh-config.json', import.meta.url)))
   parseDeploymentConfig(JSON.parse(packagedDeployment.toString('utf8')) as unknown)
   if (!packagedDeployment.equals(generatedDeployment)) throw new Error('Packaged deployment configuration differs from this build')
+  const packagedCredentials = readFileSync(join(resources, MODEL_CREDENTIALS_FILENAME))
+  const declaredCredentials = readFileSync(fileURLToPath(new URL('../resources/model-credentials.json', import.meta.url)))
+  parseModelCredentials(JSON.parse(packagedCredentials.toString('utf8')) as unknown)
+  if (!packagedCredentials.equals(declaredCredentials)) throw new Error('Packaged model credentials differ from the declared resources/model-credentials.json')
   if (!existsSync(archive)) throw new Error(`Missing Electron carrier: ${archive}`)
   const entries = listPackage(archive, { isPack: false }).map(normalizeAsarEntry)
   if (!entries.includes('lib/workdsh-main.js')) throw new Error('Electron carrier has no WorkDSH entry point')

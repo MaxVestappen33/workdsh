@@ -1,0 +1,17 @@
+- id: llm-pi-ai
+  name: "@deepseek-ai/dsh-llm-pi-ai"
+  config:
+    providers:
+      deepseek-v4-flash-0731-w8a8:
+        displayName: DeepSeek
+        api: openai-completions
+        baseURL: http://56.80.93.74:9011/v1
+        apiKeyEnv: YANTAI_DEEPSEEK_V4_FLASH_0731_W8A8_API_KEY
+        models:
+          - id: DeepSeek-V4-Flash-0731-w8a8
+            name: DeepSeek-V4-Flash-0731-w8a8
+- id: agent-default-model
+  name: "@deepseek-ai/dsh-agent-default-model"
+  config:
+    provider: deepseek-v4-flash-0731-w8a8
+    model: DeepSeek-V4-Flash-0731-w8a8

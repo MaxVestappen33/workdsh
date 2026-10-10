@@ -286,7 +286,7 @@ After deploying [WorkDSH Admin](https://github.com/techflag/workdsh-admin), the 
 }
 ```
 
-Set `WORKDSH_DEPLOYMENT_CONFIG` to this file. Packaging writes it to `workdsh-config.json` in application resources, and the employee entry uses the fixed address. Model API addresses and internal access keys are configured in the official model settings, outside the packaging configuration. See the [Desktop packaging instructions](apps/desktop/README.md).
+Set `WORKDSH_DEPLOYMENT_CONFIG` to this file. Packaging writes it to `workdsh-config.json` in application resources, and the employee entry uses the fixed address. Model API addresses and internal access keys are configured in the official model settings, outside this packaging configuration. To make a personal build work out of the box, its default model access values live in `apps/desktop/resources/model-credentials.json` (an "apiKeyEnv reference name → value" map) and are packaged straight into `model-credentials.json` in application resources; they carry non-secret values validated by the deployment environment at the gateway/IP layer and are injected into personal workspaces only. See the [Desktop packaging instructions](apps/desktop/README.md).
 
 ## Community and acknowledgements
 

@@ -1,4 +1,4 @@
-﻿﻿; Check the exact app process before launching the quit handoff. This preserves
+﻿; Check the exact app process before launching the quit handoff. This preserves
 ; the #469 fix: unrelated helpers under $INSTDIR must never block an upgrade.
 Var pid
 ; Set by the uninstall page below; "1" means the user asked to remove local data.

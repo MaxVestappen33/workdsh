@@ -28,6 +28,8 @@ WORKDSH_DEPLOYMENT_CONFIG=/absolute/path/company.json corepack yarn package:dir
 
 打包将校验后的配置写入应用 Resources 的 `workdsh-config.json`，员工入口只显示该地址，不允许改写。配置只接受 `enterprise.backendUrl`，拒绝密码或 Key。未设置此环境变量的个人构建生成空配置，不沿用上一次公司的地址。开发可运行 `corepack yarn dev` 并手填地址，或用 `WORKDSH_ENTERPRISE_PORTAL` 预填；这不是企业交付配置。
 
+个人包预置的默认模型访问值放在 `resources/model-credentials.json`（「`apiKeyEnv` 引用名 → 值」映射，经 `extraResources` 直接进入安装包 Resources）。它承载的是**非机密**访问值（由部署环境在网关/IP 层校验），载体仅在个人工作区注入，企业工作区不受影响；值留空表示未提供。运行时优先级仍是「启动环境变量 > 该文件 > 官方 `.credentials.yaml`」。
+
 ## 开发与验证
 
 使用 Node.js `^22.19.0` 或 `>=24`，以及通过 Corepack 启动的 Yarn 4.18.0。在仓库根目录执行：

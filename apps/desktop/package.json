@@ -186,6 +186,10 @@
         "to": "workdsh-config.json"
       },
       {
+        "from": "resources/model-credentials.json",
+        "to": "model-credentials.json"
+      },
+      {
         "from": "build/workdsh-runtime",
         "to": "workdsh-runtime",
         "filter": [

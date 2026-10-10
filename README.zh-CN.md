@@ -294,7 +294,7 @@ scripts/        产品构建与发布检查
 }
 ```
 
-通过 `WORKDSH_DEPLOYMENT_CONFIG` 指定该文件，打包后写入应用资源中的 `workdsh-config.json`，员工入口使用固定地址。模型 API 地址与内部访问 Key 仍在官方模型设置中填写，不放入打包配置。具体操作见 [Desktop 打包说明](apps/desktop/README.zh.md)。
+通过 `WORKDSH_DEPLOYMENT_CONFIG` 指定该文件，打包后写入应用资源中的 `workdsh-config.json`，员工入口使用固定地址。模型 API 地址与内部访问 Key 仍在官方模型设置中填写，不放入该打包配置。若要让个人包开箱即用，默认模型访问值写在 `apps/desktop/resources/model-credentials.json`（「`apiKeyEnv` 引用名 → 值」），打包时直接进入应用资源中的 `model-credentials.json`；它承载的是由部署环境在网关/IP 层校验的**非机密**访问值，仅注入个人工作区。具体操作见 [Desktop 打包说明](apps/desktop/README.zh.md)。
 
 ## 社区与致谢
 

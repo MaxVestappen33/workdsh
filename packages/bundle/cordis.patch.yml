@@ -42,27 +42,14 @@
   name: "@deepseek-ai/dsh-client-ui-settings-models"
   config:
     credentialOnboarding: false
-# WorkDSH 定制：预置一条「本地模型」自定义提供商（OpenAI 兼容协议）。
-# providers 字典的键就是 Provider ID，它同时决定请求路由与凭据引用名的派生基准。
-# apiKeyEnv 走官方派生规则：Provider ID 转大写、非字母数字替换为下划线、追加 _API_KEY，
-# 因此这里与设置页自动产生的名字保持一致，用户在 UI 里改配置也不会让引用名漂移。
-# 注意：密钥本体绝不写入本文件；它由桌面载体在启动 Host 时以环境变量注入
-#（workdsh-main.ts 的 runtimeEnvironment），因为凭据解析优先级中「继承的进程环境变量」最高。
-- id: llm-pi-ai
-  name: "@deepseek-ai/dsh-llm-pi-ai"
-  config:
-    providers:
-      deepseek-v4-flash-0731-w8a8:
-        displayName: DeepSeek-V4-Flash-0731-w8a8
-        api: openai-completions
-        baseURL: http://56.80.93.74:9011/v1
-        apiKeyEnv: DEEPSEEK_V4_FLASH_0731_W8A8_API_KEY
-        models:
-          - id: DeepSeek-V4-Flash-0731-w8a8
-            name: DeepSeek-V4-Flash-0731-w8a8
-# WorkDSH 定制：把上面的本地模型设为默认模型，新建会话时自动选中，开箱即用。
-- id: agent-default-model
-  name: "@deepseek-ai/dsh-agent-default-model"
-  config:
-    provider: deepseek-v4-flash-0731-w8a8
-    model: DeepSeek-V4-Flash-0731-w8a8
+# WorkDSH 定制：预置的「本地模型」与默认模型不在此文件。
+# 本文件会被桌面载体当作 --patch overlay 传入，而 overlay 对同 id 的 config 整体替换，
+# 会盖掉设置页写入 profile 用户层的修改，导致用户无法再添加自定义大模型。
+# 这两行属于「设置页可改写的安装方默认值」，见 cordis.defaults.patch.yml，
+# 由 Desktop 在创建/迁移 Profile 时一次性种子进 profile 用户层。
+# WorkDSH 定制：内网离线部署不挂载官方 DeepSeek 直连路由，设置页与模型选择器里
+# 不再出现「DeepSeek」那一条。要在互联网上使用：删掉下面这两行重新出包即可恢复；
+# 端点默认走官方根地址（https://api.deepseek.com/anthropic），只需在
+# 「设置 → 模型」里给 DeepSeek 填一次 DEEPSEEK_API_KEY。
+- id: llm-deepseek
+  disabled: true

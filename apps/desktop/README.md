@@ -28,6 +28,8 @@ WORKDSH_DEPLOYMENT_CONFIG=/absolute/path/company.json corepack yarn package:dir
 
 Packaging writes the validated configuration to `workdsh-config.json` in application Resources. Employees see the fixed address and cannot override it. Only `enterprise.backendUrl` is accepted; passwords and Keys are rejected. Personal builds without this environment variable generate empty configuration and cannot inherit a previous company's address. Development uses `corepack yarn dev` with manual setup or `WORKDSH_ENTERPRISE_PORTAL` prefill; this is not the managed deployment configuration.
 
+The personal package's preset default model access values live in `resources/model-credentials.json` (an "apiKeyEnv reference name → value" map shipped straight into the installer's Resources through `extraResources`). It carries non-secret values validated by the deployment environment at the gateway/IP layer; the carrier injects them into personal workspaces only, so enterprise workspaces are unaffected. A blank value means "not provided". Runtime precedence stays "launching environment variable > this file > the official `.credentials.yaml`".
+
 ## Development and validation
 
 Use Node.js `^22.19.0` or `>=24` and Corepack Yarn 4.18.0. At the repository root:

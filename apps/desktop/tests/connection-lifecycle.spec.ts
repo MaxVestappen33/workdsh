@@ -20,7 +20,7 @@ vi.mock('electron', async () => {
     destroyed = false; url = ''
     webContents = Object.assign(new EventEmitter(), {
       getURL: () => this.url, setWindowOpenHandler: vi.fn(),
-      session: { closeAllConnections: vi.fn(async () => {}), clearStorageData: vi.fn(async () => {}), clearCache: vi.fn(async () => {}) },
+      session: { setSpellCheckerLanguages: vi.fn(), closeAllConnections: vi.fn(async () => {}), clearStorageData: vi.fn(async () => {}), clearCache: vi.fn(async () => {}) },
     })
     constructor(readonly options: any) { super(); state.windows.push(this) }
     async loadURL(url: string) { this.url = url; if (url.startsWith('http://127.0.0.1:19999')) await state.loadGate }

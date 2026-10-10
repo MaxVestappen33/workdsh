@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url'
 import { connectionEntryHtml, enterpriseLoginHtml, connectionLoadingHtml } from './connection-entry.ts'
 import { connectionPartition, enterpriseConnection, type DesktopConnection } from './connection-mode.ts'
 import { parseDeploymentConfig } from './deployment-config.ts'
+import { readModelCredentials } from './model-credentials.ts'
 import { EnterpriseLogin, startEnterpriseAuthority, type Authority } from './enterprise-auth.ts'
 import { desktopEnterprisePatch, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher } from './local-runtime.ts'
 import { manageCommand } from './command-management.ts'
@@ -124,7 +125,7 @@ function disableSpellcheckDictionaryDownloads(page: BrowserWindow): void {
   page.webContents.session.setSpellCheckerLanguages([])
 }
 
-function openWindow(url: string, connection: DesktopConnection = { mode: 'personal' }, carrier = false): void {
+function openWindow(url: string, connection: DesktopConnection = { mode: 'personal' }, carrier = false, reveal = true): void {
   const previous = window
   const previousEntrySurface = entrySurface
   const icon = fileURLToPath(new URL('../build/app-icon.png', import.meta.url))
@@ -173,7 +174,7 @@ function openWindow(url: string, connection: DesktopConnection = { mode: 'person
   }
   void page.loadURL(url).then(() => {
     if (page.isDestroyed()) return
-    page.show()
+    if (reveal) page.show()
     if (previous && !previous.isDestroyed()) previous.destroy()
   }).catch(() => {
     if (!page.isDestroyed()) page.destroy()
@@ -194,12 +195,11 @@ function runtimeEnvironment(home: string): NodeJS.ProcessEnv {
     // A packaged carrier embeds the WorkDSH entry point, but a development
     // Electron binary needs the app directory as the worker's first argument.
     DSH_ELECTRON_APP_PATH: app.isPackaged ? undefined : app.getAppPath(),
-    // WorkDSH 定制：为预置的本地模型提供商注入凭据。
-    // cordis.patch.yml 里只写 apiKeyEnv 引用名（DEEPSEEK_V4_FLASH_0731_W8A8_API_KEY），密钥本体不落配置文件。
-    // 官方凭据解析优先级为「继承的进程环境变量 > $DSH_HOME/.credentials.yaml > .env」，
-    // 环境层最高且只读，所以在这里注入即可生效，且完全不改动用户的凭据文件。
-    // 该本地服务不校验密钥值（任意值均可访问），故此处取固定占位值。
-    DEEPSEEK_V4_FLASH_0731_W8A8_API_KEY: '123456',
+    // WorkDSH 定制：注入随包交付的默认模型访问值（安装包 Resources 下的 model-credentials.json）。
+    // 与 cordis.defaults.patch.yml 里预置 provider 的 apiKeyEnv 引用名一一对应，让个人工作区开箱即用。
+    // 仅个人工作区注入：企业运行的模型配置由企业侧提供，载体不代注入（enterpriseEnvironment 走白名单）。
+    // 启动环境显式提供的同名变量优先，文件值只作兜底（见 readModelCredentials）。
+    ...(enterprise ? {} : readModelCredentials(process.resourcesPath ?? '', process.env)),
     ELECTRON_RUN_AS_NODE: undefined,
   }
 }
@@ -357,16 +357,27 @@ function showConnectionEntry(): void {
 }
 
 /**
+ * 个人工作区直启时的启动页展示阈值。
+ * 启动窗口先保持隐藏：本机 DSH 就绪后 startRuntime 直接显示工作台窗口，用户通常看不到启动页。
+ * 只有明显变慢（冷启动、首次安装插件等）超过该阈值时才显示启动页，避免"点了没反应"。
+ * 实测本机热启动到就绪约 1.7s，故阈值取 4s。
+ */
+const STARTUP_REVEAL_DELAY_MS = 4000
+
+/**
  * 跳过「选择使用方式」入口页，启动时直接进入个人工作区。
- * 显示「正在启动个人工作区」loading 页面（图二），而非入口选择页（图一）。
+ * 启动窗口先隐藏，DSH 就绪后直接显示工作台页（图二），正常情况下不会闪现启动页。
  * 若 prepareProfile 或 startRuntime 失败，则回退到入口选择页供用户手动操作。
  */
 async function autoStartPersonalWorkspace(): Promise<void> {
   const home = runtimeHome()
-  // 直接加载 loading 页面，跳过入口选择页
-  openWindow('data:text/html;charset=utf-8,' + encodeURIComponent(connectionLoadingHtml('正在启动个人工作区')), { mode: 'personal' }, true)
+  // 直接加载 loading 页面（先不显示），跳过入口选择页
+  openWindow('data:text/html;charset=utf-8,' + encodeURIComponent(connectionLoadingHtml('正在启动个人工作区')), { mode: 'personal' }, true, false)
+  const entry = window!
+  const reveal = setTimeout(() => { if (window === entry && !entry.isDestroyed() && entrySurface) entry.show() }, STARTUP_REVEAL_DELAY_MS)
+  entry.on('closed', () => clearTimeout(reveal))
   // 保留入口页导航监听，运行时失败后返回入口页时仍可正常工作
-  connectEntryNavigation(window!)
+  connectEntryNavigation(entry)
   try {
     // 准备 Profile 并启动运行时
     await prepareProfile(home)

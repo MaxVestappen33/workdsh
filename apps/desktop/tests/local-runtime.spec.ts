@@ -1,12 +1,29 @@
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { load } from 'js-yaml'
 import { afterEach, expect, it } from 'vitest'
 import { desktopEnterprisePatch, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher } from '../src/local-runtime.ts'
 
 const roots: string[] = []
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
-function fixture() {
+const DEFAULT_MODEL_PATCH = [
+  '# 安装方说明：这段注释与下面的备用写法都不应进入用户打开的文件',
+  '- id: llm-pi-ai',
+  '  name: "@deepseek-ai/dsh-llm-pi-ai"',
+  '  config:',
+  '    providers:',
+  '      deepseek-v4-flash-0731-w8a8:',
+  '        displayName: DeepSeek-V4-Flash-0731-w8a8',
+  '# 备用部署的写法（当前未生效）',
+  '#       yantai-route:',
+  '- id: agent-default-model',
+  '  name: "@deepseek-ai/dsh-agent-default-model"',
+  '  config:',
+  '    provider: deepseek-v4-flash-0731-w8a8',
+  '    model: DeepSeek-V4-Flash-0731-w8a8',
+].join('\n') + '\n'
+function fixture({ defaults = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'desktop-profile-')); roots.push(root)
   const source = join(root, 'bundle', 'profiles', 'workdsh'), home = join(root, 'home')
   mkdirSync(join(source, 'node_modules/@deepseek-ai/dsh/lib'), { recursive: true })
@@ -20,8 +37,43 @@ function fixture() {
   const base = { dependencies: { '@deepseek-ai/dsh': '0.2.0-rc.2', 'workdsh-plugin-skills': '1.0.0' }, dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', 'workdsh-plugin-skills'] } } }
   writeFileSync(join(source, 'package.json'), JSON.stringify(base))
   writeFileSync(join(source, 'profile-installation.json'), JSON.stringify(base))
+  if (defaults) {
+    mkdirSync(join(source, 'node_modules/workdsh-bundle'), { recursive: true })
+    writeFileSync(join(source, 'node_modules/workdsh-bundle/cordis.defaults.patch.yml'), DEFAULT_MODEL_PATCH)
+  }
   return { root, source, home, base }
 }
+it('seeds installation-provided editable defaults into the profile patch layer exactly once', () => {
+  const { source, home } = fixture({ defaults: true })
+  const { profile } = materializeRuntimeProfile(source, home)
+  const patchFile = join(profile, 'cordis.patch.yml')
+  const seeded = readFileSync(patchFile, 'utf8')
+  expect(seeded).toContain('- id: llm-pi-ai')
+  expect(seeded).toContain('- id: agent-default-model')
+  // 种子只写有效配置：源码注释与被注释掉的备用写法绝不进入用户可打开的文件。
+  expect(seeded).not.toContain('#')
+  expect(seeded).not.toContain('yantai-route')
+  // The seeded layer must stay a valid YAML sequence; the settings editor owns and rewrites this file.
+  expect(load(seeded)).toHaveLength(2)
+  expect(existsSync(join(profile, '.workdsh-desktop-defaults.json'))).toBe(true)
+  // A later user edit is never overwritten and the removed default is never re-added.
+  writeFileSync(patchFile, '- id: llm-pi-ai\n  config:\n    providers:\n      user-model: {}\n')
+  materializeRuntimeProfile(source, home)
+  const edited = readFileSync(patchFile, 'utf8')
+  expect(edited).toContain('user-model')
+  expect(edited).not.toContain('agent-default-model')
+})
+it('appends seeded defaults after an untouched empty template without breaking the sequence', () => {
+  const { source, home } = fixture({ defaults: true })
+  const { profile } = materializeRuntimeProfile(source, home)
+  const patchFile = join(profile, 'cordis.patch.yml')
+  writeFileSync(patchFile, '# user configuration\n[]\n')
+  rmSync(join(profile, '.workdsh-desktop-defaults.json'))
+  materializeRuntimeProfile(source, home)
+  const content = readFileSync(patchFile, 'utf8')
+  expect(content).toContain('# user configuration')
+  expect(load(content)).toHaveLength(2)
+})
 it('uses official installation anchoring without a shared writable module symlink, and preserves user changes', () => {
   const { source, home, base } = fixture()
   const first = materializeRuntimeProfile(source, home)

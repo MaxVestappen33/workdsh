@@ -23,13 +23,17 @@
   "files": [
     "dist",
     "cordis.patch.yml",
+    "cordis.defaults.patch.yml",
     "README.md",
     "CHANGELOG.md",
     "locale/*.json"
   ],
   "dsh": {
     "bundle": {
-      "patch": "./cordis.patch.yml"
+      "patch": [
+        "./cordis.patch.yml",
+        "./cordis.defaults.patch.yml"
+      ]
     },
     "client": {
       "platform": "web",

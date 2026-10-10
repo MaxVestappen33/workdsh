@@ -11,8 +11,45 @@ import type { EnterpriseMember, Authority } from './enterprise-auth.ts'
 
 type ProfilePackage = { dependencies?: Record<string, string>, optionalDependencies?: Record<string, string>, dsh?: { profile?: { bundles?: string[] } }, [key: string]: unknown }
 const BASE_STATE = '.workdsh-desktop-base.json'
+const DEFAULTS_STATE = '.workdsh-desktop-defaults.json'
+const PROFILE_PATCH = 'cordis.patch.yml'
 const json = (file: string): ProfilePackage => JSON.parse(readFileSync(file, 'utf8')) as ProfilePackage
 const writeJson = (file: string, value: unknown): void => writeFileSync(file, JSON.stringify(value, null, 2) + '\n', { mode: 0o600 })
+
+/**
+ * 种子只写有效配置行：源码注释（含被注释掉的备用部署写法）不该出现在用户打开的
+ * profile 补丁层里。整行注释直接丢弃，连续空行折叠为一个。
+ */
+function activeDefaults(text: string): string {
+  return text.split(/\r?\n/u).filter(line => !/^\s*#/u.test(line)).join('\n').replace(/\n{3,}/gu, '\n\n').trim()
+}
+
+/**
+ * 安装方提供的、但设置页必须能改写的默认值（预置本地模型与默认模型）绝不能通过
+ * `--patch` overlay 注入：Cordis 补丁对同一 id 的 config 是整体替换，overlay 又是最高
+ * 优先级层，会盖掉设置页写入 profile 用户层的修改并报
+ * "overridden by a home patch or command-line overlay"。
+ * 因此这里把它们一次性种子进 profile 用户层（settings 页自己拥有的那个文件），此后完全
+ * 归用户所有；已种子过、用户已有该行、或用户改过的文件都不会被再动。
+ */
+function seedProfileDefaults(source: string, target: string): void {
+  const defaultsFile = join(source, 'node_modules', 'workdsh-bundle', 'cordis.defaults.patch.yml')
+  if (!existsSync(defaultsFile)) return
+  const marker = join(target, DEFAULTS_STATE)
+  if (existsSync(marker)) return
+  const defaults = activeDefaults(readFileSync(defaultsFile, 'utf8'))
+  const file = join(target, PROFILE_PATCH)
+  const current = existsSync(file) ? readFileSync(file, 'utf8') : ''
+  if (current.trim() === '') {
+    writeFileSync(file, defaults + '\n', { mode: 0o600 })
+  } else if (!/^[^\S\n]*-\s*id\s*:/mu.test(current)) {
+    // 仍是空序列模板（可能带注释）：先移除空的 flow 序列，再追加块序列，避免 `[]` 与块项混排。
+    writeFileSync(file, current.replace(/\[\s*\]/u, '').replace(/\s*$/u, '') + '\n' + defaults + '\n', { mode: 0o600 })
+  } else if (!/^[^\S\n]*-\s*id:\s*["']?llm-pi-ai["']?\s*$/mu.test(current)) {
+    writeFileSync(file, current.replace(/\s*$/u, '') + '\n' + defaults + '\n', { mode: 0o600 })
+  }
+  writeJson(marker, { seeded: true })
+}
 function memberDefaults(release: ProfilePackage): ProfilePackage {
   return { name: 'workdsh-member-profile', private: true, type: 'module', packageManager: release.packageManager,
     dependencies: {}, ...(release.dsh ? { dsh: structuredClone(release.dsh) } : {}) }
@@ -69,7 +106,7 @@ export function materializeRuntimeProfile(source: string, home: string): { profi
   let changed = previous?.pendingInstallation === true
   if (!existsSync(manifest)) {
     writeJson(manifest, base)
-    writeFileSync(join(target, 'cordis.patch.yml'), '[]\n', { mode: 0o600 })
+    writeFileSync(join(target, PROFILE_PATCH), '[]\n', { mode: 0o600 })
   } else if (previous?.digest !== digest) {
     if (!previous) throw new Error('已有 Profile 缺少 Desktop 版本记录；请在官方插件管理中核对后使用独立空间')
     const current = json(manifest)
@@ -98,6 +135,7 @@ export function materializeRuntimeProfile(source: string, home: string): { profi
       changed ||= ['dependencies', 'optionalDependencies'].some(section => JSON.stringify(previous.base[section]) !== JSON.stringify(base[section])) && existsSync(modules)
     }
   }
+  seedProfileDefaults(source, target)
   const policyChanged = updatePackagePolicy(source, target)
   if (policyChanged && existsSync(modules)) changed = true
   const cache = join(home, 'package-cache')
