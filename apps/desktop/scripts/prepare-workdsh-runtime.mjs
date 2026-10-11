@@ -128,6 +128,9 @@ if (!prepared) {
     const patches = RELEASE_PACKAGES.filter(name => !PRODUCT_PACKAGES.includes(name) && !ENTERPRISE_PACKAGES.includes(name))
       .map(name => join(profile, 'node_modules', name, 'cordis.patch.yml')).filter(existsSync)
       .map(path => readFileSync(path, 'utf8').trim())
+    // WorkDSH 定制：追加桌面维护的社区目录配置层（skillhub 默认超时上调等）。
+    const catalogDefaults = join(desktopRoot, 'scripts', 'catalog-defaults.patch.yml')
+    if (existsSync(catalogDefaults)) patches.push(readFileSync(catalogDefaults, 'utf8').trim())
     writeFileSync(join(profile, 'cordis.yml'), '[]\n')
     writeFileSync(join(profile, 'cordis.patch.yml'), patches.join('\n') + '\n')
     verifyInstalled()

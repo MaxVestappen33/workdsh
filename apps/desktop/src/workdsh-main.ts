@@ -201,6 +201,11 @@ function runtimeEnvironment(home: string): NodeJS.ProcessEnv {
     // 启动环境显式提供的同名变量优先，文件值只作兜底（见 readModelCredentials）。
     ...(enterprise ? {} : readModelCredentials(process.resourcesPath ?? '', process.env)),
     ELECTRON_RUN_AS_NODE: undefined,
+    // WorkDSH 定制：让载体打包的 Node 信任系统证书库（--use-system-ca）。
+    // 环境对 GitHub 系域名做 TLS 拦截，Node 默认只信内置 CA 导致安装插件时
+    // fetch 报 UNABLE_TO_VERIFY_LEAF_SIGNATURE（前端只见 "fetch failed"）。
+    // 与已有 NODE_OPTIONS 合并，不覆盖启动环境显式注入的其他选项。
+    NODE_OPTIONS: ['--use-system-ca', process.env.NODE_OPTIONS].filter(Boolean).join(' '),
   }
 }
 

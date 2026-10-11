@@ -1,0 +1,10 @@
+# WorkDSH 定制：SkillHub 社区目录（@cocofhu/skillhub）出站请求默认超时 20 秒。
+# 部分环境对 GitHub/raw.githubusercontent 的 TLS 中间人或多跳访问偶发十几秒延迟，
+# 超过默认 20s 会在安装插件时抛 `timeout 20000ms`。这里把出厂默认上调到 5 分钟。
+# 该层在打包时由 prepare-workdsh-runtime.mjs 追加进顶层 cordis.patch.yml，
+# 随安装包生效；用户本机 skillhub.json 里显式配置的 timeoutMs 仍可覆盖它。
+- insert:
+    - id: skillhub
+      name: '@cocofhu/skillhub'
+      config:
+        timeoutMs: 300000
