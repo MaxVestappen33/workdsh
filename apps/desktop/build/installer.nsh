@@ -8,6 +8,18 @@ Var pid
   Var dshUninstallDeleteUserData
 !endif
 
+; Windows 10 is the hard floor for this carrier: Electron 43 dropped Windows 7/8/8.1
+; (Chromium 110), and the bundled DSH Node runtime requires Windows 10 as well. Refuse
+; the installation instead of leaving a shortcut that cannot start. Expanded from
+; .onInit, before any page or file extraction, so Quit aborts the install cleanly.
+; The dialog caption follows the installer name derived from productName.
+!macro customInit
+  ${IfNot} ${AtLeastWin10}
+    MessageBox MB_OK|MB_ICONSTOP "警务助手 不支持当前操作系统版本。$\r$\n$\r$\n当前系统低于 Windows 10。$\r$\n警务助手 需要 Windows 10 或更高版本（Windows 10 / 11 / Server 2016 及以上）才能正常运行，$\r$\n安装已中止。$\r$\n$\r$\n请升级到 Windows 10 或更高版本后，再重新运行安装程序。" /SD IDOK
+    Quit
+  ${EndIf}
+!macroend
+
 !macro customCheckAppRunning
   !insertmacro IS_POWERSHELL_AVAILABLE
   !insertmacro FIND_PROCESS "${APP_EXECUTABLE_FILENAME}" $R0
