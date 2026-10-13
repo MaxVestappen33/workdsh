@@ -639,7 +639,7 @@ async function autoStartAccountWorkspace(): Promise<void> {
     const store = new AccountStore(app.getPath('userData'))
     const restored = store.read()
     if (restored) {
-      const login = restoreAccountLogin(config.account, restored.user, restored.token, restored.session.expiry, restored.session.rawUserInfo)
+      const login = restoreAccountLogin(config.server, restored.user, restored.token, restored.session.expiry, restored.session.rawUserInfo)
       if (login.isExpired()) store.clear()
       else account = { login, store, deviceId: '' }
     }
@@ -754,7 +754,7 @@ function installLoginHandlers(): void {
       const value = input as { username?: unknown, password?: unknown }
       if (!value || typeof value.username !== 'string' || typeof value.password !== 'string') throw new Error('请输入账号和密码')
       const config = loadConfig()
-      const login = await AccountLogin.login(config.account, value.username.trim(), value.password)
+      const login = await AccountLogin.login(config.server, value.username.trim(), value.password)
       admitted = login
       markStartup(`账号服务登录成功（耗时 ${Date.now() - loginStartedAt}ms）`)
       const store = new AccountStore(app.getPath('userData'))

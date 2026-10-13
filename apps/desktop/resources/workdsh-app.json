@@ -6,9 +6,9 @@
     "title": "环境准备中",
     "subtitle": "正在准备好您的工作区，请稍候..."
   },
-  "account": {
+  "server": {
     "baseUrl": "http://127.0.0.1:18080/ytsj-ai",
-    "loginPath": "/sys/login",
+    "loginPath": "/sys/pcClientLogin",
     "logoutPath": "/sys/logout"
   }
 }

@@ -1,4 +1,4 @@
-/** Carrier appearance and external-account configuration. Independent of deployment-config. */
+/** Carrier appearance and backend-platform server configuration. Independent of deployment-config. */
 import { existsSync, readFileSync } from 'node:fs'
 import { join, isAbsolute, resolve, dirname } from 'node:path'
 
@@ -12,9 +12,9 @@ export interface SplashCopy {
   subtitle: string
 }
 
-/** External account-service configuration (Jeecg-style backend). */
-export interface AccountConfig {
-  /** Base origin of the account API, e.g. http://localhost:18080/ytsj-ai */
+/** 后台管理平台（服务器）API 配置：登录、退出等接口都挂在这个地址下。 */
+export interface ServerConfig {
+  /** API 根地址，例如 http://localhost:18080/ytsj-ai */
   baseUrl: string
   /** Relative login path. */
   loginPath: string
@@ -26,7 +26,7 @@ export interface AppConfig {
   /** Path of the general PNG logo. Absolute, or relative to the config file that declared it. */
   logo: string
   splash: SplashCopy
-  account: AccountConfig
+  server: ServerConfig
 }
 
 /** Per-page logo fields. Each page-specific logo falls back to the general `logo`. */
@@ -44,20 +44,20 @@ const DEFAULTS: AppConfig = {
     title: '环境准备中',
     subtitle: '正在准备好你的工作区，请稍候...',
   },
-  account: {
+  server: {
     baseUrl: 'http://127.0.0.1:18080/ytsj-ai',
-    loginPath: '/sys/login',
+    loginPath: '/sys/pcClientLogin',
     logoutPath: '/sys/logout',
   },
 }
 
-/** Partially-declared appearance/account overrides merged over the defaults. */
+/** Partially-declared appearance/server overrides merged over the defaults. */
 type PartialAppConfig = {
   logo?: string
   loginLogo?: string
   splashLogo?: string
   splash?: Partial<SplashCopy>
-  account?: Partial<AccountConfig>
+  server?: Partial<ServerConfig>
 }
 
 /** Highest-priority declared value for the first matching field, override files first. */
@@ -78,7 +78,7 @@ export function parseAppConfig(value: unknown): PartialAppConfig {
   const result: PartialAppConfig = {}
   const logoFields: LogoField[] = ['logo', 'loginLogo', 'splashLogo']
   for (const key of Object.keys(root)) {
-    if (key !== 'logo' && key !== 'loginLogo' && key !== 'splashLogo' && key !== 'splash' && key !== 'account') throw new Error(`应用外观配置不接受字段 ${key}`)
+    if (key !== 'logo' && key !== 'loginLogo' && key !== 'splashLogo' && key !== 'splash' && key !== 'server') throw new Error(`应用外观配置不接受字段 ${key}`)
   }
   for (const field of logoFields) {
     const raw = root[field]
@@ -93,16 +93,16 @@ export function parseAppConfig(value: unknown): PartialAppConfig {
     if (s.title !== undefined) { if (typeof s.title !== 'string') throw new Error('splash.title 必须是字符串'); result.splash = { ...(result.splash ?? {}), title: s.title } }
     if (s.subtitle !== undefined) { if (typeof s.subtitle !== 'string') throw new Error('splash.subtitle 必须是字符串'); result.splash = { ...(result.splash ?? {}), subtitle: s.subtitle } }
   }
-  if (root.account !== undefined) {
-    if (!root.account || typeof root.account !== 'object' || Array.isArray(root.account)) throw new Error('account 配置无效')
-    const a = root.account as Record<string, unknown>
-    for (const k of Object.keys(a)) if (k !== 'baseUrl' && k !== 'loginPath' && k !== 'logoutPath') throw new Error(`account 配置不接受字段 ${k}`)
+  if (root.server !== undefined) {
+    if (!root.server || typeof root.server !== 'object' || Array.isArray(root.server)) throw new Error('server 配置无效')
+    const a = root.server as Record<string, unknown>
+    for (const k of Object.keys(a)) if (k !== 'baseUrl' && k !== 'loginPath' && k !== 'logoutPath') throw new Error(`server 配置不接受字段 ${k}`)
     if (a.baseUrl !== undefined) {
-      if (typeof a.baseUrl !== 'string') throw new Error('account.baseUrl 必须是字符串')
-      result.account = { ...(result.account ?? {}), baseUrl: normalizeBase(a.baseUrl) }
+      if (typeof a.baseUrl !== 'string') throw new Error('server.baseUrl 必须是字符串')
+      result.server = { ...(result.server ?? {}), baseUrl: normalizeBase(a.baseUrl) }
     }
-    if (a.loginPath !== undefined) { if (typeof a.loginPath !== 'string' || !/^\//u.test(a.loginPath)) throw new Error('account.loginPath 必须以 / 开头'); result.account = { ...(result.account ?? {}), loginPath: a.loginPath } }
-    if (a.logoutPath !== undefined) { if (typeof a.logoutPath !== 'string' || !/^\//u.test(a.logoutPath)) throw new Error('account.logoutPath 必须以 / 开头'); result.account = { ...(result.account ?? {}), logoutPath: a.logoutPath } }
+    if (a.loginPath !== undefined) { if (typeof a.loginPath !== 'string' || !/^\//u.test(a.loginPath)) throw new Error('server.loginPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), loginPath: a.loginPath } }
+    if (a.logoutPath !== undefined) { if (typeof a.logoutPath !== 'string' || !/^\//u.test(a.logoutPath)) throw new Error('server.logoutPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), logoutPath: a.logoutPath } }
   }
   return result
 }
@@ -115,7 +115,7 @@ export interface ResolvedAppConfig {
   /** Absolute path of the logo shown on the splash page. */
   splashLogoPath: string
   splash: SplashCopy
-  account: AccountConfig
+  server: ServerConfig
 }
 
 function readConfigFile(file: string): ConfigSource {
@@ -137,13 +137,13 @@ export function readAppConfig(resources: string, userData: string): ResolvedAppC
   const sources = [override, packaged].filter((source): source is ConfigSource => source !== undefined)
 
   const splash: SplashCopy = { ...DEFAULTS.splash, ...packaged?.parsed.splash, ...override?.parsed.splash }
-  // Base URL may be supplied by the admin via WORKDSH_ACCOUNT_BASE environment, else config.
-  const accountBase = process.env.WORKDSH_ACCOUNT_BASE ?? override?.parsed.account?.baseUrl ?? packaged?.parsed.account?.baseUrl ?? DEFAULTS.account.baseUrl
-  const account: AccountConfig = {
-    ...DEFAULTS.account,
-    ...packaged?.parsed.account,
-    ...override?.parsed.account,
-    ...(accountBase ? { baseUrl: normalizeBase(accountBase) } : {}),
+  // 后台平台地址可由管理员经 WORKDSH_SERVER_BASE 环境变量提供，否则取配置文件。
+  const serverBase = process.env.WORKDSH_SERVER_BASE ?? override?.parsed.server?.baseUrl ?? packaged?.parsed.server?.baseUrl ?? DEFAULTS.server.baseUrl
+  const server: ServerConfig = {
+    ...DEFAULTS.server,
+    ...packaged?.parsed.server,
+    ...override?.parsed.server,
+    ...(serverBase ? { baseUrl: normalizeBase(serverBase) } : {}),
   }
   const resolveLogo = (fields: LogoField[]): string => {
     const hit = pickLogo(sources, fields)
@@ -155,7 +155,7 @@ export function readAppConfig(resources: string, userData: string): ResolvedAppC
     loginLogoPath: resolveLogo(['loginLogo', 'logo']),
     splashLogoPath: resolveLogo(['splashLogo', 'logo']),
     splash,
-    account,
+    server,
   }
 }
 

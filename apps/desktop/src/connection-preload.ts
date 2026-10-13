@@ -38,8 +38,8 @@ window.addEventListener('DOMContentLoaded', () => {
       event.preventDefault()
       const account = document.querySelector<HTMLInputElement>('#account')!
       const password = document.querySelector<HTMLInputElement>('#password')!
+      // 保留输入值：登录失败时用户可直接重试，不必重新输入密码。
       const value = { username: account.value, password: password.value }
-      password.value = ''
       void perform(value)
     })
   }
@@ -63,8 +63,8 @@ window.addEventListener('DOMContentLoaded', () => {
       event.preventDefault()
       const account = document.querySelector<HTMLInputElement>('#account')!
       const password = document.querySelector<HTMLInputElement>('#password')!
+      // 保留输入值：登录失败时用户可直接重试，不必重新输入密码。
       const value = { account: account.value, password: password.value }
-      password.value = ''
       void perform(value)
     })
   }

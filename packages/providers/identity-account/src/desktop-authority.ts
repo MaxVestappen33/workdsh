@@ -21,6 +21,8 @@ export interface AccountAt {
   organizationName: string;
   displayName: string;
   username?: string;
+  /** 后端头像地址（可为相对路径）；缺省表示未设置，由客户端回退首字头像。 */
+  avatar?: string;
   role: MembershipRole;
   mustChangePassword: false;
   deviceId: string;
@@ -82,6 +84,7 @@ export class DesktopAuthority {
       id: this.config.principalId, organizationId: this.config.organizationId, organizationName: value.organizationName,
       displayName: value.displayName,
       ...(typeof value.username === 'string' && value.username ? { username: value.username } : {}),
+      ...(typeof value.avatar === 'string' && value.avatar ? { avatar: value.avatar } : {}),
       role: value.role as MembershipRole, mustChangePassword: false, deviceId: this.config.deviceId, backendUrl: value.backendUrl,
     };
   }

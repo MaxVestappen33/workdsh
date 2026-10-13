@@ -4,7 +4,7 @@ import { createServer, type Server } from 'node:http'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { safeStorage } from 'electron'
-import type { AccountConfig } from './app-config.ts'
+import type { ServerConfig } from './app-config.ts'
 
 /** The signed-in account profile surfaced to the DSH provider and authority. */
 export interface AccountUser {
@@ -75,7 +75,7 @@ function accountOrigin(baseUrl: string): string {
 }
 
 export class AccountLogin {
-  readonly config: AccountConfig
+  readonly config: ServerConfig
   readonly origin: string
   readonly token: string
   readonly expiry: number | undefined
@@ -84,7 +84,7 @@ export class AccountLogin {
   #fetch: typeof fetch
   #lifetime = new AbortController()
 
-  private constructor(config: AccountConfig, token: string, user: AccountUser, rawUserInfo: Record<string, unknown>, request: typeof fetch, expiry?: number) {
+  private constructor(config: ServerConfig, token: string, user: AccountUser, rawUserInfo: Record<string, unknown>, request: typeof fetch, expiry?: number) {
     this.config = Object.freeze({ ...config })
     this.origin = accountOrigin(config.baseUrl)
     this.token = token
@@ -94,7 +94,7 @@ export class AccountLogin {
     this.#fetch = request
   }
 
-  static async login(config: AccountConfig, username: string, password: string, request: typeof fetch = fetch): Promise<AccountLogin> {
+  static async login(config: ServerConfig, username: string, password: string, request: typeof fetch = fetch): Promise<AccountLogin> {
     const origin = accountOrigin(config.baseUrl)
     if (!username || !password || username.length > 254 || password.length > 512) throw new Error('请输入账号和密码')
     const response = await request(`${origin}${config.loginPath}`, {
@@ -137,7 +137,7 @@ export class AccountLogin {
   }
 
   /** Restore a prior login from its decrypted store. Expiry defaults to the JWT's own exp. */
-  static restore(config: AccountConfig, user: AccountUser, token: string, expiry: number | undefined, rawUserInfo: Record<string, unknown>, request: typeof fetch = fetch): AccountLogin {
+  static restore(config: ServerConfig, user: AccountUser, token: string, expiry: number | undefined, rawUserInfo: Record<string, unknown>, request: typeof fetch = fetch): AccountLogin {
     return new AccountLogin(config, token, user, rawUserInfo, request, expiry)
   }
 
@@ -255,7 +255,7 @@ export class AccountStore {
 }
 
 /** Restore a previous login purely from its store (already decrypted). */
-export function restoreAccountLogin(config: AccountConfig, user: AccountUser, token: string, expiry: number | undefined, rawUserInfo: Record<string, unknown>): AccountLogin {
+export function restoreAccountLogin(config: ServerConfig, user: AccountUser, token: string, expiry: number | undefined, rawUserInfo: Record<string, unknown>): AccountLogin {
   return AccountLogin.restore(config, user, token, expiry, rawUserInfo, fetch)
 }
 

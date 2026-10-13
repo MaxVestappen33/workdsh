@@ -1,6 +1,6 @@
 /** WorkDSH 侧栏底部个人账号入口：占用官方 settings.launcher 槽位，取代回退的「设置」行。 */
 import * as React from 'react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Menu, MenuItemButton, Modal } from '@deepseek-ai/dsh-client-ui-primitives';
 import type { Context } from '@deepseek-ai/cordis';
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client';
@@ -29,40 +29,47 @@ export function apply(ctx: Context): void {
   ctx.slots.inject('settings.launcher', () => ctx.slots.register({ name: 'settings.launcher' }, AccountLauncher));
 }
 
-/** 读取当前登录账号；失败或不存在时保持 undefined，由入口退化为「设置」。 */
-function useAccountProfile(): AccountProfile | undefined {
+/** 读取当前登录账号；失败或不存在时保持 undefined，由入口退化为「设置」。
+ *  首次在挂载时读取，之后可由调用方（打开菜单）触发刷新，避免后端改了头像/组织名却要重启才生效。 */
+function useAccountProfile(): { profile?: AccountProfile, refresh: () => void } {
   const [profile, setProfile] = useState<AccountProfile>();
-  useEffect(() => {
-    const lifetime = new AbortController();
-    const read = async (): Promise<void> => {
+  const pending = useRef<AbortController | undefined>(undefined);
+  const read = useCallback((): void => {
+    // 已有请求在途时忽略本次触发，避免连点菜单产生并发请求。
+    if (pending.current) return;
+    const controller = new AbortController();
+    pending.current = controller;
+    void (async () => {
       try {
         const response = await fetch(ACCOUNT_PATH, {
           credentials: 'same-origin',
-          signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(ACCOUNT_TIMEOUT_MS)]),
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(ACCOUNT_TIMEOUT_MS)]),
         });
         if (!response.ok) return;
         const value = await response.json() as { displayName?: unknown, organizationName?: unknown, avatar?: unknown, backendUrl?: unknown };
-        if (lifetime.signal.aborted) return;
+        if (controller.signal.aborted) return;
         // 身份显示是可选信息：字段不完整时不猜、不降级成假账号，直接保持「设置」形态。
         if (typeof value?.displayName !== 'string' || !value.displayName) return;
         const organizationName = organizationLabel(value.organizationName, value.backendUrl);
         setProfile({
           displayName: value.displayName,
           ...(organizationName === undefined ? {} : { organizationName }),
-          ...(typeof value.avatar === 'string' && value.avatar ? { avatar: absoluteUrl(value.avatar) } : {}),
+          ...(typeof value.avatar === 'string' && value.avatar ? { avatar: absoluteUrl(value.avatar, value.backendUrl) } : {}),
         });
       } catch { /* 账号身份可选：读取失败不阻断界面，也不重试。 */ }
-    };
-    void read();
-    return () => lifetime.abort();
+      finally { if (pending.current === controller) pending.current = undefined; }
+    })();
   }, []);
-  return profile;
+  useEffect(() => { read(); return () => { pending.current?.abort(); pending.current = undefined; }; }, [read]);
+  return { profile, refresh: read };
 }
 
-/** 后端头像可能是相对路径；统一成同源绝对地址，失败时原样返回由图片自身回退。 */
-function absoluteUrl(value: string): string {
+/** 后端头像可能是相对路径；统一成绝对地址。相对路径按后台地址(backendUrl)解析，
+ *  而不是按当前 DSH 页面源解析——否则会去本机 DSH 服务上找图片。失败时原样返回由图片自身回退。 */
+function absoluteUrl(value: string, backendUrl: unknown): string {
   if (/^(?:https?:|data:)/iu.test(value)) return value;
-  try { return new URL(value, window.location.origin).href; } catch { return value; }
+  const base = typeof backendUrl === 'string' && backendUrl ? backendUrl : window.location.origin;
+  try { return new URL(value, base).href; } catch { return value; }
 }
 
 /**
@@ -129,11 +136,17 @@ function LogoutIcon() {
 
 /** 侧栏底部入口：账号可用时为头像 + 姓名，否则复用官方「设置」外观。 */
 function AccountLauncher({ wide, settingsShortcut, openSettings }: PropsRuntime<'settings.launcher'>) {
-  const profile = useAccountProfile();
+  const { profile, refresh } = useAccountProfile();
   const [open, setOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+
+  // 打开菜单时刷新账号档案：后端改了头像/组织名后无需重启应用即可生效。
+  const toggle = (): void => {
+    if (!open) refresh();
+    setOpen(!open);
+  };
 
   const signOut = async (): Promise<void> => {
     setBusy(true);
@@ -178,7 +191,7 @@ function AccountLauncher({ wide, settingsShortcut, openSettings }: PropsRuntime<
             aria-label={profile ? '账号' : '设置'}
             aria-haspopup="menu"
             aria-expanded={open}
-            onClick={() => setOpen(value => !value)}
+            onClick={toggle}
           >
             {profile
               ? <AccountAvatar profile={profile} size={20} />
