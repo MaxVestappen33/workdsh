@@ -190,6 +190,22 @@
         "to": "model-credentials.json"
       },
       {
+        "from": "resources/logo.png",
+        "to": "logo.png"
+      },
+      {
+        "from": "resources/login-logo.png",
+        "to": "login-logo.png"
+      },
+      {
+        "from": "resources/splash-logo.png",
+        "to": "splash-logo.png"
+      },
+      {
+        "from": "resources/workdsh-app.json",
+        "to": "workdsh-app.json"
+      },
+      {
         "from": "build/workdsh-runtime",
         "to": "workdsh-runtime",
         "filter": [

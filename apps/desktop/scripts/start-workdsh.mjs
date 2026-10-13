@@ -25,6 +25,8 @@ const child = spawn(electron, [root], {
     WORKDSH_BUNDLED_PROFILE: profile,
     WORKDSH_NODE_EXECUTABLE: node,
     WORKDSH_PRIMARY_RUNTIME: primary,
+    // Packaged extras (workdsh-app.json, logos) live beside the source in development.
+    WORKDSH_RESOURCES: join(root, 'resources'),
   },
   stdio: 'inherit',
   windowsHide: false,

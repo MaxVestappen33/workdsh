@@ -8,6 +8,7 @@ import { syncBundledCompatibility } from './runtime-compatibility.ts'
 import { cachedPackageManager } from './plugin-archive-cache.ts'
 import { enterpriseNamespace } from './connection-mode.ts'
 import type { EnterpriseMember, Authority } from './enterprise-auth.ts'
+import type { AccountAuthority } from './member-auth.ts'
 
 type ProfilePackage = { dependencies?: Record<string, string>, optionalDependencies?: Record<string, string>, dsh?: { profile?: { bundles?: string[] } }, [key: string]: unknown }
 const BASE_STATE = '.workdsh-desktop-base.json'
@@ -207,5 +208,40 @@ export function desktopEnterprisePatch(home: string, authority: Authority, actor
   writeJson(authFile, { authorityUrl: authority.url, authorityKey: authority.key, backendUrl, principalId: actor.id, organizationId: actor.organizationId, deviceId })
   const patch = join(home, '.enterprise-desktop.patch.yml')
   writeFileSync(patch, `- id: workdsh-identity-local\n  disabled: true\n- insert:\n    - id: workdsh-enterprise-account-client\n      name: workdsh-provider-identity-enterprise\n    - id: workdsh-desktop-identity\n      name: workdsh-provider-identity-enterprise/desktop\n      config:\n        authFile: ${JSON.stringify(authFile)}\n        principalId: ${JSON.stringify(actor.id)}\n        organizationId: ${JSON.stringify(actor.organizationId)}\n        deviceId: ${JSON.stringify(deviceId)}\n${collaboration ? `- insert:\n    - id: workdsh-desktop-collaboration\n      name: workdsh-plugin-enterprise-collaboration\n      config:\n        desktop: true\n` : ''}- id: workdsh-session-access\n  config:\n    autoBindFixedMemberSessions: true\n- id: workdsh-tool-access\n  config:\n    autoBindPersonalSessions: false\n    autoBindFixedMemberSessions: true\n- id: workspace-controller\n  config:\n    documentsDirectory: ${JSON.stringify(join(home, '..', 'workspace'))}\n`, { mode: 0o600 })
+  return { authFile, patch }
+}
+
+export interface AccountActor {
+  principalId: string
+  organizationId: string
+  organizationName: string
+  displayName: string
+}
+
+/**
+ * A stable, per-account device record under the application userData directory.
+ * The account replaces the personal `local-user` identity entirely.
+ */
+export function accountSpace(userData: string, principalId: string): { root: string, deviceId: string } {
+  if (!/^[\w-]{1,160}$/u.test(principalId)) throw new Error('账号用户标识无效')
+  const root = join(userData, 'account')
+  mkdirSync(root, { recursive: true, mode: 0o700 })
+  const deviceFile = join(root, 'device.json')
+  if (!existsSync(deviceFile)) writeJson(deviceFile, { deviceId: randomUUID() })
+  const parsed: unknown = JSON.parse(readFileSync(deviceFile, 'utf8')) as unknown
+  const deviceId = (parsed as { deviceId?: unknown }).deviceId
+  if (typeof deviceId !== 'string' || !/^[0-9a-f-]{36}$/u.test(deviceId) || !/^[\w-]{1,160}$/u.test(deviceId)) throw new Error('账号本机设备记录无效')
+  return { root, deviceId }
+}
+
+/**
+ * Disable the personal local identity and bind the account identity to a loopback
+ * authority owned by Main. The account provider resolves the logged-in user instead.
+ */
+export function desktopAccountPatch(home: string, authority: AccountAuthority, actor: AccountActor, deviceId: string, backendUrl: string): { authFile: string, patch: string } {
+  const authFile = join(home, 'account-auth.json')
+  writeJson(authFile, { authorityUrl: authority.url, authorityKey: authority.key, backendUrl, principalId: actor.principalId, organizationId: actor.organizationId, deviceId })
+  const patch = join(home, '.account-desktop.patch.yml')
+  writeFileSync(patch, `- id: workdsh-identity-local\n  disabled: true\n- insert:\n    - id: workdsh-account-desktop\n      name: workdsh-provider-identity-account/desktop\n      config:\n        authFile: ${JSON.stringify(authFile)}\n        principalId: ${JSON.stringify(actor.principalId)}\n        organizationId: ${JSON.stringify(actor.organizationId)}\n        organizationName: ${JSON.stringify(actor.organizationName)}\n        displayName: ${JSON.stringify(actor.displayName)}\n        deviceId: ${JSON.stringify(deviceId)}\n- id: workdsh-session-access\n  config:\n    autoBindFixedMemberSessions: true\n- id: workdsh-tool-access\n  config:\n    autoBindPersonalSessions: false\n    autoBindFixedMemberSessions: true\n- id: workspace-controller\n  config:\n    documentsDirectory: ${JSON.stringify(join(home, '..', 'workspace'))}\n`, { mode: 0o600 })
   return { authFile, patch }
 }

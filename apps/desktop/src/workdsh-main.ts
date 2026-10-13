@@ -12,12 +12,14 @@ import {
 } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { connectionEntryHtml, enterpriseLoginHtml, connectionLoadingHtml } from './connection-entry.ts'
+import { connectionEntryHtml, enterpriseLoginHtml, connectionLoadingHtml, accountSplashHtml, accountLoginHtml } from './connection-entry.ts'
 import { connectionPartition, enterpriseConnection, type DesktopConnection } from './connection-mode.ts'
 import { parseDeploymentConfig } from './deployment-config.ts'
 import { readModelCredentials } from './model-credentials.ts'
+import { readAppConfig, type ResolvedAppConfig } from './app-config.ts'
+import { AccountLogin, AccountStore, restoreAccountLogin, startAccountAuthority, type AccountAuthority } from './member-auth.ts'
 import { EnterpriseLogin, startEnterpriseAuthority, type Authority } from './enterprise-auth.ts'
-import { desktopEnterprisePatch, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher } from './local-runtime.ts'
+import { desktopEnterprisePatch, desktopAccountPatch, accountSpace, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher, type AccountActor } from './local-runtime.ts'
 import { manageCommand } from './command-management.ts'
 import { cleanOwnedProcessTree, stopOwnedProcess } from './owned-process.ts'
 
@@ -40,6 +42,41 @@ let pendingConnection: ReturnType<typeof enterpriseConnection> | undefined
 let enterprise: { login: EnterpriseLogin, root: string, home: string, deviceId: string, authority?: Authority, authFile?: string } | undefined
 let verifyTimer: ReturnType<typeof setInterval> | undefined
 let verifying = false
+
+// Account (replaces personal identity) session state.
+let appConfig: ResolvedAppConfig | undefined
+let account: { login: AccountLogin, store: AccountStore, deviceId: string, authority?: AccountAuthority, authFile?: string } | undefined
+let accountVerifyTimer: ReturnType<typeof setInterval> | undefined
+
+// ── 启动耗时打点（纯观测，不改变任何启动行为）──────────────────────────────
+// 双击到主界面之间可能有一段“一个窗口都没有”的空窗期。此打点把各阶段耗时写入
+// userData/startup-timing.log，用于区分两段不同性质的耗时：
+//   1) whenReady 之前 —— Electron/系统冷启动（含 asar 完整性校验、系统首扫等）；
+//   2) whenReady 之后 —— 过场页展示与 DSH 运行环境准备（物化 profile、装依赖、起本机服务）。
+// 局限：无法覆盖操作系统在“进程创建之前”的校验耗时（如 macOS Gatekeeper 首次打开），
+// 那一段只能用秒表从“双击”量到“首个窗口出现”，再与日志里的总耗时对比。
+const startupOrigin = Date.now()
+const startupPreJsMs = Math.round(process.uptime() * 1000)
+const startupMarks: { label: string, elapsedMs: number }[] = []
+let startupLogFile: string | undefined
+
+/** 整体覆盖写入日志（内容很小）；失败绝不影响启动。 */
+function flushStartupTiming(): void {
+  if (startupLogFile === undefined) return
+  const lines = [
+    `[startup] +0ms  主进程 JS 开始执行（进程此前已运行 ${startupPreJsMs}ms）`,
+    ...startupMarks.map(mark => `[startup] +${mark.elapsedMs}ms  ${mark.label}`),
+  ]
+  try { writeFileSync(startupLogFile, lines.join('\n') + '\n', { mode: 0o600 }) } catch { /* 打点写入失败不影响启动 */ }
+}
+
+/** 记录一个启动节点：写入内存并同步刷新日志与 stderr。 */
+function markStartup(label: string): void {
+  const elapsedMs = Date.now() - startupOrigin
+  startupMarks.push({ label, elapsedMs })
+  process.stderr.write(`[startup] +${elapsedMs}ms ${label}\n`)
+  flushStartupTiming()
+}
 
 function bundledProfileDirectory(): string {
   const overridden = process.env.WORKDSH_BUNDLED_PROFILE
@@ -125,7 +162,7 @@ function disableSpellcheckDictionaryDownloads(page: BrowserWindow): void {
   page.webContents.session.setSpellCheckerLanguages([])
 }
 
-function openWindow(url: string, connection: DesktopConnection = { mode: 'personal' }, carrier = false, reveal = true): void {
+function openWindow(url: string, connection: DesktopConnection = { mode: 'personal' }, carrier = false, reveal = true, backgroundColor = '#111113'): void {
   const previous = window
   const previousEntrySurface = entrySurface
   const icon = fileURLToPath(new URL('../build/app-icon.png', import.meta.url))
@@ -137,7 +174,7 @@ function openWindow(url: string, connection: DesktopConnection = { mode: 'person
     minHeight: 640,
     title: '警务助手',
     icon,
-    backgroundColor: '#111113',
+    backgroundColor,
     show: false,
     webPreferences: {
       contextIsolation: true,
@@ -174,7 +211,7 @@ function openWindow(url: string, connection: DesktopConnection = { mode: 'person
   }
   void page.loadURL(url).then(() => {
     if (page.isDestroyed()) return
-    if (reveal) page.show()
+    if (reveal) { markStartup(carrier ? '入口页面已显示' : '工作台窗口已显示'); page.show() }
     if (previous && !previous.isDestroyed()) previous.destroy()
   }).catch(() => {
     if (!page.isDestroyed()) page.destroy()
@@ -230,22 +267,34 @@ async function officialCommand(home: string, args: string[], timeoutMs = 240_000
   })
 }
 
-async function prepareProfile(home: string): Promise<string> {
+async function prepareProfile(home: string, onLoading?: (message: string, index: number) => Promise<void> | void): Promise<string> {
+  markStartup('prepareProfile 开始（物化运行时 Profile）')
   const source = bundledProfileDirectory()
   const result = materializeRuntimeProfile(source, home)
+  markStartup(result.changed ? 'prepareProfile：依赖有变化，需要安装/更新' : 'prepareProfile：依赖无变化，无需安装')
   if (result.changed) {
     const entry = window
-    if (entry && !entry.isDestroyed()) await entry.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(connectionLoadingHtml('正在更新工作区插件依赖')))
+    if (entry && !entry.isDestroyed()) {
+      if (onLoading) await onLoading('正在更新工作区插件依赖', 2)
+      else await entry.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(connectionLoadingHtml('正在更新工作区插件依赖')))
+    }
     await officialCommand(home, ['plugin', '--profile', PROFILE_NAME, 'install'])
     markProfileUpdated(source, result.profile)
-    if (entry && !entry.isDestroyed()) await entry.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(connectionLoadingHtml(enterprise ? '正在启动企业工作区' : '正在启动个人工作区')))
+    markStartup('插件依赖安装完成')
+    if (entry && !entry.isDestroyed()) {
+      if (onLoading) await onLoading(enterprise ? '正在启动企业工作区' : '正在启动个人工作区', 3)
+      else await entry.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(connectionLoadingHtml(enterprise ? '正在启动企业工作区' : '正在启动个人工作区')))
+    }
   }
   officialLauncher(source, home, bundledNodeExecutable(), join(bundledPrimaryRuntime(), 'dependencies', 'pnpm', 'bin', 'pnpm.cjs'))
   return result.profile
 }
 
 function rememberCommandSpace(home?: string): void {
-  const active = home ? { mode: enterprise ? 'enterprise' : 'personal', home, ...(enterprise ? { root: enterprise.root } : {}), label: enterprise ? `${enterprise.login.actor.organizationName ?? '企业'} / ${enterprise.login.actor.displayName}` : '个人工作区' } : undefined
+  const active = home
+    ? { mode: enterprise ? 'enterprise' as const : (account ? 'account' as const : 'personal' as const), home, ...(enterprise ? { root: enterprise.root } : {}),
+        label: enterprise ? `${enterprise.login.actor.organizationName ?? '企业'} / ${enterprise.login.actor.displayName}` : (account ? `${account.login.user.displayName}（账号）` : '个人工作区') }
+    : undefined
   mkdirSync(app.getPath('userData'), { recursive: true })
   writeFileSync(join(app.getPath('userData'), 'command-context.json'), JSON.stringify({ personalHome: runtimeHome(), active }), { mode: 0o600 })
 }
@@ -267,6 +316,7 @@ function startRuntime(home: string, connection: DesktopConnection, patches: stri
   })
   runtime = child
   runtimeStarting = true
+  markStartup('DSH Host 进程已拉起（等待就绪）')
   let ready = false
   let output = ''
   const consume = (chunk: Buffer): void => {
@@ -278,6 +328,7 @@ function startRuntime(home: string, connection: DesktopConnection, patches: stri
     if (match?.[1] !== undefined) {
       ready = true
       runtimeStarting = false
+      markStartup('DSH 已就绪，开始打开主界面')
       openWindow(match[1], connection)
     }
   }
@@ -334,6 +385,33 @@ async function leaveWorkspace(): Promise<void> {
   pendingConnection = undefined; entrySurface = false
 }
 
+/** Clear the account session, stop the bound runtime and put the app back to the login page. */
+async function leaveAccountWorkspace(): Promise<void> {
+  const page = window
+  if (accountVerifyTimer) { clearInterval(accountVerifyTimer); accountVerifyTimer = undefined }
+  const session = account
+  await session?.authority?.close()
+  session?.login.cancelRequests()
+  const child = runtime
+  if (child) { await stopOwnedProcess(child); if (runtime === child) { runtime = undefined; runtimeStarting = false } }
+  account = undefined
+  rememberCommandSpace()
+  if (session) {
+    session.store.clear()
+    const revoked = await session.login.logout()
+    if (!revoked) dialog.showErrorBox('已退出登录', '本机账号登录已停止；后台连接失败，远端登出尚未确认。')
+    if (page && !page.isDestroyed()) {
+      await page.webContents.session.closeAllConnections()
+      await page.webContents.session.clearStorageData()
+      await page.webContents.session.clearCache()
+    }
+  }
+  for (const enterprisePage of [...enterpriseWindows]) if (!enterprisePage.isDestroyed()) enterprisePage.destroy()
+  enterpriseWindows.clear()
+  if (page && !page.isDestroyed()) page.destroy()
+  entrySurface = false
+}
+
 async function returnToEntry(): Promise<void> {
   if (quitting) return
   if (switching) { returnRequested = true; return }
@@ -369,29 +447,166 @@ function showConnectionEntry(): void {
  */
 const STARTUP_REVEAL_DELAY_MS = 4000
 
+/** The account splash and login surfaces are light; match the window background so there is no dark flash. */
+const LIGHT_ENTRY_BACKGROUND = '#ffffff'
+
 /**
- * 跳过「选择使用方式」入口页，启动时直接进入个人工作区。
- * 启动窗口先隐藏，DSH 就绪后直接显示工作台页（图二），正常情况下不会闪现启动页。
- * 若 prepareProfile 或 startRuntime 失败，则回退到入口选择页供用户手动操作。
+ * Directory holding the carrier's own packaged extras (workdsh-app.json, logo files).
+ * A packaged run reads them from Resources; `scripts/start-workdsh.mjs` points the
+ * development run at the source `resources/` folder with WORKDSH_RESOURCES.
  */
-async function autoStartPersonalWorkspace(): Promise<void> {
-  const home = runtimeHome()
-  // 直接加载 loading 页面（先不显示），跳过入口选择页
-  openWindow('data:text/html;charset=utf-8,' + encodeURIComponent(connectionLoadingHtml('正在启动个人工作区')), { mode: 'personal' }, true, false)
-  const entry = window!
-  const reveal = setTimeout(() => { if (window === entry && !entry.isDestroyed() && entrySurface) entry.show() }, STARTUP_REVEAL_DELAY_MS)
-  entry.on('closed', () => clearTimeout(reveal))
-  // 保留入口页导航监听，运行时失败后返回入口页时仍可正常工作
-  connectEntryNavigation(entry)
+function carrierResources(): string {
+  const overridden = process.env.WORKDSH_RESOURCES
+  if (overridden !== undefined && overridden.length > 0) return overridden
+  return process.resourcesPath ?? ''
+}
+
+function loadConfig(): ResolvedAppConfig {
+  if (!appConfig) appConfig = readAppConfig(carrierResources(), app.getPath('userData'))
+  return appConfig
+}
+
+/** Read the configured logo and return a base64 data URI for embedding (CSP keeps img-src data:). */
+function logoDataUri(path: string): string | undefined {
   try {
-    // 准备 Profile 并启动运行时
-    await prepareProfile(home)
-    entrySurface = false
-    startRuntime(home, { mode: 'personal' })
+    const data = readFileSync(path)
+    if (data.length === 0 || data.length > 4 * 1024 * 1024) return undefined
+    const mime = /\.png$/iu.test(path) ? 'image/png' : 'image/png'
+    return `data:${mime};base64,${data.toString('base64')}`
+  } catch { return undefined }
+}
+
+function accountSplashUrl(): string {
+  const config = loadConfig()
+  return 'data:text/html;charset=utf-8,' + encodeURIComponent(accountSplashHtml(logoDataUri(config.splashLogoPath), config.splash))
+}
+function accountLoginUrl(): string {
+  const config = loadConfig()
+  return 'data:text/html;charset=utf-8,' + encodeURIComponent(accountLoginHtml(logoDataUri(config.loginLogoPath), '警务助手'))
+}
+
+/** Advance the account splash to a real startup stage via executeJavaScript (no full reload). */
+async function showSplashEntry(entry: BrowserWindow, stage: number, done = false): Promise<void> {
+  if (entry.isDestroyed() || window !== entry) return
+  await entry.webContents.executeJavaScript(`window.__setStage(${stage}, ${done})`).catch(() => { /* page can be pre-working */ })
+}
+
+function accountActor(login: AccountLogin): AccountActor {
+  return {
+    principalId: login.user.userId,
+    organizationId: login.user.organizationId,
+    organizationName: login.user.organizationName,
+    displayName: login.user.displayName,
+  }
+}
+
+/** Start the DSH runtime bound to the logged-in account identity. */
+async function startAccountRuntime(home: string): Promise<void> {
+  const session = account
+  if (!session) throw new Error('请先登录账号')
+  const entry = window
+  if (entry && !entry.isDestroyed()) { void showSplashEntry(entry, 4, true); entry.show() }
+  const actor = accountActor(session.login)
+  const space = accountSpace(app.getPath('userData'), actor.principalId)
+  session.deviceId = space.deviceId
+  // A restored session restarts its loopback authority here; a fresh login already bound one.
+  if (!session.authority) {
+    session.authority = await startAccountAuthority(session.login, () => { void leaveAccountToLogin() }, () => { void leaveAccountToLogin() })
+  }
+  const { authority } = session
+  if (!authority) throw new Error('账号授权未就绪')
+  const patch = desktopAccountPatch(home, authority, actor, space.deviceId, session.login.origin)
+  session.authFile = patch.authFile
+  entrySurface = false
+  startRuntime(home, { mode: 'personal' }, [patch.patch])
+  if (accountVerifyTimer) clearInterval(accountVerifyTimer)
+  accountVerifyTimer = setInterval(() => {
+    if (verifying || switching) return
+    if (session.login.isExpired()) {
+      dialog.showErrorBox('账号登录已过期', '登录已失效，本机运行将停止，请重新登录。')
+      void leaveAccountToLogin()
+    }
+  }, 30_000)
+}
+
+/** Full startup driven by splash stages (对话一). Reuses the stage-driven prepareProfile. */
+async function launchAccountRuntime(): Promise<void> {
+  const home = runtimeHome()
+  await prepareProfile(home, (_, index) => showSplashEntry(window!, index))
+  await startAccountRuntime(home)
+}
+
+async function leaveAccountToLogin(): Promise<void> {
+  if (quitting) return
+  if (switching) { returnRequested = true; return }
+  switching = true
+  try { await leaveAccountWorkspace(); showAccountLogin() }
+  catch (error) { dialog.showErrorBox('暂时无法返回登录', error instanceof Error ? error.message : '请稍后重试') }
+  finally { endSwitch() }
+}
+
+function showAccountSplash(): BrowserWindow {
+  openWindow(accountSplashUrl(), { mode: 'personal' }, true, false, LIGHT_ENTRY_BACKGROUND)
+  const entry = window!
+  markStartup('过场页窗口已创建（尚未显示）')
+  const reveal = setTimeout(() => { if (window === entry && !entry.isDestroyed() && entrySurface) { entry.show(); markStartup('过场页窗口已显示（4s 兜底触发）') } }, STARTUP_REVEAL_DELAY_MS)
+  entry.on('closed', () => clearTimeout(reveal))
+  connectEntryNavigation(entry)
+  return entry
+}
+
+function showAccountLogin(): void {
+  markStartup('切换到登录页')
+  if (window && !window.isDestroyed()) {
+    window.setBackgroundColor(LIGHT_ENTRY_BACKGROUND)
+    void window.loadURL(accountLoginUrl())
+    window.show()
+    markStartup('登录页已显示')
+  } else {
+    openWindow(accountLoginUrl(), { mode: 'personal' }, true, true, LIGHT_ENTRY_BACKGROUND)
+  }
+}
+
+/**
+ * 账号登录门禁（取代个人身份）。启动即显示 splash（图一）：先查本地加密登录态。
+ * 有效则逐阶段推进到主界面；无效则切到登录页（图二），登录成功后走同一启动流程。
+ */
+async function autoStartAccountWorkspace(): Promise<void> {
+  const entry = showAccountSplash()
+  try {
+    const config = loadConfig()
+    // 开发辅助：WORKDSH_SPLASH_PREVIEW=1 时无关登录态，完整播放一遍过场页各阶段，供本地肉眼验证。
+    if (process.env.WORKDSH_SPLASH_PREVIEW === '1' || process.env.WORKDSH_SPLASH_PREVIEW === 'true') {
+      const total = Math.max(1, config.splash.stages.length)
+      for (let index = 0; index < total; index++) {
+        await showSplashEntry(entry, index, index === total - 1)
+        await new Promise(resolve => setTimeout(resolve, 1200))
+      }
+      if (!entry.isDestroyed()) entry.show()
+      showAccountLogin()
+      return
+    }
+    const store = new AccountStore(app.getPath('userData'))
+    const restored = store.read()
+    await showSplashEntry(entry, 1)
+    if (restored) {
+      const login = restoreAccountLogin(config.account, restored.user, restored.token, restored.session.expiry, restored.session.rawUserInfo)
+      if (!login.isExpired()) {
+        account = { login, store, deviceId: '' }
+        entrySurface = true
+        // Hold the splash while the runtime boots: it already covers the launch window.
+        await showSplashEntry(entry, 2)
+        await launchAccountRuntime()
+        return
+      }
+      store.clear()
+    }
+    // No session, or the stored session is expired → offline login page.
+    await showSplashEntry(entry, 1, true)
+    showAccountLogin()
   } catch (error) {
-    // 启动失败时回退到「选择使用方式」入口页
     dialog.showErrorBox('无法进入', error instanceof Error ? error.message : '请检查运行环境')
-    showConnectionEntry()
+    showAccountLogin()
   }
 }
 
@@ -475,6 +690,36 @@ async function activateEnterprise(): Promise<void> {
 }
 
 function installLoginHandlers(): void {
+  ipcMain.handle('workdsh:account-login', async (event, input: unknown) => {
+    if (!entrySurface || event.sender !== window?.webContents || switching || enterprise) return { error: '此页面不能发起登录' }
+    switching = true
+    let admitted: AccountLogin | undefined
+    try {
+      const value = input as { username?: unknown, password?: unknown }
+      if (!value || typeof value.username !== 'string' || typeof value.password !== 'string') throw new Error('请输入账号和密码')
+      const config = loadConfig()
+      const login = await AccountLogin.login(config.account, value.username.trim(), value.password)
+      admitted = login
+      const store = new AccountStore(app.getPath('userData'))
+      store.write(login.seal())
+      account = { login, store, deviceId: '' }
+      // Bind the account identity to a loopback authority held in Main.
+      const authority = await startAccountAuthority(login, () => { void leaveAccountToLogin() }, () => { void leaveAccountToLogin() })
+      account.authority = authority
+      // Switch the carrier window to the splash so startup stages are visible.
+      const entry = window
+      if (entry && !entry.isDestroyed()) { await entry.loadURL(accountSplashUrl()); await showSplashEntry(entry, 1) }
+      const home = runtimeHome()
+      await prepareProfile(home, (_, index) => showSplashEntry(window!, index))
+      await startAccountRuntime(home)
+      return { ok: true }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '登录失败'
+      if (account) { await leaveAccountWorkspace(); showAccountLogin(); dialog.showErrorBox('无法进入', message) }
+      else if (admitted && !await admitted.logout()) dialog.showErrorBox('登录未完成', '后台连接失败，远端登录撤销尚未确认。')
+      return { error: message }
+    } finally { endSwitch() }
+  })
   ipcMain.handle('workdsh:enterprise-login', async (event, input: unknown) => {
     if (!entrySurface || event.sender !== window?.webContents || switching || !pendingConnection || enterprise) return { error: '此页面不能发起企业登录' }
     switching = true
@@ -501,8 +746,8 @@ function installLoginHandlers(): void {
 function installConnectionMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     ...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : []),
-    { label: '工作区', submenu: [{ label: '切换使用方式／退出企业', click: () => { void returnToEntry() } }] },
-    { label: '工具', submenu: [{ label: '终端命令 dsh（可选）…', click: () => { void manageCommand(join(process.resourcesPath, 'workdsh-runtime'), enterprise ? `${enterprise.login.actor.organizationName ?? '企业'} / ${enterprise.login.actor.displayName}` : '个人工作区') } }] },
+    { label: '工作区', submenu: [{ label: account ? '退出账号' : '切换使用方式／退出企业', click: () => { if (account) void leaveAccountToLogin(); else void returnToEntry() } }] },
+    { label: '工具', submenu: [{ label: '终端命令 dsh（可选）…', click: () => { void manageCommand(join(process.resourcesPath, 'workdsh-runtime'), enterprise ? `${enterprise.login.actor.organizationName ?? '企业'} / ${enterprise.login.actor.displayName}` : (account ? `${account.login.user.displayName}（账号）` : '个人工作区')) } }] },
     { role: 'editMenu' }, { role: 'viewMenu' }, { role: 'windowMenu' },
   ]))
 }
@@ -537,7 +782,7 @@ if (!app.requestSingleInstanceLock()) {
       return
     }
     switching = true
-    void leaveWorkspace().then(() => {
+    void (enterprise ? leaveWorkspace() : account ? leaveAccountWorkspace() : Promise.resolve()).then(() => {
       quitting = true
       app.quit()
     }).catch(error => {
@@ -559,6 +804,8 @@ if (!app.requestSingleInstanceLock()) {
     }
   })
   void app.whenReady().then(() => {
+    startupLogFile = join(app.getPath('userData'), 'startup-timing.log')
+    markStartup('app.whenReady 触发')
     const deploymentFile = join(process.resourcesPath ?? '', 'workdsh-config.json')
     if (existsSync(deploymentFile)) {
       managedBackend = parseDeploymentConfig(JSON.parse(readFileSync(deploymentFile, 'utf8'))).enterprise?.backendUrl
@@ -575,7 +822,8 @@ if (!app.requestSingleInstanceLock()) {
     if (enterprisePortal) {
       showConnectionEntry()
     } else {
-      void autoStartPersonalWorkspace()
+      // 账号登录门禁（取代个人身份）：启动进 splash，已登录则直接进工作区，未登录则展示登录页。
+      void autoStartAccountWorkspace()
     }
     // 原始逻辑（无条件显示入口页，由用户手动选择）：
     // showConnectionEntry()
