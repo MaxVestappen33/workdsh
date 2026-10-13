@@ -56,7 +56,7 @@ function defaultProfile() {
 test('Desktop ships five default features, reviewed infrastructure and no preinstalled enterprise package', () => {
   assert.equal(PRODUCT_PACKAGES.length, 5)
   assert.deepEqual(ENTERPRISE_PACKAGES, ['workdsh-provider-identity-enterprise', 'workdsh-plugin-enterprise-collaboration', 'workdsh-enterprise-connection'])
-  assert.equal(RELEASE_PACKAGES.length, 12)
+  assert.equal(RELEASE_PACKAGES.length, 14)
   assert.doesNotThrow(() => verifyDefaultProfile(defaultProfile()))
   for (const name of ['workdsh-plugin-office', 'workdsh-plugin-notifications']) {
     const profile = defaultProfile()

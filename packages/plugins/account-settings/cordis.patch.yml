@@ -1,0 +1,7 @@
+# WorkDSH 定制：侧栏底部个人账号入口。
+# 官方 ui-settings-general 在 sidebar.settings 座位里渲染 [settings.launcher, 连接状态, 更新状态]，
+# settings.launcher 空位时回退成「设置」行；本插件占用该槽位，把「设置」收进账号菜单，
+# 账号信息与退出登录使用 Desktop 已提供的同源 /api/auth/me 与 /api/auth/logout。
+- insert:
+    - id: workdsh-account-settings
+      name: workdsh-plugin-account-settings

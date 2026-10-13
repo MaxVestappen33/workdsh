@@ -565,5 +565,30 @@
     "requirements": [
       "R12"
     ]
+  },
+  {
+    "path": "../../packages/providers/identity-account",
+    "title": "账号身份提供方",
+    "status": "in_progress",
+    "directories": [
+      "src"
+    ],
+    "moduleVersion": "0.1",
+    "requirements": [
+      "R03"
+    ]
+  },
+  {
+    "path": "../../packages/plugins/account-settings",
+    "title": "账号设置入口",
+    "status": "in_progress",
+    "directories": [
+      "src"
+    ],
+    "moduleVersion": "0.1",
+    "requirements": [
+      "R03",
+      "R15"
+    ]
   }
 ]

@@ -12,6 +12,12 @@ return manifests;
 }
 export const defaults=['workdsh-provider-identity-local','workdsh-provider-browser-session','workdsh-plugin-audit','workdsh-plugin-access','workdsh-plugin-skills','workdsh-plugin-experts','workdsh-plugin-connectors','workdsh-plugin-library','workdsh-bundle'];
 const allowed=new Set([...defaults,'workdsh-contracts','workdsh-ui','workdsh-plugin-workbench']);
+/**
+ * 构建期复用：默认包可以把某个独立安装功能的公开模块编译进自己的产物，只要该功能不成为运行期依赖。
+ * 每条边必须逐条登记（消费方 -> 被复用功能），运行期字段 dependencies/optionalDependencies/peerDependencies
+ * 仍受严格限制；library 侧另有测试断言 office 既不在 dependencies 中、也不出现在构建产物里。
+ */
+const buildOnlyReuse=new Set(['workdsh-plugin-library -> workdsh-plugin-office']);
 export async function auditDefaultPluginDelivery(){
 const manifests=await readOwnedManifests();
 const installer=await readFile(join(root,'scripts/install-project-release.mjs'),'utf8');
@@ -40,8 +46,12 @@ const visit=name=>{
  // Also inspect build dependencies: bundled Client code can carry workspace-only modules.
  for(const field of ['dependencies','optionalDependencies','peerDependencies','devDependencies'])for(const dependency of Object.keys(row.manifest[field]??{})){
   if(!dependency.startsWith('workdsh-'))continue;
-  assert.ok(allowed.has(dependency),'Default package closure contains an external feature: '+name+' -> '+dependency);
-  edges.push({from:name,to:dependency,field});visit(dependency);
+  const buildOnly=field==='devDependencies'&&buildOnlyReuse.has(name+' -> '+dependency);
+  assert.ok(allowed.has(dependency)||buildOnly,'Default package closure contains an external feature: '+name+' -> '+dependency);
+  edges.push({from:name,to:dependency,field,...(buildOnly?{buildOnly:true}:{})});
+  // 构建期复用的模块被内联进消费方产物，不进入默认安装闭包，因此不再向下遍历；
+  // 若同一功能同时出现在运行期字段里，上面那条断言仍会直接失败。
+  if(!buildOnly)visit(dependency);
  }
 };
 for(const name of defaults)visit(name);
