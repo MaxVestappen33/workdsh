@@ -116,6 +116,9 @@ export async function afterPack(context: PackContext): Promise<void> {
   verifyDefaultComposition(patch)
   for (const name of release.packages.map(item => item.name).filter(name => !productPackages.has(name) && !ENTERPRISE_PACKAGES.includes(name))) {
     if (['workdsh-contracts', 'workdsh-ui', 'workdsh-provider-browser-session'].includes(name)) continue // inserted by the bundle patch
+    // 账号身份只在 Desktop 运行期由账号补丁（desktopAccountPatch 的 .account-desktop.patch.yml）插入，
+    // 未登录不建立身份服务，因此它的根入口是空实现、不贡献基础 Profile 补丁行。
+    if (name === 'workdsh-provider-identity-account') continue
     if (!patch.includes(`name: ${name}`)) throw new Error(`Internal WorkDSH service is missing from Profile patch: ${name}`)
   }
   if (/file:(?:\/|[a-z]:)/iu.test(lockfile)) {
