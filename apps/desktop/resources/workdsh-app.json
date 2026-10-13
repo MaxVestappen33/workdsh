@@ -4,14 +4,7 @@
   "splashLogo": "splash-logo.png",
   "splash": {
     "title": "环境准备中",
-    "subtitle": "正在准备好你的工作区，请稍候",
-    "stages": [
-      "查询登录状态",
-      "准备运行环境",
-      "更新插件依赖",
-      "启动本机服务",
-      "即将进入"
-    ]
+    "subtitle": "正在准备好您的工作区，请稍候..."
   },
   "account": {
     "baseUrl": "http://127.0.0.1:18080/ytsj-ai",

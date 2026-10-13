@@ -21,7 +21,7 @@ import { AccountLogin, AccountStore, restoreAccountLogin, startAccountAuthority,
 import { EnterpriseLogin, startEnterpriseAuthority, type Authority } from './enterprise-auth.ts'
 import { desktopEnterprisePatch, desktopAccountPatch, accountSpace, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher, type AccountActor } from './local-runtime.ts'
 import { manageCommand } from './command-management.ts'
-import { cleanOwnedProcessTree, stopOwnedProcess } from './owned-process.ts'
+import { cleanOwnedProcessTree, reclaimOrphanedToolProcesses, stopOwnedProcess } from './owned-process.ts'
 
 const PROFILE_NAME = 'workdsh'
 const READY_PATTERN = /dsh web:\s+(http:\/\/127\.0\.0\.1:\d+\/?\?token=[^\s]+)/u
@@ -59,6 +59,8 @@ const startupOrigin = Date.now()
 const startupPreJsMs = Math.round(process.uptime() * 1000)
 const startupMarks: { label: string, elapsedMs: number }[] = []
 let startupLogFile: string | undefined
+/** 账号登录发起时刻；用于统计“从登录到主界面”的总耗时，undefined 表示当前不在登录流程中。 */
+let loginStartedAt: number | undefined
 
 /** 整体覆盖写入日志（内容很小）；失败绝不影响启动。 */
 function flushStartupTiming(): void {
@@ -211,7 +213,16 @@ function openWindow(url: string, connection: DesktopConnection = { mode: 'person
   }
   void page.loadURL(url).then(() => {
     if (page.isDestroyed()) return
-    if (reveal) { markStartup(carrier ? '入口页面已显示' : '工作台窗口已显示'); page.show() }
+    if (reveal) {
+      if (carrier) markStartup('入口页面已显示')
+      else {
+        markStartup(loginStartedAt === undefined
+          ? '工作台窗口已显示（主界面就绪）'
+          : `工作台窗口已显示（登录到主界面总耗时 ${Date.now() - loginStartedAt}ms）`)
+        loginStartedAt = undefined
+      }
+      page.show()
+    }
     if (previous && !previous.isDestroyed()) previous.destroy()
   }).catch(() => {
     if (!page.isDestroyed()) page.destroy()
@@ -299,7 +310,7 @@ function rememberCommandSpace(home?: string): void {
   writeFileSync(join(app.getPath('userData'), 'command-context.json'), JSON.stringify({ personalHome: runtimeHome(), active }), { mode: 0o600 })
 }
 
-function startRuntime(home: string, connection: DesktopConnection, patches: string[] = []): void {
+function startRuntime(home: string, connection: DesktopConnection, patches: string[] = [], onReady?: () => void): void {
   rememberCommandSpace(home)
   if (quitRequested) throw new Error('启动已取消')
   const executable = bundledNodeExecutable()
@@ -307,6 +318,9 @@ function startRuntime(home: string, connection: DesktopConnection, patches: stri
   const basePatch = join(bundledProfileDirectory(), 'cordis.patch.yml')
   const layers = [...(existsSync(basePatch) ? [basePatch] : []), ...patches]
   const launcher = officialHostLauncher(bundledProfileDirectory(), home, executable, join(bundledPrimaryRuntime(), 'dependencies', 'pnpm', 'bin', 'pnpm.cjs'), layers)
+  // 兜底：回收上次异常退出（终端 Ctrl+C / 被强杀）遗留的同一启动器进程，避免端口/资源冲突导致本次启动失败。
+  reclaimOrphanedToolProcesses(launcher)
+  const hostSpawnedAt = Date.now()
   const child = spawn(executable, [launcher, '--no-open'], {
     env: runtimeEnvironment(home),
     cwd: enterprise ? join(enterprise.root, 'workspace') : home,
@@ -328,7 +342,8 @@ function startRuntime(home: string, connection: DesktopConnection, patches: stri
     if (match?.[1] !== undefined) {
       ready = true
       runtimeStarting = false
-      markStartup('DSH 已就绪，开始打开主界面')
+      markStartup(`DSH 已就绪，开始打开主界面（主机启动 ${Date.now() - hostSpawnedAt}ms）`)
+      onReady?.()
       openWindow(match[1], connection)
     }
   }
@@ -439,16 +454,39 @@ function showConnectionEntry(): void {
   connectEntryNavigation(window!)
 }
 
-/**
- * 个人工作区直启时的启动页展示阈值。
- * 启动窗口先保持隐藏：本机 DSH 就绪后 startRuntime 直接显示工作台窗口，用户通常看不到启动页。
- * 只有明显变慢（冷启动、首次安装插件等）超过该阈值时才显示启动页，避免"点了没反应"。
- * 实测本机热启动到就绪约 1.7s，故阈值取 4s。
- */
-const STARTUP_REVEAL_DELAY_MS = 4000
-
-/** The account splash and login surfaces are light; match the window background so there is no dark flash. */
+/** The account splash, starting state and login surfaces are light; match the window background so there is no dark flash. */
 const LIGHT_ENTRY_BACKGROUND = '#ffffff'
+
+/**
+ * “环境就绪”标记（内容为环境身份串）。过场页只在环境需要准备时出现：
+ * 首次启动、或应用 / 捆绑运行时版本变化（升级）后标记失配；此后每次打开都跳过过场页。
+ */
+const ENV_READY_FILE = '.workdsh-env-ready'
+
+/** 当前捆绑运行时版本；读不到时返回空串（不参与身份判定）。 */
+function bundledRuntimeVersion(): string {
+  try {
+    return String(JSON.parse(readFileSync(join(bundledProfileDirectory(), 'node_modules', '@deepseek-ai', 'dsh', 'package.json'), 'utf8')).version ?? '')
+  } catch { return '' }
+}
+
+/** 环境身份串：应用版本 + 捆绑运行时版本，任一变化都会使标记失配、重新准备一次环境。 */
+function environmentSignature(): string {
+  return `${String(app.getVersion())}|${bundledRuntimeVersion()}`
+}
+
+/** 环境是否已准备就绪：标记存在且与当前环境身份一致。 */
+function isEnvironmentReady(): boolean {
+  try {
+    const marker = readFileSync(join(app.getPath('userData'), ENV_READY_FILE), 'utf8').trim()
+    return marker.length > 0 && marker === environmentSignature()
+  } catch { return false }
+}
+
+/** 环境准备成功后落标记；写入失败不影响启动，下次会重新准备。 */
+function markEnvironmentReady(): void {
+  try { writeFileSync(join(app.getPath('userData'), ENV_READY_FILE), `${environmentSignature()}\n`, { mode: 0o600 }) } catch { /* 下次重新准备 */ }
+}
 
 /**
  * Directory holding the carrier's own packaged extras (workdsh-app.json, logo files).
@@ -482,13 +520,7 @@ function accountSplashUrl(): string {
 }
 function accountLoginUrl(): string {
   const config = loadConfig()
-  return 'data:text/html;charset=utf-8,' + encodeURIComponent(accountLoginHtml(logoDataUri(config.loginLogoPath), '警务助手'))
-}
-
-/** Advance the account splash to a real startup stage via executeJavaScript (no full reload). */
-async function showSplashEntry(entry: BrowserWindow, stage: number, done = false): Promise<void> {
-  if (entry.isDestroyed() || window !== entry) return
-  await entry.webContents.executeJavaScript(`window.__setStage(${stage}, ${done})`).catch(() => { /* page can be pre-working */ })
+  return 'data:text/html;charset=utf-8,' + encodeURIComponent(accountLoginHtml(logoDataUri(config.loginLogoPath), '警务助手，面向公安业务场景的智能工作台'))
 }
 
 function accountActor(login: AccountLogin): AccountActor {
@@ -505,7 +537,8 @@ async function startAccountRuntime(home: string): Promise<void> {
   const session = account
   if (!session) throw new Error('请先登录账号')
   const entry = window
-  if (entry && !entry.isDestroyed()) { void showSplashEntry(entry, 4, true); entry.show() }
+  // 等待 DSH 就绪期间保持入口窗口可见（过场页或“正在启动”加载态），避免出现无窗口空档。
+  if (entry && !entry.isDestroyed()) entry.show()
   const actor = accountActor(session.login)
   const space = accountSpace(app.getPath('userData'), actor.principalId)
   session.deviceId = space.deviceId
@@ -518,7 +551,8 @@ async function startAccountRuntime(home: string): Promise<void> {
   const patch = desktopAccountPatch(home, authority, actor, space.deviceId, session.login.origin)
   session.authFile = patch.authFile
   entrySurface = false
-  startRuntime(home, { mode: 'personal' }, [patch.patch])
+  // “环境已就绪”标记只在 DSH 真正起来后才落盘：避免“标记已写、依赖却没装成”导致后续启动跳过准备。
+  startRuntime(home, { mode: 'personal' }, [patch.patch], () => markEnvironmentReady())
   if (accountVerifyTimer) clearInterval(accountVerifyTimer)
   accountVerifyTimer = setInterval(() => {
     if (verifying || switching) return
@@ -529,10 +563,11 @@ async function startAccountRuntime(home: string): Promise<void> {
   }, 30_000)
 }
 
-/** Full startup driven by splash stages (对话一). Reuses the stage-driven prepareProfile. */
+/** 环境已就绪（再次打开）时的启动：先用过场页覆盖本机 DSH 启动等待，再物化/按需更新 Profile 并启动。 */
 async function launchAccountRuntime(): Promise<void> {
   const home = runtimeHome()
-  await prepareProfile(home, (_, index) => showSplashEntry(window!, index))
+  await showSplashForRuntimeBoot()
+  await prepareProfile(home, keepEntryPage)
   await startAccountRuntime(home)
 }
 
@@ -545,15 +580,30 @@ async function leaveAccountToLogin(): Promise<void> {
   finally { endSwitch() }
 }
 
+/** 首次启动 / 升级后的“环境准备中”过场页：创建即显示，不再隐藏等待。 */
 function showAccountSplash(): BrowserWindow {
-  openWindow(accountSplashUrl(), { mode: 'personal' }, true, false, LIGHT_ENTRY_BACKGROUND)
+  openWindow(accountSplashUrl(), { mode: 'personal' }, true, true, LIGHT_ENTRY_BACKGROUND)
   const entry = window!
-  markStartup('过场页窗口已创建（尚未显示）')
-  const reveal = setTimeout(() => { if (window === entry && !entry.isDestroyed() && entrySurface) { entry.show(); markStartup('过场页窗口已显示（4s 兜底触发）') } }, STARTUP_REVEAL_DELAY_MS)
-  entry.on('closed', () => clearTimeout(reveal))
   connectEntryNavigation(entry)
   return entry
 }
+
+/**
+ * 用过场页覆盖本机 DSH 的启动等待：复用当前入口窗口（登录页），必要时新建。
+ * 过场页只展示标题/副标题与进度条，不含阶段文案。
+ */
+async function showSplashForRuntimeBoot(): Promise<void> {
+  const entry = window
+  if (entry && !entry.isDestroyed()) {
+    await entry.loadURL(accountSplashUrl())
+    entry.show()
+    return
+  }
+  showAccountSplash()
+}
+
+/** 保持当前入口页面不动（过场页不含阶段文案，无需再切换加载页）。 */
+function keepEntryPage(): void {}
 
 function showAccountLogin(): void {
   markStartup('切换到登录页')
@@ -568,41 +618,45 @@ function showAccountLogin(): void {
 }
 
 /**
- * 账号登录门禁（取代个人身份）。启动即显示 splash（图一）：先查本地加密登录态。
- * 有效则逐阶段推进到主界面；无效则切到登录页（图二），登录成功后走同一启动流程。
+ * 账号启动门禁。顺序固定为：环境准备优先 → 登录门禁 → 主界面。
+ * - 环境未就绪（首次启动 / 升级后）：显示“环境准备中”过场页并物化 Profile 后进入登录门禁；
+ *   依赖安装由官方主机在启动时完成，“环境已就绪”标记在主机就绪后才落盘；
+ * - 环境已就绪（再次打开）：不走过场流程，直接进入登录门禁；已登录则直接启动（启动等待由过场页覆盖）；
+ * - 已登录且未过期：启动本机 DSH 进入主界面；未登录 / 已过期：显示登录页。
  */
 async function autoStartAccountWorkspace(): Promise<void> {
-  const entry = showAccountSplash()
   try {
     const config = loadConfig()
-    // 开发辅助：WORKDSH_SPLASH_PREVIEW=1 时无关登录态，完整播放一遍过场页各阶段，供本地肉眼验证。
+    // 开发辅助：WORKDSH_SPLASH_PREVIEW=1 时与登录态无关，只把过场页显示一小会儿再进入登录页，供本地肉眼验证样式。
     if (process.env.WORKDSH_SPLASH_PREVIEW === '1' || process.env.WORKDSH_SPLASH_PREVIEW === 'true') {
-      const total = Math.max(1, config.splash.stages.length)
-      for (let index = 0; index < total; index++) {
-        await showSplashEntry(entry, index, index === total - 1)
-        await new Promise(resolve => setTimeout(resolve, 1200))
-      }
-      if (!entry.isDestroyed()) entry.show()
+      showAccountSplash()
+      await new Promise(resolve => setTimeout(resolve, 2000))
       showAccountLogin()
       return
     }
+
+    // 先查本地加密登录态（廉价、同步），再按环境状态决定展示哪个入口页面。
     const store = new AccountStore(app.getPath('userData'))
     const restored = store.read()
-    await showSplashEntry(entry, 1)
     if (restored) {
       const login = restoreAccountLogin(config.account, restored.user, restored.token, restored.session.expiry, restored.session.rawUserInfo)
-      if (!login.isExpired()) {
-        account = { login, store, deviceId: '' }
-        entrySurface = true
-        // Hold the splash while the runtime boots: it already covers the launch window.
-        await showSplashEntry(entry, 2)
-        await launchAccountRuntime()
-        return
-      }
-      store.clear()
+      if (login.isExpired()) store.clear()
+      else account = { login, store, deviceId: '' }
     }
-    // No session, or the stored session is expired → offline login page.
-    await showSplashEntry(entry, 1, true)
+
+    if (!isEnvironmentReady()) {
+      // 首次启动 / 升级后：显示过场页并物化 Profile。依赖安装由官方主机在启动时按 installAnchor 完成，
+      // “环境已就绪”标记只在主机真正就绪后落盘（见 startAccountRuntime），避免标记早于安装。
+      showAccountSplash()
+      await prepareProfile(runtimeHome(), keepEntryPage)
+      if (!account) { showAccountLogin(); return }
+      // 过场页继续作为本机 DSH 启动等待的界面，主机就绪后直接换成主界面。
+      await startAccountRuntime(runtimeHome())
+      return
+    }
+
+    // 环境已就绪（再次打开）：不显示“环境准备中”的过场流程；已登录则直接启动（启动等待由过场页覆盖）。
+    if (account) { await launchAccountRuntime(); return }
     showAccountLogin()
   } catch (error) {
     dialog.showErrorBox('无法进入', error instanceof Error ? error.message : '请检查运行环境')
@@ -693,6 +747,8 @@ function installLoginHandlers(): void {
   ipcMain.handle('workdsh:account-login', async (event, input: unknown) => {
     if (!entrySurface || event.sender !== window?.webContents || switching || enterprise) return { error: '此页面不能发起登录' }
     switching = true
+    loginStartedAt = Date.now()
+    markStartup('收到账号登录请求')
     let admitted: AccountLogin | undefined
     try {
       const value = input as { username?: unknown, password?: unknown }
@@ -700,21 +756,23 @@ function installLoginHandlers(): void {
       const config = loadConfig()
       const login = await AccountLogin.login(config.account, value.username.trim(), value.password)
       admitted = login
+      markStartup(`账号服务登录成功（耗时 ${Date.now() - loginStartedAt}ms）`)
       const store = new AccountStore(app.getPath('userData'))
       store.write(login.seal())
       account = { login, store, deviceId: '' }
       // Bind the account identity to a loopback authority held in Main.
       const authority = await startAccountAuthority(login, () => { void leaveAccountToLogin() }, () => { void leaveAccountToLogin() })
       account.authority = authority
-      // Switch the carrier window to the splash so startup stages are visible.
-      const entry = window
-      if (entry && !entry.isDestroyed()) { await entry.loadURL(accountSplashUrl()); await showSplashEntry(entry, 1) }
+      // 登录成功：把入口窗口切到过场页，用它的展示时间覆盖本机 DSH 的启动等待；主机就绪后直接换成主界面。
       const home = runtimeHome()
-      await prepareProfile(home, (_, index) => showSplashEntry(window!, index))
+      await showSplashForRuntimeBoot()
+      await prepareProfile(home, keepEntryPage)
       await startAccountRuntime(home)
       return { ok: true }
     } catch (error) {
       const message = error instanceof Error ? error.message : '登录失败'
+      markStartup(`账号登录失败（耗时 ${loginStartedAt === undefined ? '?' : `${Date.now() - loginStartedAt}ms`}）：${message}`)
+      loginStartedAt = undefined
       if (account) { await leaveAccountWorkspace(); showAccountLogin(); dialog.showErrorBox('无法进入', message) }
       else if (admitted && !await admitted.logout()) dialog.showErrorBox('登录未完成', '后台连接失败，远端登录撤销尚未确认。')
       return { error: message }
@@ -773,6 +831,20 @@ if (!app.requestSingleInstanceLock()) {
     if (window.isMinimized()) window.restore()
     window.focus()
   })
+  // 终端 Ctrl+C / 系统终止信号下的有序退出。本机工具进程是 detached 启动的（自成进程组），
+  // 不主动回收就会在载体被杀后成为孤儿并继续占用端口；这里同步回收进程树后立即退出。
+  let terminating = false
+  const terminateOnSignal = (signal: NodeJS.Signals): void => {
+    if (terminating) return
+    terminating = true
+    quitting = true
+    if (runtime !== undefined) void cleanOwnedProcessTree(runtime).catch(() => {})
+    if (installer !== undefined) void stopOwnedProcess(installer).catch(() => {})
+    process.stderr.write(`[startup] 收到 ${signal}，正在回收本机进程…\n`)
+    // cleanOwnedProcessTree 在 POSIX 上是同步 SIGKILL；Windows 走 taskkill，需要一点执行时间。
+    setTimeout(() => app.exit(0), process.platform === 'win32' ? 1500 : 0)
+  }
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(signal, () => terminateOnSignal(signal))
   app.on('before-quit', event => {
     if (quitting) { stopRuntime(); return }
     event.preventDefault()

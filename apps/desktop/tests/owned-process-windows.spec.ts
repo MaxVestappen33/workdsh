@@ -3,7 +3,7 @@ import { type ChildProcess, spawn } from 'node:child_process'
 import { expect, it, vi } from 'vitest'
 import { stopOwnedProcess } from '../src/owned-process.ts'
 
-vi.mock('node:child_process', () => ({ spawn: vi.fn() }))
+vi.mock('node:child_process', () => ({ spawn: vi.fn(), spawnSync: vi.fn() }))
 
 for (const exitCode of [0, 1]) it(`Windows tree cleanup ${exitCode === 0 ? 'confirms success' : 'rejects failure'}`, async () => {
   const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')!

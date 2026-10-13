@@ -40,27 +40,17 @@ const escapeHtml = (value: string): string => value.replace(/[&<>"']/g, c => ({ 
 
 /**
  * Account splash (参考 WorkBuddy 初始化准备页面): light surface, the whole block centred
- * both ways — logo, title, subtitle, an indeterminate green progress bar and the current
- * stage text. PNG logo is inlined as a base64 data URI by the main process; the page never
- * loads remote resources (CSP keeps `default-src 'none'`). Stage text is advanced via
- * executeJavaScript so the surface never reloads.
+ * both ways — logo, title, subtitle and an indeterminate green progress bar.
+ * PNG logo is inlined as a base64 data URI by the main process; the page never
+ * loads remote resources (CSP keeps `default-src 'none'`).
  */
-export function accountSplashHtml(logo: string | undefined, copy: { title: string, subtitle: string, stages: string[] }): string {
+export function accountSplashHtml(logo: string | undefined, copy: { title: string, subtitle: string }): string {
   const mark = logo !== undefined ? `<img src="${logo}" alt="logo" class="logo">` : BRAND_MARK
-  const escapedScript = escapeHtml(JSON.stringify(copy.stages))
   return `<!doctype html><html lang="zh-CN"><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>警务助手</title>
-<style>:root{color-scheme:light;--text:#111827;--muted:#4b5563;--faint:#6b7280;--track:#e5e7eb;--accent:#1dc78a}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#fff;color:var(--text);font:14px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}main{display:flex;flex-direction:column;align-items:center;text-align:center;padding:24px}.logo{width:clamp(180px,calc(100vh - 270px),400px);height:auto;object-fit:contain;margin:0 0 26px}.title{font-size:40px;font-weight:700;letter-spacing:1px;margin:0 0 14px}.subtitle{font-size:16px;color:var(--muted);margin:0 0 34px}.bar{position:relative;width:min(560px,72vw);height:6px;border-radius:3px;background:var(--track);overflow:hidden}.bar-fill{position:absolute;top:0;bottom:0;left:0;width:30%;border-radius:3px;background:var(--accent);animation:sweep 1.4s ease-in-out infinite}@keyframes sweep{0%{left:-30%}100%{left:100%}}.status{margin:14px 0 0;font-size:13px;color:var(--faint);min-height:20px}.status.done{visibility:hidden}@media(prefers-reduced-motion:reduce){.bar-fill{animation:none;left:35%}}</style>
-<main id="splash">${mark}<h1 class="title">${escapeHtml(copy.title)}</h1><p class="subtitle">${escapeHtml(copy.subtitle)}</p><div class="bar" id="splash-bar"><i class="bar-fill"></i></div><p class="status" id="splash-status">${escapeHtml(copy.stages[0] ?? '')}</p></main>
-<script>
-  window.__SPLASH_STAGES = ${escapedScript.replace(/^\s+|\s+$/gu, '')}
-  window.__setStage = function (index, done) {
-    const status = document.getElementById('splash-status')
-    if (window.__SPLASH_STAGES[index]) status.textContent = window.__SPLASH_STAGES[index]
-    if (done) status.classList.add('done')
-  }
-</script></html>`
+<style>:root{color-scheme:light;--text:#111827;--muted:#4b5563;--faint:#6b7280;--track:#dbe7fd;--accent:#2463eb}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#fff;color:var(--text);font:14px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}main{display:flex;flex-direction:column;align-items:center;text-align:center;padding:24px}.logo{width:clamp(180px,calc(100vh - 270px),400px);height:auto;object-fit:contain;margin:0 0 26px}.title{font-size:40px;font-weight:700;letter-spacing:1px;margin:0 0 14px}.subtitle{font-size:16px;color:var(--muted);margin:0 0 34px}.bar{position:relative;width:min(560px,72vw);height:6px;border-radius:3px;background:var(--track);overflow:hidden}.bar-fill{position:absolute;top:0;bottom:0;left:0;width:30%;border-radius:3px;background:var(--accent);animation:sweep 1.4s ease-in-out infinite}@keyframes sweep{0%{left:-30%}100%{left:100%}}@media(prefers-reduced-motion:reduce){.bar-fill{animation:none;left:35%}}</style>
+<main id="splash">${mark}<h1 class="title">${escapeHtml(copy.title)}</h1><p class="subtitle">${escapeHtml(copy.subtitle)}</p><div class="bar" id="splash-bar"><i class="bar-fill"></i></div></main></html>`
 }
 
 /**
@@ -73,7 +63,7 @@ export function accountLoginHtml(logo: string | undefined, title: string): strin
   return `<!doctype html><html lang="zh-CN"><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>登录 · ${escapeHtml(title)}</title>
-<style>:root{color-scheme:light;--text:#17181c;--muted:#8b9099;--border:#e4e7ec;--field:#f6f7f9}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;grid-template-rows:1fr auto;background:#fff;color:var(--text);font:14px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}main{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px 24px}.logo{width:clamp(180px,calc(100vh - 450px),400px);height:auto;object-fit:contain;margin:0 0 18px}.title{font-size:32px;font-weight:700;letter-spacing:.5px;margin:0 0 34px}form{display:flex;flex-direction:column;width:min(336px,100%)}input{width:100%;padding:13px 16px;margin-bottom:12px;border:1px solid var(--border);border-radius:12px;background:var(--field);color:var(--text);font:inherit;outline:none}input::placeholder{color:#a8aeb8}input:focus{border-color:#111;background:#fff}button{margin:10px auto 0;width:186px;padding:13px 0;border:0;border-radius:999px;background:#111;color:#fff;font:inherit;font-weight:600;letter-spacing:2px;cursor:pointer}button:active{transform:translateY(1px)}button:disabled{opacity:.5;cursor:default}#status{min-height:20px;margin:12px 0 0;font-size:13px;color:#d0342c;text-align:center}footer{padding:0 0 26px;text-align:center;font-size:13px;color:var(--muted)}footer span{margin:0 17px;cursor:pointer}footer span:hover{color:#111}@media(prefers-color-scheme:dark){:root{color-scheme:light}}</style>
+<style>:root{color-scheme:light;--text:#17181c;--muted:#8b9099;--border:#e4e7ec;--field:#f6f7f9}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;grid-template-rows:1fr auto;background:#fff;color:var(--text);font:14px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}main{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px 24px}.logo{width:clamp(180px,calc(100vh - 450px),400px);height:auto;object-fit:contain;margin:0 0 18px}.title{font-size:32px;font-weight:700;letter-spacing:.5px;margin:0 0 34px}form{display:flex;flex-direction:column;width:min(336px,100%)}input{width:100%;padding:13px 16px;margin-bottom:12px;border:1px solid var(--border);border-radius:12px;background:var(--field);color:var(--text);font:inherit;outline:none}input::placeholder{color:#a8aeb8}input:focus{border-color:#111;background:#fff}button{margin:10px auto 0;width:186px;padding:13px 0;border:0;border-radius:999px;background:#111;color:#fff;font:inherit;font-weight:600;letter-spacing:2px;cursor:pointer}button:active{transform:translateY(1px)}button:disabled{opacity:.5;cursor:default}#status{display:none;margin:16px 0 0;font-size:13px;line-height:1.5;text-align:center}#status.show{display:flex;align-items:center;justify-content:center;gap:8px;padding:10px 14px;border:1px solid transparent;border-radius:10px;font-weight:500}#status.show::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor;flex:none}#status.pending{color:#5b6472;background:#f3f4f6;border-color:#e5e7eb}#status.ok{color:#0f7a4d;background:#e8f7ef;border-color:#c3e9d6}#status.error{color:#c0392b;background:#fdecea;border-color:#f6cdc7}footer{padding:0 0 26px;text-align:center;font-size:13px;color:var(--muted)}footer span{margin:0 17px;cursor:pointer}footer span:hover{color:#111}@media(prefers-color-scheme:dark){:root{color-scheme:light}}</style>
 <main class="login">${mark}<h1 class="title">${escapeHtml(title)}</h1>
 <form id="account-login" autocomplete="on">
 <input id="account" placeholder="请输入账号" aria-label="账号" autocomplete="username" required maxlength="254" spellcheck="false">

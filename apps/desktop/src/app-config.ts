@@ -10,8 +10,6 @@ export interface SplashCopy {
   title: string
   /** Subtitle below the title. */
   subtitle: string
-  /** Ordered status messages driven by startup stages. */
-  stages: string[]
 }
 
 /** External account-service configuration (Jeecg-style backend). */
@@ -44,8 +42,7 @@ const DEFAULTS: AppConfig = {
   logo: 'logo.png',
   splash: {
     title: '环境准备中',
-    subtitle: '正在准备好你的工作区，请稍候',
-    stages: ['查询登录状态', '准备运行环境', '更新插件依赖', '启动本机服务', '即将进入'],
+    subtitle: '正在准备好你的工作区，请稍候...',
   },
   account: {
     baseUrl: 'http://127.0.0.1:18080/ytsj-ai',
@@ -95,10 +92,6 @@ export function parseAppConfig(value: unknown): PartialAppConfig {
     const s = root.splash as Record<string, unknown>
     if (s.title !== undefined) { if (typeof s.title !== 'string') throw new Error('splash.title 必须是字符串'); result.splash = { ...(result.splash ?? {}), title: s.title } }
     if (s.subtitle !== undefined) { if (typeof s.subtitle !== 'string') throw new Error('splash.subtitle 必须是字符串'); result.splash = { ...(result.splash ?? {}), subtitle: s.subtitle } }
-    if (s.stages !== undefined) {
-      if (!Array.isArray(s.stages) || !s.stages.every(x => typeof x === 'string')) throw new Error('splash.stages 必须是字符串数组')
-      result.splash = { ...(result.splash ?? {}), stages: s.stages as string[] }
-    }
   }
   if (root.account !== undefined) {
     if (!root.account || typeof root.account !== 'object' || Array.isArray(root.account)) throw new Error('account 配置无效')

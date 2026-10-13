@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { expect, it } from 'vitest'
-import { stopOwnedProcess, cleanOwnedProcessTree } from '../src/owned-process.ts'
+import { reclaimOrphanedToolProcesses, stopOwnedProcess, cleanOwnedProcessTree } from '../src/owned-process.ts'
 
 it.skipIf(process.platform === 'win32')('kills a real tool descendant that ignores SIGTERM even after its parent exits', async () => {
   const fixture = `const {spawn}=require('node:child_process');
@@ -17,4 +17,20 @@ tool.stdout.on('data',x=>process.stdout.write(x));process.on('SIGTERM',()=>proce
     expect(() => process.kill(descendant, 0)).toThrow()
     await cleanOwnedProcessTree(parent) // Repeated cleanup cannot target a newly reused group.
   } finally { await cleanOwnedProcessTree(parent) }
+}, 15000)
+
+it.skipIf(process.platform === 'win32')('reclaims a leftover tool process by launcher path and leaves unrelated processes alone', async () => {
+  const launcher = `/tmp/workdsh-reclaim-${process.pid}-${Date.now()}/.workdsh-host.mjs`
+  const stray = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', launcher], { detached: true, stdio: 'ignore' })
+  const bystander = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' })
+  try {
+    expect(stray.pid).toBeGreaterThan(0); expect(bystander.pid).toBeGreaterThan(0)
+    reclaimOrphanedToolProcesses(launcher)
+    await new Promise(resolve => setTimeout(resolve, 400))
+    expect(() => process.kill(stray.pid!, 0)).toThrow()
+    expect(() => process.kill(bystander.pid!, 0)).not.toThrow()
+  } finally {
+    await cleanOwnedProcessTree(stray)
+    await cleanOwnedProcessTree(bystander)
+  }
 }, 15000)
