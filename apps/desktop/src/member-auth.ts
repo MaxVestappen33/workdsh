@@ -1,5 +1,5 @@
 /** Main-process account authentication. The opaque bearer token never enters a renderer. */
-import { randomBytes, timingSafeEqual } from 'node:crypto'
+import { createCipheriv, createDecipheriv, randomBytes, timingSafeEqual } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -29,6 +29,8 @@ export interface AccountSession {
 }
 
 const SESSION_FILENAME = 'account-session.bin'
+/** 本机加密密钥（macOS 路径用）：32 字节，随会话一起放在 userData 下，权限 0600。 */
+const KEY_FILENAME = '.account-key'
 const identifier = (value: unknown): value is string => typeof value === 'string' && /^[\w-]{1,160}$/u.test(value)
 
 // The account service returns user identity inside result.userInfo with an `id` field.
@@ -148,7 +150,74 @@ export interface AccountAuthority {
   close(): Promise<void>
 }
 
-/** Persist/recover the encrypted account session using OS keychain-backed safeStorage. */
+/**
+ * 会话封包：记录本次用了哪种加密，读回时据此选择解密方式。
+ * `os` 走系统级加密（Windows DPAPI / Linux 密钥环），`file` 走本机密钥文件。
+ */
+interface SealedSession {
+  readonly v: 2
+  readonly method: 'os' | 'file'
+  readonly payload: string
+}
+
+/**
+ * macOS 上不用 Electron safeStorage：它走钥匙串条目「<AppName> Safe Storage」，
+ * 条目属于别的签名时读取会向用户弹授权框；而用 `security` CLI 重建的条目又因 macOS 的
+ * 分区(partition)限制被应用本身拒绝（EACCES），两条路都无法做到“无感保存”。
+ * 因此 macOS 一律使用本机密钥文件：32 字节随机密钥 + AES-256-GCM，密钥文件权限 0600。
+ * 安全边界仍是“只有本机当前用户可解密”，但登录与记住登录全程不再有任何系统弹窗。
+ * 其他平台继续使用系统级加密（Windows DPAPI、Linux 密钥环），它们本来就是静默的。
+ */
+function useSystemEncryption(): boolean {
+  if (process.platform === 'darwin') return false
+  return typeof safeStorage?.isEncryptionAvailable === 'function' && safeStorage.isEncryptionAvailable()
+}
+
+function keyFilePath(userData: string): string {
+  return join(userData, KEY_FILENAME)
+}
+
+function readKeyFile(userData: string): Buffer | undefined {
+  const file = keyFilePath(userData)
+  if (!existsSync(file)) return undefined
+  const value = readFileSync(file)
+  return value.length === 32 ? value : undefined
+}
+
+/** 加密用的本机密钥：首次写入时生成，之后复用。 */
+function requireKeyFile(userData: string): Buffer {
+  const existing = readKeyFile(userData)
+  if (existing) return existing
+  const created = randomBytes(32)
+  mkdirSync(userData, { recursive: true })
+  writeFileSync(keyFilePath(userData), created, { mode: 0o600 })
+  return created
+}
+
+function sealSession(userData: string, text: string): SealedSession {
+  if (useSystemEncryption()) {
+    return { v: 2, method: 'os', payload: safeStorage.encryptString(text).toString('base64') }
+  }
+  const iv = randomBytes(12)
+  const cipher = createCipheriv('aes-256-gcm', requireKeyFile(userData), iv)
+  const body = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()])
+  return { v: 2, method: 'file', payload: Buffer.concat([iv, cipher.getAuthTag(), body]).toString('base64') }
+}
+
+function openSession(userData: string, sealed: SealedSession): string {
+  const raw = Buffer.from(sealed.payload, 'base64')
+  if (sealed.method === 'os') {
+    if (!safeStorage.isEncryptionAvailable()) throw new Error('decrypt-unavailable')
+    return safeStorage.decryptString(raw)
+  }
+  const key = readKeyFile(userData)
+  if (!key || raw.length <= 28) throw new Error('bad-session')
+  const decipher = createDecipheriv('aes-256-gcm', key, raw.subarray(0, 12))
+  decipher.setAuthTag(raw.subarray(12, 28))
+  return Buffer.concat([decipher.update(raw.subarray(28)), decipher.final()]).toString('utf8')
+}
+
+/** Persist/recover the encrypted account session. No keychain dialog on any platform. */
 export class AccountStore {
   private readonly file: string
   private readonly userData: string
@@ -157,22 +226,17 @@ export class AccountStore {
     this.file = join(userData, SESSION_FILENAME)
   }
 
-  requireEncryption(): void {
-    if (!safeStorage.isEncryptionAvailable()) throw new Error('此设备不支持系统级凭据加密。为保障账号信息安全，请升级系统或重新安装本软件。')
-  }
-
   write(session: AccountSession): void {
-    this.requireEncryption()
     mkdirSync(this.userData, { recursive: true })
-    writeFileSync(this.file, safeStorage.encryptString(JSON.stringify(session)), { mode: 0o600 })
+    writeFileSync(this.file, JSON.stringify(sealSession(this.userData, JSON.stringify(session))), { mode: 0o600 })
   }
 
   read(): { session: AccountSession, user: AccountUser, token: string } | undefined {
     if (!existsSync(this.file)) return undefined
     try {
-      const decrypted = safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(readFileSync(this.file)) : null
-      if (decrypted === null) throw new Error('decrypt-unavailable')
-      const parsed = JSON.parse(decrypted) as Partial<AccountSession>
+      const envelope = JSON.parse(readFileSync(this.file, 'utf8')) as Partial<SealedSession>
+      if (envelope?.v !== 2 || (envelope.method !== 'os' && envelope.method !== 'file') || typeof envelope.payload !== 'string') throw new Error('bad-session')
+      const parsed = JSON.parse(openSession(this.userData, envelope as SealedSession)) as Partial<AccountSession>
       if (typeof parsed.token !== 'string' || !parsed.token || !parsed.user || typeof parsed.user !== 'object') throw new Error('bad-session')
       const user = parsed.user as AccountUser
       if (typeof user.userId !== 'string' || typeof user.username !== 'string' || typeof user.displayName !== 'string') throw new Error('bad-user')
@@ -180,9 +244,9 @@ export class AccountStore {
       const expiry = typeof parsed.expiry === 'number' ? parsed.expiry : undefined
       const rawUserInfo = (parsed.rawUserInfo && typeof parsed.rawUserInfo === 'object') ? parsed.rawUserInfo as Record<string, unknown> : {}
       return { session: { token, ...(expiry === undefined ? {} : { expiry }), user, rawUserInfo }, user, token }
-    } catch (error) {
+    } catch {
+      // 解不开就丢弃旧会话，让用户重新登录；不把加密失败升级成启动失败。
       this.clear()
-      if (error instanceof Error && error.message === 'decrypt-unavailable') throw new Error('此设备不支持系统级凭据加密。为保障账号信息安全，请升级系统或重新安装本软件。')
       return undefined
     }
   }

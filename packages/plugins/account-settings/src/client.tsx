@@ -41,13 +41,14 @@ function useAccountProfile(): AccountProfile | undefined {
           signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(ACCOUNT_TIMEOUT_MS)]),
         });
         if (!response.ok) return;
-        const value = await response.json() as { displayName?: unknown, organizationName?: unknown, avatar?: unknown };
+        const value = await response.json() as { displayName?: unknown, organizationName?: unknown, avatar?: unknown, backendUrl?: unknown };
         if (lifetime.signal.aborted) return;
         // 身份显示是可选信息：字段不完整时不猜、不降级成假账号，直接保持「设置」形态。
         if (typeof value?.displayName !== 'string' || !value.displayName) return;
+        const organizationName = organizationLabel(value.organizationName, value.backendUrl);
         setProfile({
           displayName: value.displayName,
-          ...(typeof value.organizationName === 'string' && value.organizationName ? { organizationName: value.organizationName } : {}),
+          ...(organizationName === undefined ? {} : { organizationName }),
           ...(typeof value.avatar === 'string' && value.avatar ? { avatar: absoluteUrl(value.avatar) } : {}),
         });
       } catch { /* 账号身份可选：读取失败不阻断界面，也不重试。 */ }
@@ -62,6 +63,21 @@ function useAccountProfile(): AccountProfile | undefined {
 function absoluteUrl(value: string): string {
   if (/^(?:https?:|data:)/iu.test(value)) return value;
   try { return new URL(value, window.location.origin).href; } catch { return value; }
+}
+
+/**
+ * 组织名：主进程在登录响应缺少 orgCodeTxt 时用账号服务主机名兜底（例如 127.0.0.1），
+ * 那是部署细节而不是组织名。这里按 /api/auth/me 返回的 backendUrl 识别这种兜底并隐藏该行，
+ * 后端补上 orgCodeTxt 后自动恢复显示。
+ */
+function organizationLabel(value: unknown, backendUrl: unknown): string | undefined {
+  if (typeof value !== 'string' || !value) return undefined;
+  return value === accountHost(backendUrl) ? undefined : value;
+}
+
+function accountHost(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !value) return undefined;
+  try { return new URL(value).hostname; } catch { return undefined; }
 }
 
 /** 头像首字与配色：不依赖远端图片也能稳定区分不同账号。 */
@@ -107,14 +123,6 @@ function LogoutIcon() {
   return (
     <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden focusable={false}>
       <path d="M14 4H7a2 2 0 00-2 2v12a2 2 0 002 2h7M11 12h9M17 8l4 4-4 4" />
-    </svg>
-  );
-}
-
-function ChevronUpIcon() {
-  return (
-    <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden focusable={false}>
-      <path d="M6 15l6-6 6 6" />
     </svg>
   );
 }
@@ -176,7 +184,6 @@ function AccountLauncher({ wide, settingsShortcut, openSettings }: PropsRuntime<
               ? <AccountAvatar profile={profile} size={20} />
               : <span className="wd-account-glyph"><GearIcon /></span>}
             {wide && <span className="wd-account-name">{profile?.displayName ?? '设置'}</span>}
-            {wide && <span className="wd-account-glyph wd-account-caret"><ChevronUpIcon /></span>}
           </button>
         )}
       >
@@ -229,15 +236,16 @@ function AccountLauncher({ wide, settingsShortcut, openSettings }: PropsRuntime<
 
 const accountCss = `
 .wd-account-anchor { display: flex; flex: 1 1 auto; min-width: 0; }
+/* 与左侧菜单行（sidebar.panellist 的 panelRow）保持一致：高 36px、内边距 7px 8px、
+   圆角 12px、间距 8px、字号 14px/行高 22px、左右各留 2px 外边距。 */
 .wd-account-trigger {
   display: flex; align-items: center; gap: 8px; flex: 1 1 auto; min-width: 0;
-  height: 28px; padding: 0 6px; border: 0; border-radius: 8px; background: transparent;
-  color: var(--dsw-alias-label-primary); font: inherit; font-size: 12px; line-height: 18px; cursor: pointer;
+  height: 36px; margin: 0 2px; padding: 7px 8px; border: 0; border-radius: 12px; background: transparent;
+  color: var(--dsw-alias-label-primary); font: inherit; font-size: 14px; line-height: 22px; cursor: pointer;
 }
 .wd-account-trigger:hover { background: color-mix(in srgb, currentColor 8%, transparent); }
-.wd-account-trigger[data-collapsed="true"] { flex: 0 0 auto; width: 28px; justify-content: center; padding: 0; }
+.wd-account-trigger[data-collapsed="true"] { flex: 0 0 auto; width: 36px; margin: 0; padding: 0; justify-content: center; }
 .wd-account-glyph { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
-.wd-account-caret { color: var(--dsw-alias-label-secondary); }
 .wd-account-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wd-account-avatar { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; border-radius: 50%; object-fit: cover; color: #fff; font-weight: 600; }
 .wd-account-menu { min-width: 208px; }
