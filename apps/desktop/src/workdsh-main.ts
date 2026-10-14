@@ -223,18 +223,39 @@ function openWindow(url: string, connection: DesktopConnection = { mode: 'person
       page.show()
     }
     if (previous && !previous.isDestroyed()) previous.destroy()
-  }).catch(() => {
+  }).catch((error: unknown) => {
+    // 失败原因是区分「本地服务未就绪」「端口/进程冲突」「被安全软件拦截」的唯一线索，
+    // 必须随提示一起给出。失败 URL 带一次性 token，展示前先抹掉。
+    const reason = (error instanceof Error ? error.message : String(error)).replace(/\?token=[^\s']+/gu, '?token=[redacted]')
+    // ERR_ABORTED(-3) 不是加载失败：它表示这次导航被同一窗口的后一次导航取代（过场页还没加载完就切到
+    // 登录页／工作区页），或窗口已被用户关闭。此时该窗口的内容以后一次导航为准，既不销毁窗口，
+    // 也不能退回入口页——旧实现把这种取代当成"工作区打不开"，首次启动即弹错并拆掉整个流程。
+    if (/ERR_ABORTED\s*\(-3\)/u.test(reason)) {
+      process.stderr.write(`[startup] 页面导航被后一次导航取代，忽略：${reason}\n`)
+      return
+    }
     if (!page.isDestroyed()) page.destroy()
     if (previous && !previous.isDestroyed()) { window = previous; entrySurface = previousEntrySurface }
-    dialog.showErrorBox('无法打开工作区', '请检查企业地址、网络或本地运行状态。')
+    dialog.showErrorBox('无法打开工作区', `请检查企业地址、网络或本地运行状态。\n\n${reason}`)
     if (runtime) void returnToEntry()
   })
   page.on('closed', () => { enterpriseWindows.delete(page); if (window === page) window = undefined })
 }
 
 function runtimeEnvironment(home: string): NodeJS.ProcessEnv {
+  const inherited = enterprise ? enterpriseEnvironment(enterprise.root, bundledNodeExecutable(), process.env) : process.env
   return {
-    ...(enterprise ? enterpriseEnvironment(enterprise.root, bundledNodeExecutable(), process.env) : process.env),
+    ...inherited,
+    // WorkDSH 定制：把随包 Python 目录放在 PATH 最前。
+    // Office 技能要求用随包解释器（load_workspace_dependencies 返回的 python.exe），但工作区里的
+    // Office 命令是按 `python` 这种名字执行的：PATH 里没有随包 Python 时，Windows 会命中
+    // 「应用执行别名」——%LOCALAPPDATA%\Microsoft\WindowsApps\python.exe 实际是
+    // AppInstallerPythonRedirector.exe（打开商店的转发器）。隔离内网上它无法初始化，
+    // 直接弹出「AppInstallerPythonRedirector.exe - 应用程序无法正常启动(0xc0000142)」。
+    // 前置随包目录后，`python` 命令稳定命中随包解释器，不再经过商店转发器。
+    PATH: [join(bundledPrimaryRuntime(), 'dependencies', 'python'), inherited.PATH]
+      .filter((value): value is string => typeof value === 'string' && value.length > 0)
+      .join(process.platform === 'win32' ? ';' : ':'),
     DSH_HOME: home,
     DSH_AGENTS_HOME: enterprise ? join(enterprise.root, 'agents') : join(home, 'agents'),
     DSH_BUNDLED_PRIMARY_RUNTIME: bundledPrimaryRuntime(),
@@ -320,7 +341,11 @@ function startRuntime(home: string, connection: DesktopConnection, patches: stri
   // 兜底：回收上次异常退出（终端 Ctrl+C / 被强杀）遗留的同一启动器进程，避免端口/资源冲突导致本次启动失败。
   reclaimOrphanedToolProcesses(launcher)
   const hostSpawnedAt = Date.now()
-  const child = spawn(executable, [launcher, '--no-open'], {
+  // --port 0：让操作系统分配一个空闲端口。官方 Web 内核默认把本机服务固定在 127.0.0.1:3080，
+  // 该端口一旦被别的程序、或被强杀后残留的 DSH 主机占着，本机服务就会以
+  // "listen EADDRINUSE: address already in use 127.0.0.1:3080" 启动失败（用户只看到启动失败/无法打开工作区）。
+  // 真实地址由主机 stdout 的 "dsh web: http://127.0.0.1:<port>/" 给出，载体不依赖固定端口。
+  const child = spawn(executable, [launcher, '--no-open', '--port', '0'], {
     env: runtimeEnvironment(home),
     cwd: enterprise ? join(enterprise.root, 'workspace') : home,
     detached: process.platform !== 'win32',

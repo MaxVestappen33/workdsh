@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-desktop",
   "version": "1.0.0",
-  "description": "警务助手 —— 面向公安业务场景的智能工作台",
+  "description": "警务助手，面向公安业务场景的智能工作台",
   "homepage": "http://56.82.4.232:3100",
   "license": "MIT",
   "author": {

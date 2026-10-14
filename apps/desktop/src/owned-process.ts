@@ -44,14 +44,15 @@ export async function stopOwnedProcess(child: ChildProcess): Promise<void> {
 /**
  * 兜底回收上次异常退出遗留的本机工具进程。
  *
- * macOS/Linux 下工具进程以 detached 方式启动（自成进程组），终端 Ctrl+C 只会杀掉载体，
+ * 工具进程以 detached 方式启动（macOS/Linux 下自成进程组），终端 Ctrl+C 只会杀掉载体，
  * 工具进程会成为孤儿继续占用端口，导致下一次启动报 EADDRINUSE。
+ * Windows 下用任务管理器结束应用、或安装程序只结束载体窗口时同样会留下孤儿 DSH 主机。
  * 这里按“启动器脚本路径”精确匹配进程命令行回收，避免误伤无关进程；脚本路径本身是
  * 每套 Profile 唯一的绝对路径，因此匹配到的都属于本安装的遗留进程。
- * Windows：工具进程与载体共享控制台，Ctrl+C 会同时送达，故不做扫描。
  */
 export function reclaimOrphanedToolProcesses(launcher: string): void {
-  if (process.platform === 'win32' || launcher.length === 0) return
+  if (launcher.length === 0) return
+  if (process.platform === 'win32') { reclaimWindowsToolProcesses(launcher); return }
   const listing = spawnSync('ps', ['-ax', '-o', 'pid=,command='], { encoding: 'utf8' })
   if (listing.error !== undefined || listing.status !== 0 || typeof listing.stdout !== 'string') return
   for (const line of listing.stdout.split('\n')) {
@@ -62,4 +63,17 @@ export function reclaimOrphanedToolProcesses(launcher: string): void {
     // 先按进程组回收（涵盖工具派生的子进程），失败再退化为单进程回收。
     try { process.kill(-pid, 'SIGKILL') } catch { try { process.kill(pid, 'SIGKILL') } catch { /* 已退出 */ } }
   }
+}
+
+/**
+ * Windows：没有 ps，改用 CIM 读取命令行后按启动器路径精确回收。
+ * 只筛选 node.exe（本机 DSH 主机由随包 Node 启动），既避免全表扫描，也保证不会命中载体自身。
+ */
+function reclaimWindowsToolProcesses(launcher: string): void {
+  const command = [
+    `Get-CimInstance Win32_Process -Filter "Name='node.exe'"`,
+    `| Where-Object { $_.CommandLine -and $_.CommandLine.Contains('${launcher.replaceAll("'", "''")}') }`,
+    '| ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }',
+  ].join(' ')
+  spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { windowsHide: true, stdio: 'ignore' })
 }

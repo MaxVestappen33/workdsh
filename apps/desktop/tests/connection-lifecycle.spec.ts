@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import { expect, it, vi } from 'vitest'
 import { enterpriseSpace } from '../src/local-runtime.ts'
 
@@ -97,7 +97,10 @@ it('enforces the packaged backend, uses explicitly installed enterprise identity
     expect(launch[2]?.env?.DSH_HOME).toBe(enterprise.home)
     expect(launch[2]?.env?.DSH_AGENTS_HOME).toBe(join(enterprise.root, 'agents'))
     expect(launch[1]?.join(' ')).not.toContain('secret')
-    expect(launch[1]).toEqual([join(enterprise.home, '.workdsh-host.mjs'), '--no-open'])
+    expect(launch[1]).toEqual([join(enterprise.home, '.workdsh-host.mjs'), '--no-open', '--port', '0'])
+    // 随包 Python 必须排在 PATH 最前：否则工作区里的 `python` 会命中 Windows 应用执行别名（商店转发器）。
+    const [firstPathEntry] = String(launch[2]?.env?.PATH).split(delimiter)
+    expect(firstPathEntry?.endsWith(join('dependencies', 'python'))).toBe(true)
     const { app } = await import('electron')
     app.emit('activate')
     expect(app.relaunch).not.toHaveBeenCalled()
