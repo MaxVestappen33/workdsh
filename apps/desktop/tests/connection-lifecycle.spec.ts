@@ -32,7 +32,8 @@ vi.mock('electron', async () => {
     ipcMain: { handle: (name: string, fn: any) => { state.handlers[name] = fn } },
     app: Object.assign(new EventEmitter(), { setActivationPolicy: vi.fn(), setName: vi.fn(), requestSingleInstanceLock: () => true, whenReady: async () => {}, quit: vi.fn(), exit: vi.fn(), relaunch: vi.fn(), getPath: () => state.userData, getAppPath: () => state.userData }),
     shell: { openExternal: vi.fn() }, dialog: { showErrorBox: vi.fn(), showOpenDialog: vi.fn(async () => ({ canceled: true, filePaths: [] })) },
-    Menu: { buildFromTemplate: (menu: any[]) => { state.menu = menu; return menu }, setApplicationMenu: vi.fn() },
+    Menu: { buildFromTemplate: (menu: any[]) => menu, setApplicationMenu: (menu: any[]) => { state.menu = menu } },
+    Tray: class { setToolTip() {} setContextMenu() {} on() {} },
   }
 })
 
@@ -121,7 +122,8 @@ it('enforces the packaged backend, uses explicitly installed enterprise identity
     expect(workspace.options.webPreferences.preload).toBeUndefined()
     expect(workspace.options.webPreferences.sandbox).toBe(true)
     expect(await signIn({ sender: workspace.webContents }, { account: 'b', password: 'secret' })).toHaveProperty('error')
-    state.menu.find(item => item.label === '工作区').submenu[0].click()
+    // 「工作区」菜单已移除：退出/切换工作区的入口仍在页面内（workdsh://entry 导航）。
+    workspace.webContents.emit('will-navigate', { preventDefault() {} }, 'workdsh://entry')
     await vi.waitFor(() => expect(state.windows).toHaveLength(4))
     expect(state.stop).toHaveBeenCalledWith(children[0])
     expect(state.logout).toHaveBeenCalledOnce(); expect(state.closed).toHaveBeenCalledOnce()
@@ -138,7 +140,7 @@ it('enforces the packaged backend, uses explicitly installed enterprise identity
     expect(app.quit).not.toHaveBeenCalled()
     children[1].stdout.emit('data', Buffer.from('dsh web: http://127.0.0.1:19998/?token=personal-token'))
     expect(state.windows[4].options.webPreferences.partition).toBeUndefined()
-    state.menu.find(item => item.label === '工作区').submenu[0].click()
+    state.windows[4].webContents.emit('will-navigate', { preventDefault() {} }, 'workdsh://entry')
     await vi.waitFor(() => expect(state.windows).toHaveLength(6))
     expect(state.stop).toHaveBeenCalledWith(children[1])
     // A failed patch write happens after authority startup; it must leave no credential file/bridge.

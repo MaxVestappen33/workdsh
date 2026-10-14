@@ -1,7 +1,7 @@
 import {composeInstalledEnterprisePlugins,installedEnterprisePlugins} from './enterprise-plugins.ts'
 /** Minimal Electron carrier for the bundled WorkDSH release profile. */
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, powerMonitor, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, powerMonitor, shell, Tray } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
 import {
   existsSync,
@@ -153,6 +153,88 @@ function startBrowserWorker(request: { port: number, profile: string }): void {
   })
 }
 
+/** 系统托盘（右下角通知区域）：提供「显示主界面」与「退出软件」两个入口。 */
+let tray: Tray | undefined
+
+/** 叉号关闭行为偏好：用户勾选「不再提醒」后记住的选择。 */
+type CloseAction = 'minimize' | 'quit'
+const CLOSE_PREFERENCE_FILENAME = 'close-behavior.json'
+
+function closePreferenceFile(): string { return join(app.getPath('userData'), CLOSE_PREFERENCE_FILENAME) }
+
+function readClosePreference(): CloseAction | undefined {
+  try {
+    const value = JSON.parse(readFileSync(closePreferenceFile(), 'utf8')) as { action?: unknown }
+    return value.action === 'minimize' || value.action === 'quit' ? value.action : undefined
+  } catch { return undefined }
+}
+
+function writeClosePreference(action: CloseAction): void {
+  try {
+    mkdirSync(app.getPath('userData'), { recursive: true })
+    writeFileSync(closePreferenceFile(), JSON.stringify({ action }), { mode: 0o600 })
+  } catch { /* 写入失败不阻断关闭流程 */ }
+}
+
+/** 恢复并聚焦主窗口（托盘图标点击 / 二次启动）。 */
+function revealMainWindow(): void {
+  if (!window || window.isDestroyed()) return
+  if (window.isMinimized()) window.restore()
+  window.show()
+  window.focus()
+}
+
+async function applyCloseAction(page: BrowserWindow, action: CloseAction): Promise<void> {
+  if (action === 'quit') { app.quit(); return }
+  if (!page.isDestroyed()) page.hide()
+}
+
+let closePromptOpen = false
+
+/**
+ * 叉号关闭请求：默认弹窗让用户选择「最小化到托盘」或「退出软件」，可勾选「不再提醒」记住选择。
+ * 永远阻止默认关闭，避免直接结束进程；真正的退出统一走 app.quit()。
+ */
+async function resolveCloseRequest(page: BrowserWindow): Promise<void> {
+  const remembered = readClosePreference()
+  if (remembered) { await applyCloseAction(page, remembered); return }
+  if (closePromptOpen) return
+  closePromptOpen = true
+  try {
+    const { response, checkboxChecked } = await dialog.showMessageBox(page, {
+      type: 'question',
+      title: '关闭警务助手',
+      message: '关闭窗口还是最小化到系统托盘？',
+      detail: '选择「最小化到托盘」后程序继续在后台运行，双击右下角托盘图标即可恢复。',
+      buttons: ['最小化到托盘', '退出软件'],
+      defaultId: 0,
+      cancelId: 0,
+      checkboxLabel: '不再提醒',
+      checkboxChecked: false,
+      noLink: true,
+    })
+    const action: CloseAction = response === 1 ? 'quit' : 'minimize'
+    if (checkboxChecked) writeClosePreference(action)
+    await applyCloseAction(page, action)
+  } finally { closePromptOpen = false }
+}
+
+function installTray(): void {
+  if (tray) return
+  try {
+    const icon = fileURLToPath(new URL(process.platform === 'darwin' ? '../build/tray-iconTemplate.png' : '../build/tray-icon-blue.png', import.meta.url))
+    tray = new Tray(icon)
+    tray.setToolTip('警务助手')
+    tray.setContextMenu(Menu.buildFromTemplate([
+      { label: '显示主界面', click: () => revealMainWindow() },
+      { type: 'separator' },
+      { label: '退出软件', click: () => app.quit() },
+    ]))
+    tray.on('click', () => revealMainWindow())
+    tray.on('double-click', () => revealMainWindow())
+  } catch { tray = undefined }
+}
+
 /**
  * Chromium 会在页面出现可编辑元素时到 Google CDN 拉取拼写词典
  * (https://redirector.gvt1.com/edgedl/chrome/dict/...)。该域名在部分网络下不可达，
@@ -240,6 +322,12 @@ function openWindow(url: string, connection: DesktopConnection = { mode: 'person
     if (runtime) void returnToEntry()
   })
   page.on('closed', () => { enterpriseWindows.delete(page); if (window === page) window = undefined })
+  // 点叉号不再直接退出：交给关闭确认弹窗（隐藏到托盘 / 退出软件）。真正的退出/切换流程不受影响。
+  page.on('close', event => {
+    if (quitting || switching) return
+    event.preventDefault()
+    void resolveCloseRequest(page)
+  })
 }
 
 function runtimeEnvironment(home: string): NodeJS.ProcessEnv {
@@ -448,6 +536,23 @@ async function leaveAccountWorkspace(): Promise<void> {
   for (const enterprisePage of [...enterpriseWindows]) if (!enterprisePage.isDestroyed()) enterprisePage.destroy()
   enterpriseWindows.clear()
   if (page && !page.isDestroyed()) page.destroy()
+  entrySurface = false
+}
+
+/**
+ * 关闭软件时的账号收尾：只停止本机运行与回环授权，保留本地加密登录态。
+ * 与「退出账号」刻意区分：不清除 account-session.bin、不调用后台登出、不清空渲染器存储，
+ * 否则每次关软件都会变成一次登出，下次打开必然回到登录页。
+ */
+async function stopAccountForQuit(): Promise<void> {
+  account?.stopSync?.()
+  const session = account
+  await session?.authority?.close()
+  session?.login.cancelRequests()
+  const child = runtime
+  if (child) { await stopOwnedProcess(child); if (runtime === child) { runtime = undefined; runtimeStarting = false } }
+  account = undefined
+  rememberCommandSpace()
   entrySurface = false
 }
 
@@ -888,11 +993,35 @@ function installLoginHandlers(): void {
 }
 
 function installConnectionMenu(): void {
+  // 全中文菜单：内置 role 菜单的默认标签是英文，会造成中英混排，因此显式给出中文标签与中文子项。
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     ...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : []),
-    { label: '工作区', submenu: [{ label: account ? '退出账号' : '切换使用方式／退出企业', click: () => { if (account) void leaveAccountToLogin(); else void returnToEntry() } }] },
     { label: '工具', submenu: [{ label: '终端命令 dsh（可选）…', click: () => { void manageCommand(join(process.resourcesPath, 'workdsh-runtime'), enterprise ? `${enterprise.login.actor.organizationName ?? '企业'} / ${enterprise.login.actor.displayName}` : (account ? `${account.login.user.displayName}（账号）` : '个人工作区')) } }] },
-    { role: 'editMenu' }, { role: 'viewMenu' }, { role: 'windowMenu' },
+    { label: '编辑', submenu: [
+      { role: 'undo' as const, label: '撤销' },
+      { role: 'redo' as const, label: '重做' },
+      { type: 'separator' as const },
+      { role: 'cut' as const, label: '剪切' },
+      { role: 'copy' as const, label: '复制' },
+      { role: 'paste' as const, label: '粘贴' },
+      { type: 'separator' as const },
+      { role: 'selectAll' as const, label: '全选' },
+    ] },
+    { label: '视图', submenu: [
+      { role: 'reload' as const, label: '重新加载' },
+      { role: 'forceReload' as const, label: '强制重新加载' },
+      { role: 'toggleDevTools' as const, label: '切换开发者工具' },
+      { type: 'separator' as const },
+      { role: 'resetZoom' as const, label: '实际大小' },
+      { role: 'zoomIn' as const, label: '放大' },
+      { role: 'zoomOut' as const, label: '缩小' },
+      { type: 'separator' as const },
+      { role: 'togglefullscreen' as const, label: '全屏' },
+    ] },
+    { label: '窗口', submenu: [
+      { role: 'minimize' as const, label: '最小化' },
+      { role: 'close' as const, label: '关闭' },
+    ] },
   ]))
 }
 
@@ -914,8 +1043,7 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   app.on('second-instance', () => {
     if (window === undefined) return
-    if (window.isMinimized()) window.restore()
-    window.focus()
+    revealMainWindow()
   })
   // 终端 Ctrl+C / 系统终止信号下的有序退出。本机工具进程是 detached 启动的（自成进程组），
   // 不主动回收就会在载体被杀后成为孤儿并继续占用端口；这里同步回收进程树后立即退出。
@@ -940,7 +1068,7 @@ if (!app.requestSingleInstanceLock()) {
       return
     }
     switching = true
-    void (enterprise ? leaveWorkspace() : account ? leaveAccountWorkspace() : Promise.resolve()).then(() => {
+    void (enterprise ? leaveWorkspace() : account ? stopAccountForQuit() : Promise.resolve()).then(() => {
       quitting = true
       app.quit()
     }).catch(error => {
@@ -973,6 +1101,7 @@ if (!app.requestSingleInstanceLock()) {
       try { enterprisePortal = enterpriseConnection(JSON.parse(readFileSync(savedBackendFile(), 'utf8')).backend).portalOrigin } catch { /* stale invalid preference is not trusted */ }
     }
     installConnectionMenu()
+    installTray()
     installLoginHandlers()
     // 个人使用场景：跳过「选择使用方式」入口页，直接启动个人工作区。
     // 例外：若已配置企业后台（随包预置的 workdsh-config.json，或本机记住的企业地址），

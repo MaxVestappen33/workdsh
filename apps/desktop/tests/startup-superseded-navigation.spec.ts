@@ -36,6 +36,7 @@ vi.mock('electron', async () => {
     dialog: { showErrorBox: vi.fn((title: string, content?: string) => { state.dialogs.push(`${title} ${content ?? ''}`) }) },
     Menu: { buildFromTemplate: (menu: any[]) => menu, setApplicationMenu: vi.fn() },
     powerMonitor: new EventEmitter(),
+    Tray: class { setToolTip() {} setContextMenu() {} on() {} },
   }
 })
 
