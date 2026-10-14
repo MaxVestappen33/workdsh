@@ -1,7 +1,7 @@
 import {composeInstalledEnterprisePlugins,installedEnterprisePlugins} from './enterprise-plugins.ts'
 /** Minimal Electron carrier for the bundled WorkDSH release profile. */
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, powerMonitor, shell } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
 import {
   existsSync,
@@ -45,8 +45,7 @@ let verifying = false
 
 // Account (replaces personal identity) session state.
 let appConfig: ResolvedAppConfig | undefined
-let account: { login: AccountLogin, store: AccountStore, deviceId: string, authority?: AccountAuthority, authFile?: string } | undefined
-let accountVerifyTimer: ReturnType<typeof setInterval> | undefined
+let account: { login: AccountLogin, store: AccountStore, deviceId: string, authority?: AccountAuthority, authFile?: string, stopSync?: () => void } | undefined
 
 // ── 启动耗时打点（纯观测，不改变任何启动行为）──────────────────────────────
 // 双击到主界面之间可能有一段“一个窗口都没有”的空窗期。此打点把各阶段耗时写入
@@ -403,7 +402,7 @@ async function leaveWorkspace(): Promise<void> {
 /** Clear the account session, stop the bound runtime and put the app back to the login page. */
 async function leaveAccountWorkspace(): Promise<void> {
   const page = window
-  if (accountVerifyTimer) { clearInterval(accountVerifyTimer); accountVerifyTimer = undefined }
+  account?.stopSync?.()
   const session = account
   await session?.authority?.close()
   session?.login.cancelRequests()
@@ -532,6 +531,73 @@ function accountActor(login: AccountLogin): AccountActor {
   }
 }
 
+/**
+ * 账号模式会话校验 + 用户信息同步循环。
+ * 间隔 baseDelay（默认 30s，含 ±10% 抖动）；失败按 30s→60s→120s… 退避，上限 15min，成功即复位。
+ * 仅「本地 exp 已过期」或「后台明确 401」才登出；网络错误/超时/5xx/服务端异常一律容忍重试。
+ * 返回停止函数，随登出/切换调用，内部会解绑 powerMonitor 监听。
+ */
+function startAccountSync(session: { login: AccountLogin, store: AccountStore }): () => void {
+  const baseDelay = Math.max(1, session.login.config.syncIntervalSeconds) * 1000
+  const maxDelay = 15 * 60 * 1000
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let failures = 0
+  let stopped = false
+
+  // 抖动：100 名员工约 28.8 万次/天，无抖动会形成整齐的请求尖峰。
+  const jitter = (delay: number): number => Math.round(delay * (0.9 + Math.random() * 0.2))
+  const schedule = (delay: number): void => { if (!stopped) timer = setTimeout(() => { void run() }, delay) }
+
+  const run = async (): Promise<void> => {
+    // 防重入：沿用现有 verifying 标志；正在登录/切换时不打断，顺延一个间隔。
+    if (stopped) return
+    if (verifying || switching) { schedule(jitter(baseDelay)); return }
+    verifying = true
+    try {
+      // ① 本地 exp 已过期：直接登出，不发请求。
+      if (session.login.isExpired()) {
+        stopped = true
+        dialog.showErrorBox('账号登录已过期', '登录已失效，本机运行将停止，请重新登录。')
+        void leaveAccountToLogin()
+        return
+      }
+      const result = await session.login.syncProfile()
+      if (stopped) return
+      if (result.outcome === 'unauthorized') {
+        // ② 仅后台明确 401：弹提示并退回登录页。
+        stopped = true
+        dialog.showErrorBox('账号登录已失效', result.message)
+        void leaveAccountToLogin()
+        return
+      }
+      if (result.outcome === 'ok') {
+        failures = 0
+        // 落盘节流：只有快照内容确实变化时才写回，绝不次次写盘。
+        if (result.changed) session.store.write(session.login.seal())
+        schedule(jitter(baseDelay))
+        return
+      }
+      // ③ 其他失败（网络/超时/5xx/服务端异常）：容忍并退避。
+      failures += 1
+      schedule(Math.min(baseDelay * 2 ** (failures - 1), maxDelay))
+    } finally {
+      verifying = false
+    }
+  }
+
+  // 启动即校验：登录恢复后立刻打一次，不必等满一个间隔。
+  void run()
+  // 睡眠唤醒补偿：macOS 合盖期间定时器被冻结，唤醒后立即补一次。
+  const onResume = (): void => { if (timer) { clearTimeout(timer); timer = undefined } void run() }
+  powerMonitor.on('resume', onResume)
+
+  return () => {
+    stopped = true
+    if (timer) { clearTimeout(timer); timer = undefined }
+    powerMonitor.off('resume', onResume)
+  }
+}
+
 /** Start the DSH runtime bound to the logged-in account identity. */
 async function startAccountRuntime(home: string): Promise<void> {
   const session = account
@@ -553,14 +619,9 @@ async function startAccountRuntime(home: string): Promise<void> {
   entrySurface = false
   // “环境已就绪”标记只在 DSH 真正起来后才落盘：避免“标记已写、依赖却没装成”导致后续启动跳过准备。
   startRuntime(home, { mode: 'personal' }, [patch.patch], () => markEnvironmentReady())
-  if (accountVerifyTimer) clearInterval(accountVerifyTimer)
-  accountVerifyTimer = setInterval(() => {
-    if (verifying || switching) return
-    if (session.login.isExpired()) {
-      dialog.showErrorBox('账号登录已过期', '登录已失效，本机运行将停止，请重新登录。')
-      void leaveAccountToLogin()
-    }
-  }, 30_000)
+  // 会话校验 + 用户信息同步：随运行时启动，随登出/切换停止（重复启动先停旧的）。
+  session.stopSync?.()
+  session.stopSync = startAccountSync(session)
 }
 
 /** 环境已就绪（再次打开）时的启动：先用过场页覆盖本机 DSH 启动等待，再物化/按需更新 Profile 并启动。 */

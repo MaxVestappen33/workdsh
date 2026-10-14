@@ -33,7 +33,7 @@ corepack pnpm probe:browser
 
 产物内含所需 UI 代码和本地 DTO 声明，不要求运行时存在 `workdsh-ui` 或开发 workspace。React 由官方 renderer 共享；依赖的 Harness 服务明确声明，不把框架复制进包。
 
-技能页提供本地已安装技能管理和独立 SkillHub 浏览入口。目录浏览不自动安装技能；安装经过导入预检与用户确认。用户可显式选择已有的通用本地目录：个人运行设置 `WORKDSH_SKILL_CATALOG`，或由可信 Host 指定 `catalogRoot`。本地目录使用 `catalog.json`、`icons/` 与 `payloads/`；第三方内容的许可、依赖与兼容性由具体来源和安装校验决定。
+技能页提供本地已安装技能管理和独立 SkillHub 浏览入口。目录浏览不自动安装技能；安装经过导入预检与用户确认。用户可显式选择已有的通用本地目录：个人运行设置 `WORKDSH_SKILL_CATALOG`，或由可信 Host 指定 `catalogRoot`。本地目录使用 `catalog.json`、`icons/` 与 `payloads/`；第三方内容的许可、依赖与兼容性由具体来源和安装校验决定。技能显示名按「本地目录 `title` › 内置标签 › `SKILL.md` frontmatter 的 `title` › 技能名」取值，因此自建技能可在 frontmatter 写 `title: 中文名` 而不改变 kebab-case 的 `name`。
 
 ## 公开服务与依赖
 

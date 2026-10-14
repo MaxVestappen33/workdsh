@@ -61,6 +61,12 @@ function useAccountProfile(): { profile?: AccountProfile, refresh: () => void } 
     })();
   }, []);
   useEffect(() => { read(); return () => { pending.current?.abort(); pending.current = undefined; }; }, [read]);
+  // 主进程后台刷新了用户信息快照，渲染层不会自动感知；这里叠加 60s 轮询保持展示同步。
+  // 同源 loopback 请求，成本可忽略；打开菜单时的即时刷新仍保留。
+  useEffect(() => {
+    const timer = setInterval(() => read(), 60_000);
+    return () => clearInterval(timer);
+  }, [read]);
   return { profile, refresh: read };
 }
 
@@ -103,9 +109,12 @@ function avatarColor(seed: string): string {
 /** 头像：优先后端图片，加载失败或未提供时回退姓名首字。 */
 function AccountAvatar({ profile, size }: { profile: AccountProfile, size: number }) {
   const [broken, setBroken] = useState(false);
-  const url = broken ? undefined : profile.avatar;
-  if (url) {
-    return <img className="wd-account-avatar" src={url} alt="" width={size} height={size} onError={() => setBroken(true)} />;
+  const avatar = profile.avatar;
+  // 头像地址变化时复位失败标记：否则一次加载失败会让本组件在整个会话内永久回退首字，
+  // 即使之后刷新拿到了新的可用地址也不再重试。
+  useEffect(() => { setBroken(false); }, [avatar]);
+  if (avatar && !broken) {
+    return <img className="wd-account-avatar" src={avatar} alt="" width={size} height={size} onError={() => setBroken(true)} />;
   }
   return (
     <span

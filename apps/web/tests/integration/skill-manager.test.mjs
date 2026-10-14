@@ -38,6 +38,34 @@ test('default managed skills stay inside the WorkDSH home', async () => {
   }
 });
 
+test('local skill frontmatter title becomes the display title', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'workdsh-skill-title-'));
+  const dshHome = join(root, 'dsh');
+  const agentsHome = join(dshHome, 'agents');
+  const originalAgentsHome = process.env.DSH_AGENTS_HOME;
+  const originalDshHome = process.env.DSH_HOME;
+  const ctx = new Context();
+  try {
+    process.env.DSH_HOME = dshHome;
+    delete process.env.DSH_AGENTS_HOME;
+    await mkdir(join(agentsHome, 'skills', 'report-writer'), { recursive: true });
+    await writeFile(join(agentsHome, 'skills', 'report-writer', 'SKILL.md'),
+      '---\nname: report-writer\ntitle: 报告撰写助手\ndescription: 生成结构化报告\n---\n执行说明\n');
+    await ctx.plugin(SkillRegistry);
+    await ctx.plugin(filesystem, { dshHome, agentsHome, watch: false });
+    new SkillManager(ctx);
+    // 显示名来自技能自身 frontmatter 的 title，name 仍是 kebab-case 标识。
+    const summary = (await ctx.workdshSkills.list()).find(skill => skill.name === 'report-writer');
+    assert.equal(summary?.title, '报告撰写助手');
+    assert.equal((await ctx.workdshSkills.detail('report-writer'))?.title, '报告撰写助手');
+  } finally {
+    await ctx.fiber.dispose();
+    if (originalAgentsHome === undefined) delete process.env.DSH_AGENTS_HOME; else process.env.DSH_AGENTS_HOME = originalAgentsHome;
+    if (originalDshHome === undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = originalDshHome;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('SkillHub directory slug may differ from the official DSH skill name', async () => {
   const root = await mkdtemp(join(tmpdir(), 'workdsh-skillhub-name-'));
   const dshHome = join(root, 'dsh'); const agentsHome = join(dshHome, 'agents');

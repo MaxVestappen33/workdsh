@@ -24,7 +24,7 @@ export interface ManagedSkillSummary {
   readonly state: ManagedSkillState;
   readonly manageable: boolean;
   readonly diagnostics?: readonly SkillDiagnostic[];
-  /** Present only when the local catalog owns richer metadata for this skill. */
+  /** 显示名：来自技能自身 SKILL.md frontmatter 的 title，或本地目录/内置标签提供的更丰富元数据。 */
   readonly title?: string;
   readonly localizedDescription?: string;
   readonly categories?: readonly string[];

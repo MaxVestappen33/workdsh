@@ -20,6 +20,10 @@ export interface ServerConfig {
   loginPath: string
   /** Relative logout path. */
   logoutPath: string
+  /** 会话校验 + 用户信息刷新接口路径（账号模式运行中轮询）。 */
+  mePath: string
+  /** 运行中后台校验的轮询间隔（秒）。 */
+  syncIntervalSeconds: number
 }
 
 export interface AppConfig {
@@ -48,6 +52,8 @@ const DEFAULTS: AppConfig = {
     baseUrl: 'http://127.0.0.1:18080/ytsj-ai',
     loginPath: '/sys/pcClientLogin',
     logoutPath: '/sys/logout',
+    mePath: '/sys/pcClientVerifyUser',
+    syncIntervalSeconds: 30,
   },
 }
 
@@ -96,13 +102,19 @@ export function parseAppConfig(value: unknown): PartialAppConfig {
   if (root.server !== undefined) {
     if (!root.server || typeof root.server !== 'object' || Array.isArray(root.server)) throw new Error('server 配置无效')
     const a = root.server as Record<string, unknown>
-    for (const k of Object.keys(a)) if (k !== 'baseUrl' && k !== 'loginPath' && k !== 'logoutPath') throw new Error(`server 配置不接受字段 ${k}`)
+    for (const k of Object.keys(a)) if (k !== 'baseUrl' && k !== 'loginPath' && k !== 'logoutPath' && k !== 'mePath' && k !== 'syncIntervalSeconds') throw new Error(`server 配置不接受字段 ${k}`)
     if (a.baseUrl !== undefined) {
       if (typeof a.baseUrl !== 'string') throw new Error('server.baseUrl 必须是字符串')
       result.server = { ...(result.server ?? {}), baseUrl: normalizeBase(a.baseUrl) }
     }
     if (a.loginPath !== undefined) { if (typeof a.loginPath !== 'string' || !/^\//u.test(a.loginPath)) throw new Error('server.loginPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), loginPath: a.loginPath } }
     if (a.logoutPath !== undefined) { if (typeof a.logoutPath !== 'string' || !/^\//u.test(a.logoutPath)) throw new Error('server.logoutPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), logoutPath: a.logoutPath } }
+    if (a.mePath !== undefined) { if (typeof a.mePath !== 'string' || !/^\//u.test(a.mePath)) throw new Error('server.mePath 必须以 / 开头'); result.server = { ...(result.server ?? {}), mePath: a.mePath } }
+    if (a.syncIntervalSeconds !== undefined) {
+      // 轮询间隔需为正整数秒，且不超过 1 小时，避免配置错误导致请求风暴或长期不校验。
+      if (typeof a.syncIntervalSeconds !== 'number' || !Number.isInteger(a.syncIntervalSeconds) || a.syncIntervalSeconds < 1 || a.syncIntervalSeconds > 3600) throw new Error('server.syncIntervalSeconds 必须是 1-3600 的整数')
+      result.server = { ...(result.server ?? {}), syncIntervalSeconds: a.syncIntervalSeconds }
+    }
   }
   return result
 }

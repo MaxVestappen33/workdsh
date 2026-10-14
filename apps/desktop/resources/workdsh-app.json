@@ -9,6 +9,8 @@
   "server": {
     "baseUrl": "http://127.0.0.1:18080/ytsj-ai",
     "loginPath": "/sys/pcClientLogin",
-    "logoutPath": "/sys/logout"
+    "logoutPath": "/sys/logout",
+    "mePath": "/sys/pcClientVerifyUser",
+    "syncIntervalSeconds": 30
   }
 }

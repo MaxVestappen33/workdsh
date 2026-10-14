@@ -58,6 +58,17 @@ function webHost(baseUrl: string): string {
   try { return new URL(baseUrl).hostname } catch { return baseUrl }
 }
 
+/** 稳定序列化：键排序后序列化，避免字段顺序差异被误判为“内容变化”。 */
+function stableJson(value: Record<string, unknown>): string {
+  return JSON.stringify(Object.keys(value).sort().map(key => [key, value[key]] as const))
+}
+
+/** 会话校验 + 用户信息刷新的结果分类。 */
+export type AccountSyncOutcome =
+  | { outcome: 'ok', changed: boolean }
+  | { outcome: 'unauthorized', message: string }
+  | { outcome: 'retry', message: string }
+
 /** Decode the JWT exp claim without validating signature (local freshness only). */
 export function jwtExpiry(token: string): number | undefined {
   const parts = token.split('.')
@@ -79,8 +90,9 @@ export class AccountLogin {
   readonly origin: string
   readonly token: string
   readonly expiry: number | undefined
-  readonly user: AccountUser
-  readonly rawUserInfo: Record<string, unknown>
+  /** 可刷新快照：登录后由 syncProfile() 更新，凭证（token/config）保持不可变。 */
+  #user: AccountUser
+  #rawUserInfo: Record<string, unknown>
   #fetch: typeof fetch
   #lifetime = new AbortController()
 
@@ -89,9 +101,18 @@ export class AccountLogin {
     this.origin = accountOrigin(config.baseUrl)
     this.token = token
     this.expiry = expiry ?? jwtExpiry(token)
-    this.user = Object.freeze({ ...user })
-    this.rawUserInfo = Object.freeze({ ...rawUserInfo })
+    this.#user = Object.freeze({ ...user })
+    this.#rawUserInfo = Object.freeze({ ...rawUserInfo })
     this.#fetch = request
+  }
+
+  get user(): AccountUser { return this.#user }
+  get rawUserInfo(): Record<string, unknown> { return this.#rawUserInfo }
+
+  /** 原子替换可刷新的账号信息快照（token 凭证保持不变）。 */
+  private replaceSnapshot(user: AccountUser, rawUserInfo: Record<string, unknown>): void {
+    this.#user = Object.freeze({ ...user })
+    this.#rawUserInfo = Object.freeze({ ...rawUserInfo })
   }
 
   static async login(config: ServerConfig, username: string, password: string, request: typeof fetch = fetch): Promise<AccountLogin> {
@@ -120,6 +141,64 @@ export class AccountLogin {
   /** True when the JWT carries an exp and it is already past. Opaque tokens always assumed live. */
   isExpired(now = Date.now()): boolean {
     return this.expiry !== undefined && this.expiry * 1000 <= now
+  }
+
+  /**
+   * 会话有效性校验 + 用户信息（基本信息/权限）刷新，两者合并为同一个请求。
+   * 分类严格按「先 HTTP 状态，再 code，401 优先」：
+   * - 200 且 code=200 → ok（快照按需更新，changed 指示内容是否真的变了）
+   * - HTTP 401 或 code=401 → unauthorized（仅此才登出）
+   * - 其余（网络错/超时/5xx/非 200、401 的 code/非法回包）→ retry（容忍并退避）
+   */
+  async syncProfile(): Promise<AccountSyncOutcome> {
+    let response: Response
+    try {
+      response = await this.#fetch(`${this.origin}${this.config.mePath}`, {
+        method: 'GET', headers: { 'X-Access-Token': this.token }, redirect: 'error',
+        signal: AbortSignal.any([this.#lifetime.signal, AbortSignal.timeout(10_000)]),
+      })
+    } catch {
+      return { outcome: 'retry', message: '无法连接账号服务' }
+    }
+    let body: { code?: unknown, message?: unknown, result?: unknown }
+    try {
+      body = await response.json() as { code?: unknown, message?: unknown, result?: unknown }
+    } catch {
+      // 非 JSON 响应（如网关错误页）：只有 HTTP 401 判定失效，其余容忍。
+      return response.status === 401
+        ? { outcome: 'unauthorized', message: '登录已失效，请重新登录。' }
+        : { outcome: 'retry', message: `账号服务响应异常 (${response.status})` }
+    }
+    const message = typeof body.message === 'string' && body.message ? body.message : undefined
+    if (response.status === 401 || body.code === 401) {
+      return { outcome: 'unauthorized', message: message ?? '登录已失效，请重新登录。' }
+    }
+    if (response.status !== 200 || body.code !== 200 || !body.result || typeof body.result !== 'object' || Array.isArray(body.result)) {
+      return { outcome: 'retry', message: message ?? `账号服务响应异常 (${response.status})` }
+    }
+    const raw = body.result as Record<string, unknown>
+    let refreshed: AccountUser
+    try {
+      refreshed = accountUser(this.origin, raw)
+    } catch {
+      // 回包缺少有效用户信息属于后台数据问题，不登出。
+      return { outcome: 'retry', message: '账号服务返回的用户信息无效' }
+    }
+    // 用户 id 变化意味着 token 已指向别的账号，视为登录失效，避免静默切换身份。
+    if (refreshed.userId !== this.#user.userId) {
+      return { outcome: 'unauthorized', message: '登录账号已变更，请重新登录。' }
+    }
+    // organizationId（orgCode）无法热更新：保持登录时归属，避免破坏运行中工作区的身份绑定。
+    const merged: AccountUser = {
+      ...refreshed,
+      organizationId: this.#user.organizationId,
+      organizationName: refreshed.organizationName || this.#user.organizationName,
+    }
+    const changed = merged.displayName !== this.#user.displayName || merged.avatar !== this.#user.avatar ||
+      merged.phone !== this.#user.phone || merged.organizationName !== this.#user.organizationName ||
+      stableJson(raw) !== stableJson(this.#rawUserInfo)
+    if (changed) this.replaceSnapshot(merged, raw)
+    return { outcome: 'ok', changed }
   }
 
   /** POST the stored token to the configured logout endpoint. */

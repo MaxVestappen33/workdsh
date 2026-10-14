@@ -198,14 +198,19 @@ export class SkillManager extends Service implements SkillManagementService {
     const registeredFiles = new Set<string>();
     for (const skill of skills) {
       const manageable = this.isManagedSummary(skill);
+      let title: string | undefined;
       if (manageable) {
         const definition = await this.ctx.skills.get(skill.name, { signal });
         const path = definition?.path;
         if (!path) continue;
         try { if (!await this.isSafeManagedFile(path)) continue; registeredFiles.add(await realpath(path)); }
         catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT' || (error as Error).message === 'skill/path-symlink') continue; throw error; }
+        // 官方 provider 的 content/metadata 已剥离 frontmatter，显示名需自行读取 SKILL.md 解析。
+        // 本地目录元数据与内置硬编码随后仍会覆盖它。
+        try { title = frontmatterValue(await readFile(path, 'utf8'), 'title'); } catch { /* 读不到时回落 name */ }
       }
       rows.push({ name: skill.name, description: skill.description, whenToUse: skill.whenToUse,
+        ...(title ? { title } : {}),
         modelInvocable: skill.invocation.modelInvocable, state: manageable ? 'enabled' : 'readonly', manageable });
     }
     for (const root of this.activeRoots) {
@@ -222,10 +227,13 @@ export class SkillManager extends Service implements SkillManagementService {
         const validation = this.validateDocument(document);
         const displayName = validation.valid ? validation.name ?? name : name;
         if (rows.some(row => row.name === displayName)) continue;
+        // 显示名可来自技能自己的 SKILL.md frontmatter(title)；本地目录元数据与内置硬编码随后仍会覆盖它。
+        const title = frontmatterValue(document, 'title');
         rows.push({
           name: displayName,
           description: validation.description ?? '技能文件需要修复',
           whenToUse: frontmatterValue(document, 'when-to-use'),
+          ...(title ? { title } : {}),
           modelInvocable: validation.valid,
           state: validation.valid ? 'enabled' : 'invalid',
           manageable: true,
@@ -263,10 +271,12 @@ export class SkillManager extends Service implements SkillManagementService {
     if (active) {
       const document = await readFile(active.file, 'utf8');
       const validation = this.validateDocument(document);
+      const title = frontmatterValue(document, 'title');
       return {
         name,
         description: validation.description ?? '技能文件需要修复',
         whenToUse: frontmatterValue(document, 'when-to-use'),
+        ...(title ? { title } : {}),
         modelInvocable: validation.valid, state: validation.valid ? 'enabled' : 'invalid', manageable: true, document,
         directoryPath: dirname(active.file), revision: digest(document), resources: active.directoryBundle ? await resourceFiles(dirname(active.file)) : [],
         ...(validation.valid ? {} : { diagnostics: validation.diagnostics }),
@@ -275,10 +285,12 @@ export class SkillManager extends Service implements SkillManagementService {
     const disabled = await this.disabledEntry(name);
     if (!disabled) return undefined;
     const document = await readFile(disabled.file, 'utf8');
+    const title = frontmatterValue(document, 'title');
     return {
       name,
       description: frontmatterValue(document, 'description') ?? '已停用技能',
       whenToUse: frontmatterValue(document, 'when-to-use'),
+      ...(title ? { title } : {}),
       modelInvocable: false, state: 'disabled', manageable: true, document,
       directoryPath: dirname(disabled.file), revision: digest(document), resources: disabled.directoryBundle ? await resourceFiles(dirname(disabled.file)) : [],
     };
@@ -614,8 +626,12 @@ export class SkillManager extends Service implements SkillManagementService {
   }
 
   private async fromDefinition(definition: SkillDefinition): Promise<ManagedSkillDetail | undefined> {
+    // 官方 provider 的 content/metadata 已剥离 frontmatter，显示名由我们自己读取 SKILL.md 解析。
+    const source = definition.path ? await readFile(definition.path, 'utf8').catch(() => undefined) : undefined;
+    const title = source === undefined ? undefined : frontmatterValue(source, 'title');
     const readonlyDetail: ManagedSkillDetail = {
       name: definition.name, description: definition.description, whenToUse: definition.whenToUse,
+      ...(title ? { title } : {}),
       modelInvocable: definition.invocation.modelInvocable, state: 'readonly', manageable: false, resources: [],
     };
     if (!definition.path) return readonlyDetail;
@@ -626,10 +642,11 @@ export class SkillManager extends Service implements SkillManagementService {
     // activeEntry has enforced the managed-root and symlink checks. A winning
     // external skill with the same name must never select the managed copy.
     if (await realpath(definition.path) !== await realpath(active.file)) return readonlyDetail;
-    const document = await readFile(active.file, 'utf8');
+    const document = source ?? await readFile(active.file, 'utf8');
     const directory = dirname(active.file);
     return {
       name: definition.name, description: definition.description, whenToUse: definition.whenToUse,
+      ...(title ? { title } : {}),
       modelInvocable: definition.invocation.modelInvocable, state: 'enabled', manageable: true,
       document, revision: digest(document), directoryPath: directory, resources: await resourceFiles(directory),
     };
