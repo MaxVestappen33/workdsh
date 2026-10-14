@@ -7,10 +7,10 @@
     "subtitle": "正在准备好您的工作区，请稍候..."
   },
   "server": {
-    "baseUrl": "http://127.0.0.1:18080/ytsj-ai",
+    "baseUrl": "http://56.82.4.232:18080/ytsj-ai",
     "loginPath": "/sys/pcClientLogin",
     "logoutPath": "/sys/logout",
     "mePath": "/sys/pcClientVerifyUser",
-    "syncIntervalSeconds": 30
+    "syncIntervalSeconds": 300
   }
 }
