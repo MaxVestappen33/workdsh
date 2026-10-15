@@ -1,6 +1,7 @@
 import { ShellAppearance } from '../components/ShellAppearance.js';
 import { installFreshSessionNavigation } from './fresh-session.js';
 import { communityMarketView, type MarketHost } from '../components/CommunityMarket.js';
+import { PlazaEntryInSidebarHidden } from '../components/PlazaEntry.js';
 import type { Context } from '@deepseek-ai/cordis';
 import type {} from '@deepseek-ai/dsh-api-remotes/client';
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client';
@@ -43,6 +44,20 @@ export function apply(ctx: Context): void {
       label: '发现社区插件',
     }, communityMarketView(scope.market)));
   });
+  // SkillHub keeps the plaza as a third-party overlay that positions itself
+  // against the conversation. Its sidebar row duplicates the account-menu
+  // entry that opens that same overlay, so hide the row and keep the overlay.
+  ctx.effect(() => {
+    let disposed = false;
+    let unregister: (() => void) | undefined;
+    void ctx.remote.pluginInventory.list().then(response => {
+      if (disposed || !response.ok) return;
+      if (!response.value.entries.some(row => row.moduleName === '@cocofhu/skillhub')) return;
+      unregister = ctx.slots.inject('shell.overlay', () => ctx.slots.register(
+        { name: 'shell.overlay', id: 'workdsh-plaza-entry' }, PlazaEntryInSidebarHidden));
+    }).catch(() => { /* Unknown inventory is not evidence that the plugin is absent. */ });
+    return () => { disposed = true; unregister?.(); };
+  }, 'workdsh.plaza.sidebar-entry');
   let legacyBrowserEnabled = false;
   ctx.effect(() => {
     let disposed = false;

@@ -14,6 +14,8 @@ export const inject = ['slots'];
 const ACCOUNT_PATH = '/api/auth/me';
 const LOGOUT_PATH = '/api/auth/logout';
 const ACCOUNT_TIMEOUT_MS = 8_000;
+/** SkillHub 广场的入口按钮：侧栏展示已由 WorkDSH 隐藏，改由本菜单触发同一个广场。 */
+const PLAZA_TRIGGER_SELECTOR = '.sh-plaza-trigger';
 
 /** 账号档案：不可用时整体为 undefined，入口退化为官方回退的「设置」外观。 */
 type AccountProfile = {
@@ -143,17 +145,30 @@ function LogoutIcon() {
   );
 }
 
+function PlazaIcon() {
+  return (
+    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden focusable={false}>
+      <path d="M4 5h7v6H4zM13 5h7v6h-7zM4 14h7v5H4zM13 14h7v5h-7z" />
+    </svg>
+  );
+}
+
 /** 侧栏底部入口：账号可用时为头像 + 姓名，否则复用官方「设置」外观。 */
 function AccountLauncher({ wide, settingsShortcut, openSettings }: PropsRuntime<'settings.launcher'>) {
   const { profile, refresh } = useAccountProfile();
   const [open, setOpen] = useState(false);
+  const [plazaReady, setPlazaReady] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
   // 打开菜单时刷新账号档案：后端改了头像/组织名后无需重启应用即可生效。
   const toggle = (): void => {
-    if (!open) refresh();
+    if (!open) {
+      refresh();
+      // 广场由第三方插件可选提供：只有入口按钮确实存在时才给出这一项。
+      setPlazaReady(document.querySelector(PLAZA_TRIGGER_SELECTOR) !== null);
+    }
     setOpen(!open);
   };
 
@@ -225,6 +240,14 @@ function AccountLauncher({ wide, settingsShortcut, openSettings }: PropsRuntime<
         >
           设置
         </MenuItemButton>
+        {plazaReady && (
+          <MenuItemButton
+            icon={<PlazaIcon />}
+            onSelect={() => { setOpen(false); document.querySelector<HTMLButtonElement>(PLAZA_TRIGGER_SELECTOR)?.click(); }}
+          >
+            插件广场
+          </MenuItemButton>
+        )}
         {profile && (
           <MenuItemButton
             separatorBefore
