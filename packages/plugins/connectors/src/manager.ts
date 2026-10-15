@@ -5,7 +5,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent';
 import { credentialRef } from '@deepseek-ai/dsh-credentials';
 import * as McpClient from '@deepseek-ai/dsh-mcp-client';
 import type { KvTable } from '@deepseek-ai/dsh-storage-domain';
-import type { ConnectorConfigView, ConnectorInput, ConnectorManagementService, ConnectorState, ConnectorSummary } from './shared.js';
+import type { ConnectorConfigView, ConnectorInput, ConnectorManagementService, ConnectorState, ConnectorSummary, ConnectorTool } from './shared.js';
 import { connectorDefinitionSchema, connectorSelectionsDomainSpec, connectorsDomainSpec, type ConnectorDefinition, type ConnectorSelection } from './storage.js';
 
 declare module '@deepseek-ai/cordis' { interface Context { workdshConnectors: ConnectorManagementService; } }
@@ -24,6 +24,14 @@ type ChildFiber = { dispose(): Promise<void> };
 type Runtime = { child?: ChildFiber; state: ConnectorState; diagnostic?: string };
 type JsonRecord = Record<string, unknown>;
 const record = (value: unknown): JsonRecord | undefined => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as JsonRecord : undefined;
+/** 把官方工具 schema 投影为界面展示用的工具信息（含入参的必填标记与说明）。 */
+const toolDetail = (schema: { name: string; description?: string; parameters?: Record<string, unknown> }): ConnectorTool => {
+  const parameters = Object.entries(schema.parameters ?? {}).flatMap(([name, raw]) => {
+    const value = record(raw); if (!value) return [];
+    return [{ name, required: value.required === true, ...(typeof value.description === 'string' ? { description: value.description } : {}) }];
+  });
+  return { name: schema.name, ...(schema.description ? { description: schema.description } : {}), parameters };
+};
 const idPart = (value: string) => value.replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
 const refFor = (value: string) => credentialRef(value) as unknown as Parameters<Context['credentials']['resolve']>[0];
 
@@ -184,22 +192,25 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
     const health = await this.health(definition, signal);
     return { id: definition.id, title: definition.title, description: definition.description, serverName: definition.serverName,
       transport: definition.transport, scope: 'shared', enabled: definition.enabled, state: health.state, toolNames: health.toolNames,
-      resourceCount: health.resourceCount, resourceTemplateCount: health.resourceTemplateCount, lastCheckedAt: new Date().toISOString(),
+      tools: health.tools, resourceCount: health.resourceCount, resourceTemplateCount: health.resourceTemplateCount, lastCheckedAt: new Date().toISOString(),
+      ...(definition.originId ? { originId: definition.originId } : {}), ...(definition.category ? { category: definition.category } : {}),
       ...(health.diagnostic ? { diagnostic: health.diagnostic } : {}) };
   }
 
-  private async health(definition: ConnectorDefinition, signal?: AbortSignal): Promise<{ state: ConnectorState; toolNames: string[]; resourceCount: number; resourceTemplateCount: number; diagnostic?: string }> {
+  private async health(definition: ConnectorDefinition, signal?: AbortSignal): Promise<{ state: ConnectorState; toolNames: string[]; tools: ConnectorTool[]; resourceCount: number; resourceTemplateCount: number; diagnostic?: string }> {
     const runtime = this.runtime(definition.id);
-    if (!definition.enabled) return { state: 'disabled', toolNames: [], resourceCount: 0, resourceTemplateCount: 0 };
-    const prefix = `mcp__${definition.serverName}__`; const toolNames = this.ctx.tools.schemas().map(tool => tool.name).filter(name => name.startsWith(prefix));
-    if (!runtime.child) return { state: runtime.state, toolNames, resourceCount: 0, resourceTemplateCount: 0, ...(runtime.diagnostic ? { diagnostic: runtime.diagnostic } : {}) };
-    if (!toolNames.length) return { state: 'discovering', toolNames, resourceCount: 0, resourceTemplateCount: 0 };
+    if (!definition.enabled) return { state: 'disabled', toolNames: [], tools: [], resourceCount: 0, resourceTemplateCount: 0 };
+    const prefix = `mcp__${definition.serverName}__`;
+    const schemas = this.ctx.tools.schemas().filter(tool => tool.name.startsWith(prefix));
+    const toolNames = schemas.map(tool => tool.name); const tools = schemas.map(toolDetail);
+    if (!runtime.child) return { state: runtime.state, toolNames, tools, resourceCount: 0, resourceTemplateCount: 0, ...(runtime.diagnostic ? { diagnostic: runtime.diagnostic } : {}) };
+    if (!toolNames.length) return { state: 'discovering', toolNames, tools, resourceCount: 0, resourceTemplateCount: 0 };
     try {
       const agent = this.ctx.agents.list().find(candidate =>
         this.selectionTable().get(String(candidate.id))?.connectorIds.includes(definition.id));
       if (!agent) {
         runtime.diagnostic = '工具已连接，资源检查未完成。';
-        return { state: 'ready', toolNames, resourceCount: 0, resourceTemplateCount: 0, diagnostic: runtime.diagnostic };
+        return { state: 'ready', toolNames, tools, resourceCount: 0, resourceTemplateCount: 0, diagnostic: runtime.diagnostic };
       }
       const call = async (name: string, args: JsonRecord) => {
         const output = await this.ctx.tools.execute({ name, arguments: args, callId: randomUUID() as never, agent, signal: signal ?? new AbortController().signal });
@@ -214,11 +225,11 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
       const templates: JsonRecord = this.ctx.tools.get('list_mcp_resource_templates')
         ? await call('list_mcp_resource_templates', { server: definition.serverName }).catch(() => unavailable('templates')) : unavailable('templates');
       runtime.state = 'ready'; runtime.diagnostic = resourceDiagnostics.length ? '工具已连接，资源检查未完成。' : undefined;
-      return { state: 'ready', toolNames, ...(runtime.diagnostic ? { diagnostic: runtime.diagnostic } : {}), resourceCount: Array.isArray(resources.resources) ? resources.resources.length : 0,
+      return { state: 'ready', toolNames, tools, ...(runtime.diagnostic ? { diagnostic: runtime.diagnostic } : {}), resourceCount: Array.isArray(resources.resources) ? resources.resources.length : 0,
         resourceTemplateCount: Array.isArray(templates.resourceTemplates) ? templates.resourceTemplates.length : 0 };
     } catch (cause) {
       runtime.state = 'offline'; runtime.diagnostic = cause instanceof Error ? cause.message : 'MCP 健康检查失败。';
-      return { state: 'offline', toolNames, resourceCount: 0, resourceTemplateCount: 0, diagnostic: runtime.diagnostic };
+      return { state: 'offline', toolNames, tools, resourceCount: 0, resourceTemplateCount: 0, diagnostic: runtime.diagnostic };
     }
   }
 
@@ -226,6 +237,9 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
     const value = connectorDefinitionSchema.omit({ id: true, enabled: true, createdAt: true, updatedAt: true }).parse({
       title: input.title.trim(), description: input.description?.trim() ?? '', serverName: input.serverName.trim(), transport: input.transport,
       ...(input.transport === 'stdio' ? { command: input.command?.trim(), args: [...(input.args ?? [])] } : { url: input.url?.trim() }),
+      // 仅市场安装流程会传入来源与分类；用户自建实例两者皆为空，界面按「自建」呈现。
+      ...(input.category?.trim() ? { category: input.category.trim() } : {}),
+      ...(input.originId?.trim() ? { originId: input.originId.trim() } : {}),
     });
     if (value.transport === 'stdio' && !value.command) throw new Error('connector/command-required');
     if (value.transport === 'streamable-http' && !value.url) throw new Error('connector/url-required');

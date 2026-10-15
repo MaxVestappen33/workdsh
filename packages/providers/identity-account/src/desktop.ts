@@ -51,4 +51,8 @@ export default class AccountDesktopIdentity extends Service implements IdentityS
     if (!this.identity) throw new Error('Account Desktop authentication required');
     return this.identity.resolve(evidence, signal);
   }
+  /** 通用业务后台通道的绑定来源：Main 只在登录态有效时经只读回环路由下发后台地址与裸 JWT。 */
+  backendBinding(signal?: AbortSignal) { return this.authority.backendBinding(signal); }
+  /** 后台把成员身份的请求判定为未授权时，转达 Main 触发与轮询一致的失效收尾。 */
+  backendUnauthorized(signal?: AbortSignal) { return this.authority.unauthorized(signal); }
 }

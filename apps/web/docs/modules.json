@@ -590,5 +590,18 @@
       "R03",
       "R15"
     ]
+  },
+  {
+    "path": "../../packages/providers/backend-channel",
+    "title": "通用业务后台通道",
+    "status": "in_progress",
+    "directories": [
+      "src"
+    ],
+    "moduleVersion": "0.1",
+    "requirements": [
+      "R06",
+      "R15"
+    ]
   }
 ]

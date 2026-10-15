@@ -1,6 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type {} from '@deepseek-ai/dsh-client-connection/client';
 import type {} from '@deepseek-ai/dsh-api-remotes/client';
+import type { MarketCategory, MarketPage, MarketQuery } from '../market.js';
 import type { ConnectorConfigView, ConnectorInput, ConnectorSummary } from '../shared.js';
 
 const path = '/api/workdsh-connectors';
@@ -31,6 +32,11 @@ export function createConnectorManagementClient(ctx: Context, lifetime?: AbortSi
     setEnabled: (id: string, enabled: boolean) => invoke<ConnectorSummary>(ctx, 'set-enabled', { id, enabled }, lifetime),
     selection: (sessionId: string) => invoke<readonly string[]>(ctx, 'selection', { sessionId }, lifetime),
     setSelection: (sessionId: string, connectorIds: readonly string[]) => invoke<readonly string[]>(ctx, 'set-selection', { sessionId, connectorIds }, lifetime),
+    marketAvailable: () => invoke<{ available: boolean }>(ctx, 'market-available', {}, lifetime),
+    marketList: (input: MarketQuery) => invoke<MarketPage>(ctx, 'market-list', input, lifetime),
+    marketCategories: () => invoke<readonly MarketCategory[]>(ctx, 'market-categories', {}, lifetime),
+    marketInstall: (originId: string) => invoke<ConnectorSummary>(ctx, 'market-install', { originId }, lifetime),
+    marketUninstall: (target: { originId?: string; id?: string }) => invoke<{ uninstalled: boolean; reported: boolean }>(ctx, 'market-uninstall', target, lifetime),
   };
 }
 export type ConnectorManagementClient = ReturnType<typeof createConnectorManagementClient>;

@@ -340,12 +340,19 @@ export function restoreAccountLogin(config: ServerConfig, user: AccountUser, tok
 
 /**
  * A capability-protected loopback bridge for the DSH account provider. It answers
- * identity queries and logout; the bearer token stays in this main process.
+ * identity queries, the read-only business-backend binding, the side-effecting
+ * session-invalidation notice and logout; the bearer token stays in this main
+ * process and is only handed out while the session is live.
+ *
+ * `onUnauthorized` is optional: Main uses it to run the same session-invalidation
+ * finish as the sync loop (提示 + 退回登录页) when a member request was rejected by the backend.
  */
-export async function startAccountAuthority(login: AccountLogin, onLogout: () => void, onInvalid: () => void): Promise<AccountAuthority> {
+export async function startAccountAuthority(login: AccountLogin, onLogout: () => void, onInvalid: () => void, onUnauthorized?: () => void): Promise<AccountAuthority> {
   const key = randomBytes(32).toString('hex')
   const expected = Buffer.from(`Bearer ${key}`)
   let closing = false
+  /** 失效通知幂等：并发/多次 401 只做一次收尾，避免重复弹窗与重复切换。 */
+  let unauthorizedNotified = false
   const server: Server = createServer(async (req, res) => {
     res.setHeader('Cache-Control', 'no-store')
     const reject = (status: number, message: string): void => { if (res.destroyed) return; res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: message })) }
@@ -363,6 +370,24 @@ export async function startAccountAuthority(login: AccountLogin, onLogout: () =>
       if (login.isExpired()) { closing = true; reject(401, 'Account authorization expired'); setImmediate(onInvalid); return }
       res.writeHead(200, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ ...login.user, principalId: login.user.userId, backendUrl: login.origin, mustChangePassword: false, desktop: true }))
+      return
+    }
+    // 只读的业务后台绑定：登录 JWT 只在 Main 内存里按需取用，绝不下发给渲染层，也不落盘。
+    // 与 /auth/me 同样只在登录态有效时下发；已过期一律 401，避免上层拿到失效令牌。
+    if (url.pathname === '/auth/backend-binding' && req.method === 'GET' && !url.search) {
+      if (req.headers['content-length'] !== undefined || req.headers['transfer-encoding'] !== undefined) { reject(400, 'Desktop read-only operation accepts no request body'); return }
+      if (login.isExpired()) { closing = true; reject(401, 'Account authorization expired'); setImmediate(onInvalid); return }
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ url: login.origin, authorization: login.token }))
+      return
+    }
+    // 有副作用的成员失效通知（**非只读**）：后台把某次成员身份的请求判定为未授权时，由持有
+    // authorityKey 的本机调用方通知 Main。与只读的 /auth/backend-binding 不同，本路由会触发
+    // 一次与轮询相同的收尾（弹「账号登录已失效」并退回登录页），因此沿用同一套能力校验、
+    // 同样拒绝带 Origin 的浏览器请求，并额外保证幂等：重复通知只收尾一次。
+    if (url.pathname === '/auth/backend-unauthorized' && req.method === 'POST' && !url.search) {
+      res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('{"accepted":true}')
+      if (!unauthorizedNotified) { unauthorizedNotified = true; setImmediate(() => onUnauthorized?.()) }
       return
     }
     reject(404, 'Unknown Desktop operation')

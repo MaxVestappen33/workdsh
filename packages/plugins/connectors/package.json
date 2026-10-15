@@ -65,7 +65,8 @@
     "workdsh-ui": "workspace:*",
     "zod": "^4.3.6",
     "@deepseek-ai/dsh-client-ui-primitives": "0.2.0-rc.2",
-    "workdsh-contracts": "workspace:*"
+    "workdsh-contracts": "workspace:*",
+    "workdsh-provider-backend-channel": "workspace:*"
   },
   "dsh": {
     "bundle": {

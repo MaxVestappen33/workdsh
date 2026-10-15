@@ -19,7 +19,7 @@ import { readModelCredentials } from './model-credentials.ts'
 import { readAppConfig, type ResolvedAppConfig } from './app-config.ts'
 import { AccountLogin, AccountStore, restoreAccountLogin, startAccountAuthority, type AccountAuthority } from './member-auth.ts'
 import { EnterpriseLogin, startEnterpriseAuthority, type Authority } from './enterprise-auth.ts'
-import { desktopEnterprisePatch, desktopAccountPatch, accountSpace, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher, type AccountActor } from './local-runtime.ts'
+import { desktopEnterprisePatch, desktopAccountPatch, desktopConnectorMarketPatch, accountSpace, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher, type AccountActor } from './local-runtime.ts'
 import { manageCommand } from './command-management.ts'
 import { cleanOwnedProcessTree, reclaimOrphanedToolProcesses, stopOwnedProcess } from './owned-process.ts'
 
@@ -418,13 +418,27 @@ function rememberCommandSpace(home?: string): void {
   writeFileSync(join(app.getPath('userData'), 'command-context.json'), JSON.stringify({ personalHome: runtimeHome(), active }), { mode: 0o600 })
 }
 
+/**
+ * 把载体配置里的 MCP 市场接口路径作为补丁层交给 connectors 插件（缺配置时它用内置默认值）。
+ * 配置读取失败不阻断工作区启动：账号流程在启动前已读取并校验过同一份配置，这里退化为内置默认值。
+ */
+function marketPatchLayer(home: string): string[] {
+  try {
+    const patch = desktopConnectorMarketPatch(home, loadConfig().server)
+    return patch === undefined ? [] : [patch]
+  } catch (error) {
+    process.stderr.write(`[startup] MCP 市场接口路径未注入，连接器将使用内置默认值：${error instanceof Error ? error.message : String(error)}\n`)
+    return []
+  }
+}
+
 function startRuntime(home: string, connection: DesktopConnection, patches: string[] = [], onReady?: () => void): void {
   rememberCommandSpace(home)
   if (quitRequested) throw new Error('启动已取消')
   const executable = bundledNodeExecutable()
   if (!existsSync(executable)) throw new Error(`Bundled Node.js runtime is missing: ${executable}`)
   const basePatch = join(bundledProfileDirectory(), 'cordis.patch.yml')
-  const layers = [...(existsSync(basePatch) ? [basePatch] : []), ...patches]
+  const layers = [...(existsSync(basePatch) ? [basePatch] : []), ...patches, ...marketPatchLayer(home)]
   const launcher = officialHostLauncher(bundledProfileDirectory(), home, executable, join(bundledPrimaryRuntime(), 'dependencies', 'pnpm', 'bin', 'pnpm.cjs'), layers)
   // 兜底：回收上次异常退出（终端 Ctrl+C / 被强杀）遗留的同一启动器进程，避免端口/资源冲突导致本次启动失败。
   reclaimOrphanedToolProcesses(launcher)
@@ -740,7 +754,7 @@ async function startAccountRuntime(home: string): Promise<void> {
   session.deviceId = space.deviceId
   // A restored session restarts its loopback authority here; a fresh login already bound one.
   if (!session.authority) {
-    session.authority = await startAccountAuthority(session.login, () => { void leaveAccountToLogin() }, () => { void leaveAccountToLogin() })
+    session.authority = await startAccountAuthority(session.login, () => { void leaveAccountToLogin() }, () => { void leaveAccountToLogin() }, abandonAccountSession)
   }
   const { authority } = session
   if (!authority) throw new Error('账号授权未就绪')
@@ -769,6 +783,16 @@ async function leaveAccountToLogin(): Promise<void> {
   try { await leaveAccountWorkspace(); showAccountLogin() }
   catch (error) { dialog.showErrorBox('暂时无法返回登录', error instanceof Error ? error.message : '请稍后重试') }
   finally { endSwitch() }
+}
+
+/**
+ * 成员身份的请求（如连接器市场）被后台判定为未授权时的收尾。
+ * 与 startAccountSync 轮询拿到 unauthorized 时完全一致：弹「账号登录已失效」提示并退回登录页，
+ * 不必等最多一个轮询间隔。重复通知由回环桥保证只收尾一次。
+ */
+function abandonAccountSession(): void {
+  dialog.showErrorBox('账号登录已失效', '登录已过期，请重新登录。')
+  void leaveAccountToLogin()
 }
 
 /** 首次启动 / 升级后的“环境准备中”过场页：创建即显示，不再隐藏等待。 */
@@ -952,7 +976,7 @@ function installLoginHandlers(): void {
       store.write(login.seal())
       account = { login, store, deviceId: '' }
       // Bind the account identity to a loopback authority held in Main.
-      const authority = await startAccountAuthority(login, () => { void leaveAccountToLogin() }, () => { void leaveAccountToLogin() })
+      const authority = await startAccountAuthority(login, () => { void leaveAccountToLogin() }, () => { void leaveAccountToLogin() }, abandonAccountSession)
       account.authority = authority
       // 登录成功：把入口窗口切到过场页，用它的展示时间覆盖本机 DSH 的启动等待；主机就绪后直接换成主界面。
       const home = runtimeHome()

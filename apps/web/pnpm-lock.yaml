@@ -675,6 +675,9 @@ importers:
       workdsh-contracts:
         specifier: workspace:*
         version: link:../../contracts
+      workdsh-provider-backend-channel:
+        specifier: workspace:*
+        version: link:../../providers/backend-channel
       workdsh-ui:
         specifier: workspace:*
         version: link:../../ui
@@ -1344,6 +1347,15 @@ importers:
       workdsh-ui:
         specifier: workspace:*
         version: link:../../ui
+
+  ../../packages/providers/backend-channel:
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.4
+        version: 4.0.4(@deepseek-ai/cordis-plugin-include@1.0.9)(@deepseek-ai/cordis-plugin-loader@1.0.5)
+      '@types/node':
+        specifier: 22.19.0
+        version: 22.19.0
 
   ../../packages/providers/browser-session:
     dependencies:

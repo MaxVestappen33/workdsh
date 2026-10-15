@@ -93,6 +93,49 @@ export class DesktopAuthority {
     return { principalId: account.id, organizationId: account.organizationId, organizationName: account.organizationName,
       displayName: account.displayName, active: true, role: account.role };
   }
+  /**
+   * 通用业务后台通道按需索取的绑定：后台根地址 + 裸 JWT。
+   *
+   * 令牌来自 Main 回环桥的只读路由 `/auth/backend-binding`：它是被校验的登录态的直接产物，
+   * 不是受保护 auth 文件里的 `authorityKey`（那是 64–128 位 hex 能力，只允许调用本机桥的
+   * 封闭路由）。因此令牌仍然只存在于 Electron Main 内存，由本方法每次按需获取、
+   * 不缓存、不写入任何 Host 持久化状态，也不进入任何渲染层响应。
+   *
+   * 顺序固定为「先复验绑定记录，再复验登录态，最后取令牌」：受保护文件被替换或绑定变更时
+   * 报绑定错误，登录过期或回包结构不符时报明确的失败，绝不静默降级为可用。
+   */
+  async backendBinding(signal?: AbortSignal): Promise<{ url: string; authorization: string }> {
+    signal?.throwIfAborted();
+    // 先确认绑定记录本身仍然完好：受保护文件被替换或绑定变更时，报错必须指向绑定而不是令牌通道。
+    const binding = await this.credentials();
+    let value: unknown;
+    try {
+      // 再复验登录态，最后才取令牌：Main 只在登录态有效时下发绑定。
+      await this.account(signal);
+      value = await this.request('/auth/backend-binding', 'GET', undefined, signal);
+    } catch (error) {
+      // 401 表示 Main 判定登录态已失效：给出明确失败，而不是把过期令牌当成可用绑定。
+      if (error instanceof DesktopAuthorityError && error.status === 401)
+        throw new DesktopAuthorityError('Account Desktop sign-in expired; sign in again', 401);
+      throw error;
+    }
+    const record = (value ?? {}) as { url?: unknown, authorization?: unknown };
+    const url = typeof record.url === 'string' ? record.url : undefined;
+    // 后台地址必须与绑定记录一致；授权值必须是非空字符串。错误消息只描述结论，不回显令牌或地址。
+    if (url === undefined || url !== binding.backendUrl || typeof record.authorization !== 'string' || !record.authorization)
+      throw new DesktopAuthorityError('Account Desktop backend binding is invalid');
+    return { url, authorization: record.authorization };
+  }
+  /**
+   * 通知 Main：一次成员身份的请求被后台判定为未授权（HTTP 401 或信封 code 401）。
+   *
+   * 与只读的 `backendBinding()` 不同，这条回环路由**有副作用**：Main 会执行与轮询一致的
+   * 失效收尾（弹「账号登录已失效」提示并退回登录页），因此只能由持有本机 `authorityKey`
+   * 的能力方调用。调用成功与否都不影响调用方原有的 401 判定，失效通知是尽力而为。
+   */
+  async unauthorized(signal?: AbortSignal): Promise<void> {
+    await this.request('/auth/backend-unauthorized', 'POST', {}, signal);
+  }
   async logout(signal?: AbortSignal): Promise<{ local: true }> {
     // Main owns local stop/cleanup even when backend revocation cannot be confirmed.
     const value = await this.request('/auth/logout', 'POST', {}, signal) as { local?: boolean };

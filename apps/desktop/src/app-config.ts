@@ -24,6 +24,14 @@ export interface ServerConfig {
   mePath: string
   /** 运行中后台校验的轮询间隔（秒）。 */
   syncIntervalSeconds: number
+  /** MCP 市场：列表接口路径。 */
+  mcpMarketListPath: string
+  /** MCP 市场：分类字典接口路径。 */
+  mcpMarketCategoriesPath: string
+  /** MCP 市场：安装上报接口路径。 */
+  mcpMarketInstallPath: string
+  /** MCP 市场：卸载上报接口路径。 */
+  mcpMarketUninstallPath: string
 }
 
 export interface AppConfig {
@@ -54,6 +62,11 @@ const DEFAULTS: AppConfig = {
     logoutPath: '/sys/logout',
     mePath: '/sys/pcClientVerifyUser',
     syncIntervalSeconds: 30,
+    // 四个市场接口都在 desktop-client 命名空间；安装不再从后台取连接配置（连接字段全部来自市场列表）。
+    mcpMarketListPath: '/desktop-client/mcptool/queryAuthorizedMcpToolList',
+    mcpMarketCategoriesPath: '/desktop-client/mcptool/queryMcpToolBizSceneList',
+    mcpMarketInstallPath: '/desktop-client/mcptool/installMcpTool',
+    mcpMarketUninstallPath: '/desktop-client/mcptool/unInstallMcpTool',
   },
 }
 
@@ -102,7 +115,7 @@ export function parseAppConfig(value: unknown): PartialAppConfig {
   if (root.server !== undefined) {
     if (!root.server || typeof root.server !== 'object' || Array.isArray(root.server)) throw new Error('server 配置无效')
     const a = root.server as Record<string, unknown>
-    for (const k of Object.keys(a)) if (k !== 'baseUrl' && k !== 'loginPath' && k !== 'logoutPath' && k !== 'mePath' && k !== 'syncIntervalSeconds') throw new Error(`server 配置不接受字段 ${k}`)
+    for (const k of Object.keys(a)) if (k !== 'baseUrl' && k !== 'loginPath' && k !== 'logoutPath' && k !== 'mePath' && k !== 'syncIntervalSeconds' && k !== 'mcpMarketListPath' && k !== 'mcpMarketCategoriesPath' && k !== 'mcpMarketInstallPath' && k !== 'mcpMarketUninstallPath') throw new Error(`server 配置不接受字段 ${k}`)
     if (a.baseUrl !== undefined) {
       if (typeof a.baseUrl !== 'string') throw new Error('server.baseUrl 必须是字符串')
       result.server = { ...(result.server ?? {}), baseUrl: normalizeBase(a.baseUrl) }
@@ -110,6 +123,10 @@ export function parseAppConfig(value: unknown): PartialAppConfig {
     if (a.loginPath !== undefined) { if (typeof a.loginPath !== 'string' || !/^\//u.test(a.loginPath)) throw new Error('server.loginPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), loginPath: a.loginPath } }
     if (a.logoutPath !== undefined) { if (typeof a.logoutPath !== 'string' || !/^\//u.test(a.logoutPath)) throw new Error('server.logoutPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), logoutPath: a.logoutPath } }
     if (a.mePath !== undefined) { if (typeof a.mePath !== 'string' || !/^\//u.test(a.mePath)) throw new Error('server.mePath 必须以 / 开头'); result.server = { ...(result.server ?? {}), mePath: a.mePath } }
+    if (a.mcpMarketListPath !== undefined) { if (typeof a.mcpMarketListPath !== 'string' || !/^\//u.test(a.mcpMarketListPath)) throw new Error('server.mcpMarketListPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), mcpMarketListPath: a.mcpMarketListPath } }
+    if (a.mcpMarketCategoriesPath !== undefined) { if (typeof a.mcpMarketCategoriesPath !== 'string' || !/^\//u.test(a.mcpMarketCategoriesPath)) throw new Error('server.mcpMarketCategoriesPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), mcpMarketCategoriesPath: a.mcpMarketCategoriesPath } }
+    if (a.mcpMarketInstallPath !== undefined) { if (typeof a.mcpMarketInstallPath !== 'string' || !/^\//u.test(a.mcpMarketInstallPath)) throw new Error('server.mcpMarketInstallPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), mcpMarketInstallPath: a.mcpMarketInstallPath } }
+    if (a.mcpMarketUninstallPath !== undefined) { if (typeof a.mcpMarketUninstallPath !== 'string' || !/^\//u.test(a.mcpMarketUninstallPath)) throw new Error('server.mcpMarketUninstallPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), mcpMarketUninstallPath: a.mcpMarketUninstallPath } }
     if (a.syncIntervalSeconds !== undefined) {
       // 轮询间隔需为正整数秒，且不超过 1 小时，避免配置错误导致请求风暴或长期不校验。
       if (typeof a.syncIntervalSeconds !== 'number' || !Number.isInteger(a.syncIntervalSeconds) || a.syncIntervalSeconds < 1 || a.syncIntervalSeconds > 3600) throw new Error('server.syncIntervalSeconds 必须是 1-3600 的整数')

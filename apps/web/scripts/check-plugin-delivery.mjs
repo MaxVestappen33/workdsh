@@ -11,7 +11,7 @@ for(const directory of directories){try{const manifest=JSON.parse(await readFile
 return manifests;
 }
 export const defaults=['workdsh-provider-identity-local','workdsh-provider-browser-session','workdsh-plugin-audit','workdsh-plugin-access','workdsh-plugin-skills','workdsh-plugin-experts','workdsh-plugin-connectors','workdsh-plugin-library','workdsh-bundle'];
-const allowed=new Set([...defaults,'workdsh-contracts','workdsh-ui','workdsh-plugin-workbench']);
+const allowed=new Set([...defaults,'workdsh-contracts','workdsh-ui','workdsh-plugin-workbench','workdsh-provider-backend-channel']);
 /**
  * 构建期复用：默认包可以把某个独立安装功能的公开模块编译进自己的产物，只要该功能不成为运行期依赖。
  * 每条边必须逐条登记（消费方 -> 被复用功能），运行期字段 dependencies/optionalDependencies/peerDependencies

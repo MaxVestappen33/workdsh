@@ -9,6 +9,7 @@ import { cachedPackageManager } from './plugin-archive-cache.ts'
 import { enterpriseNamespace } from './connection-mode.ts'
 import type { EnterpriseMember, Authority } from './enterprise-auth.ts'
 import type { AccountAuthority } from './member-auth.ts'
+import type { ServerConfig } from './app-config.ts'
 
 type ProfilePackage = { dependencies?: Record<string, string>, optionalDependencies?: Record<string, string>, dsh?: { profile?: { bundles?: string[] } }, [key: string]: unknown }
 const BASE_STATE = '.workdsh-desktop-base.json'
@@ -209,6 +210,25 @@ export function desktopEnterprisePatch(home: string, authority: Authority, actor
   const patch = join(home, '.enterprise-desktop.patch.yml')
   writeFileSync(patch, `- id: workdsh-identity-local\n  disabled: true\n- insert:\n    - id: workdsh-enterprise-account-client\n      name: workdsh-provider-identity-enterprise\n    - id: workdsh-desktop-identity\n      name: workdsh-provider-identity-enterprise/desktop\n      config:\n        authFile: ${JSON.stringify(authFile)}\n        principalId: ${JSON.stringify(actor.id)}\n        organizationId: ${JSON.stringify(actor.organizationId)}\n        deviceId: ${JSON.stringify(deviceId)}\n${collaboration ? `- insert:\n    - id: workdsh-desktop-collaboration\n      name: workdsh-plugin-enterprise-collaboration\n      config:\n        desktop: true\n` : ''}- id: workdsh-session-access\n  config:\n    autoBindFixedMemberSessions: true\n- id: workdsh-tool-access\n  config:\n    autoBindPersonalSessions: false\n    autoBindFixedMemberSessions: true\n- id: workspace-controller\n  config:\n    documentsDirectory: ${JSON.stringify(join(home, '..', 'workspace'))}\n`, { mode: 0o600 })
   return { authFile, patch }
+}
+
+/**
+ * MCP 市场接口路径的注入层。路径归载体配置（workdsh-app.json 的 server 段）所有，而
+ * connectors 是 Desktop/Web 共用的 Profile 包、不能自己去读载体配置，因此由这里按运行时
+ * 配置生成 overlay，把四个路径作为插件选项交给 connectors 插件。
+ * app-config 已保证取值以 `/` 开头；缺失或取值非法的字段不写进本层，插件回退到内置默认值。
+ */
+export function desktopConnectorMarketPatch(home: string, server: ServerConfig): string | undefined {
+  const rows = ([
+    ['list', server.mcpMarketListPath],
+    ['categories', server.mcpMarketCategoriesPath],
+    ['install', server.mcpMarketInstallPath],
+    ['uninstall', server.mcpMarketUninstallPath],
+  ] as const).flatMap(([name, value]) => (typeof value === 'string' && /^\//u.test(value) ? [[name, value] as const] : []))
+  if (rows.length === 0) return undefined
+  const patch = join(home, '.connector-market.patch.yml')
+  writeFileSync(patch, `- id: workdsh-connectors\n  config:\n    paths:\n${rows.map(([name, value]) => `      ${name}: ${JSON.stringify(value)}\n`).join('')}`, { mode: 0o600 })
+  return patch
 }
 
 export interface AccountActor {

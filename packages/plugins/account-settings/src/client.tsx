@@ -240,14 +240,14 @@ function AccountLauncher({ wide, settingsShortcut, openSettings }: PropsRuntime<
         >
           设置
         </MenuItemButton>
-        {plazaReady && (
+        {/* {plazaReady && (
           <MenuItemButton
             icon={<PlazaIcon />}
             onSelect={() => { setOpen(false); document.querySelector<HTMLButtonElement>(PLAZA_TRIGGER_SELECTOR)?.click(); }}
           >
             插件广场
           </MenuItemButton>
-        )}
+        )} */}
         {profile && (
           <MenuItemButton
             separatorBefore

@@ -1,0 +1,39 @@
+{
+  "name": "workdsh-provider-backend-channel",
+  "version": "0.1.0-alpha.1",
+  "private": true,
+  "type": "module",
+  "description": "通用业务后台通道：标准请求头、响应信封解开与错误透传，功能插件只声明自己的路径与字段映射。",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./backend-client": {
+      "types": "./dist/backend-client.d.ts",
+      "default": "./dist/backend-client.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "cordis.patch.yml"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {},
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.4"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.4",
+    "@types/node": "22.19.0"
+  }
+}
