@@ -34,23 +34,31 @@ export const connectorCss = `${modalCss}
 .wd-connectors .section-head h1{font-size:25px;line-height:34px;font-weight:600}
 .wd-connectors .head-meta{margin-left:auto;color:var(--dsw-alias-label-tertiary);font-size:12px}
 .wd-connectors .source-tabs{display:flex;gap:26px;margin:0 0 18px;border-bottom:1px solid var(--dsw-alias-border-l2)}
-.wd-connectors .source-tabs button{display:inline-flex;align-items:center;gap:8px;padding:11px 2px;margin-bottom:-1px}
+.wd-connectors .source-tabs button{display:inline-flex;align-items:center;gap:6px;padding:11px 2px;margin-bottom:-1px}
 .wd-connectors .source-tabs button{border:0;border-bottom:2px solid transparent;border-radius:0;background:transparent;color:var(--dsw-alias-label-secondary)}
 .wd-connectors .source-tabs button:hover{color:var(--dsw-alias-label-primary)}
 .wd-connectors .source-tabs button.active{border-bottom-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-primary);font-weight:600}
-.wd-connectors .source-tabs .count{display:inline-grid;place-items:center;min-width:24px;height:20px;padding:0 7px}
-.wd-connectors .source-tabs .count{border-radius:999px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-secondary);font-size:12px;font-style:normal;font-weight:500}
+/* 数量徽标：浅灰胶囊 + 与标题齐平的数字，紧贴标题（参考设计稿的「模型 125」样式）。 */
+.wd-connectors .source-tabs .count{display:inline-grid;place-items:center;min-width:28px;height:22px;padding:0 9px}
+.wd-connectors .source-tabs .count{border-radius:999px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);font-size:14px;font-style:normal;font-weight:600;line-height:1;font-variant-numeric:tabular-nums}
+.wd-connectors .source-tabs button:hover .count{color:var(--dsw-alias-label-primary)}
+.wd-connectors .source-tabs button.active .count{color:var(--dsw-alias-label-primary)}
 
 /* ------------------------------------------------- 分类胶囊栏 + 「更多」浮层 */
 .wd-connectors .category-bar{position:relative;display:flex;align-items:center;gap:7px;margin:0 0 18px;min-width:0}
-.wd-connectors .category-tabs{display:flex;gap:7px;min-width:0}
-.wd-connectors .category-tabs button[data-category],.wd-connectors .more-btn{padding:5px 13px;border:0;border-radius:999px}
-.wd-connectors .category-tabs button[data-category],.wd-connectors .more-btn{background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-secondary);white-space:nowrap}
+.wd-connectors .category-tabs{display:flex;gap:4px;min-width:0}
+/* 胶囊尺寸与圆角：参考设计稿的分类标签（圆角矩形，不是全圆角）。 */
+.wd-connectors .category-tabs button[data-category],.wd-connectors .more-btn{padding:6px 12px;border:0;border-radius:9px}
+.wd-connectors .category-tabs button[data-category],.wd-connectors .more-btn{background:transparent;color:var(--dsw-alias-label-secondary);white-space:nowrap}
+/* 选中＝与悬浮一致的浅灰圆角底 + 深色加粗，未选中＝无底色灰字。
+   注意：选中底色必须用 interactive-bg-hover，bg-layer-3 在本主题下几乎与页面底色一致，看不出选中。 */
 .wd-connectors .category-tabs button[data-category]:hover,.wd-connectors .more-btn:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
-.wd-connectors .category-tabs button[data-category].active{background:var(--dsw-alias-bg-layer-2);box-shadow:inset 0 0 0 1px var(--dsw-alias-border-l2);color:var(--dsw-alias-label-primary);font-weight:600}
+.wd-connectors .category-tabs button[data-category].active{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);font-weight:600}
 .wd-connectors .category-tabs button[hidden],.wd-connectors .more-wrap[hidden],.wd-connectors .more-panel[hidden]{display:none}
 .wd-connectors .more-wrap{position:relative;flex:none;display:inline-flex}
-.wd-connectors .more-btn{display:inline-flex;align-items:center;gap:4px;padding:5px 12px}
+.wd-connectors .more-btn{display:inline-flex;align-items:center;gap:5px}
+/* 「更多」上的计数＝被折叠且已选中的分类数量，避免选中项被折叠后看不见。 */
+.wd-connectors .more-btn .more-count{display:inline-grid;place-items:center;min-width:16px;height:16px;padding:0 5px;border-radius:999px;background:var(--dsw-alias-brand-primary);color:#fff;font-size:11px;font-style:normal;font-weight:600;line-height:1}
 .wd-connectors .more-btn .chev{display:inline-flex;transition:transform .12s ease}
 .wd-connectors .more-btn.open .chev{transform:rotate(180deg)}
 .wd-connectors .more-panel{position:absolute;top:calc(100% + 8px);right:0;z-index:30;min-width:168px;padding:8px}
@@ -71,7 +79,7 @@ export const connectorCss = `${modalCss}
 
 /* ------------------------------------------------------------ 卡片网格与卡片 */
 .wd-connectors .grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:22px}
-.wd-connectors .card{position:relative;display:flex;flex-direction:column;min-width:0;min-height:148px;padding:14px;text-align:left}
+.wd-connectors .card{position:relative;display:flex;flex-direction:column;min-width:0;min-height:148px;padding:14px;text-align:left;cursor:pointer}
 .wd-connectors .card{border:1px solid var(--dsw-alias-border-l2);border-radius:18px;background:var(--dsw-alias-bg-layer-2);transition:border-color .12s ease,background .12s ease}
 .wd-connectors .card:hover{border-color:var(--dsw-alias-border-l2);background:var(--dsw-alias-interactive-bg-hover)}
 .wd-connectors .card.is-off{opacity:.58}
@@ -121,51 +129,78 @@ export const connectorCss = `${modalCss}
 .wd-connectors .stats{color:var(--dsw-alias-label-tertiary);font-size:12px}
 .wd-connectors .stat{display:flex;align-items:center;gap:5px;white-space:nowrap}
 .wd-connectors .stat svg{width:15px;height:15px}
-.wd-connectors .plus{display:grid;place-items:center;width:36px;padding:0}
-.wd-connectors .plus{border:1px solid var(--dsw-alias-border-l2);border-radius:50%;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary)}
+.wd-connectors .plus{display:grid;place-items:center;width:30px;height:30px;padding:0}
+.wd-connectors .plus{border:0;border-radius:9px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary)}
 .wd-connectors .plus:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
+.wd-connectors .plus.installing{cursor:default}
+/* 转圈指示器：安装加号与启停开关的加载态共用。 */
+.wd-connectors .spinner{width:15px;height:15px;border-radius:50%}
+.wd-connectors .spinner{border:2px solid var(--dsw-alias-border-l2);border-top-color:var(--dsw-alias-brand-primary);animation:wd-connector-spin .7s linear infinite}
+@keyframes wd-connector-spin{to{transform:rotate(360deg)}}
+/* 开关槽位：启停期间原地显示加载态，保持开关所在位置不跳动。 */
+.wd-connectors .switch-loading{flex:none;display:grid;place-items:center;width:34px;height:34px}
 .wd-connectors .installed-pill{flex:none;padding:4px 10px;border-radius:999px}
 .wd-connectors .installed-pill{background:var(--dsw-alias-bg-layer-1);color:#55ce63;font-size:12px;font-weight:500}
 .wd-connectors .market-foot{display:flex;justify-content:center;padding:22px 0 6px;color:var(--dsw-alias-label-tertiary);font-size:12px}
+
+/* ------------------------------------------------------------ 安装进度条 */
+.wd-connectors .install-bar,.connector-detail-dialog .install-bar{position:relative;overflow:hidden;height:3px;margin-top:10px}
+.wd-connectors .install-bar,.connector-detail-dialog .install-bar{border-radius:999px;background:var(--dsw-alias-bg-layer-3)}
+.wd-connectors .install-bar-fill,.connector-detail-dialog .install-bar-fill{position:absolute;top:0;bottom:0;left:0;width:40%}
+.wd-connectors .install-bar-fill,.connector-detail-dialog .install-bar-fill{border-radius:999px;background:var(--dsw-alias-brand-primary);animation:wd-connector-install 1.2s ease-in-out infinite}
+@keyframes wd-connector-install{0%{transform:translateX(-110%)}100%{transform:translateX(260%)}}
+.connector-detail-dialog .install-bar{margin:0 0 16px;flex:none}
 .wd-connectors .empty{padding:64px 20px;text-align:center;color:var(--dsw-alias-label-tertiary)}
 .wd-connectors .empty strong{display:block;margin-bottom:6px}
 .wd-connectors .empty strong{color:var(--dsw-alias-label-secondary);font-size:16px}
 
 /* ------------------------------------------------------------ 详情弹窗 */
+/* 弹窗自身不滚动：上方信息区（图标、标题、说明、指标）固定，只有下方工具清单滚动，
+   工具很多时也不会把标题滚到看不见。 */
 .wd-dialog.connector-detail-dialog{width:min(820px,calc(100vw - 40px))}
+.wd-dialog.connector-detail-dialog{display:flex;flex-direction:column;overflow:hidden}
 .connector-detail-dialog{padding:24px}
-.connector-detail-dialog .detail-hero{display:grid;grid-template-columns:48px minmax(0,1fr) auto;gap:16px;align-items:center}
+.connector-detail-dialog .detail-hero{display:grid;grid-template-columns:48px minmax(0,1fr) auto;gap:16px;align-items:center;flex:none}
 .connector-detail-dialog .detail-hero{padding-right:52px}
 .connector-detail-dialog .detail-title{min-width:0}
 .connector-detail-dialog .detail-title h1{margin:0 0 4px}
 .connector-detail-dialog .detail-title h1{font-size:20px;overflow-wrap:anywhere}
 .connector-detail-dialog .detail-actions{display:flex;align-items:center;gap:9px}
-.connector-detail-dialog .detail-summary{margin:20px 0}
+.connector-detail-dialog .detail-summary{margin:20px 0;flex:none}
 .connector-detail-dialog .detail-summary{color:var(--dsw-alias-label-secondary)}
-.connector-detail-dialog .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;padding:16px}
+/* flex-basis 必须留 auto：弹窗高度是内容撑开的，basis 为 0 会让指标区拿不到高度、
+   内容直接溢出。留 auto 才能在超出 max-height 时把多余高度压给工具清单去滚动。 */
+.connector-detail-dialog .metrics{display:flex;flex-direction:column;flex:1 1 auto;min-height:0;gap:12px;padding:16px}
 .connector-detail-dialog .metrics{border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-2)}
+.connector-detail-dialog .metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;flex:none}
 .connector-detail-dialog .metric small{display:block}
 .connector-detail-dialog .metric small{color:var(--dsw-alias-label-tertiary);font-size:12px}
 .connector-detail-dialog .metric strong{font-size:15px}
-.connector-detail-dialog .tool-list{grid-column:1/-1;padding:14px;border-radius:8px}
+/* 工具清单：表头固定，只有 tool-list-body 滚动，工具很多时「共 N 个」也不动。 */
+.connector-detail-dialog .tool-list{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;padding:14px;border-radius:8px}
 .connector-detail-dialog .tool-list{background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-tertiary);font-size:13px}
-.connector-detail-dialog .tool-list-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.connector-detail-dialog .tool-list-body{flex:1;min-height:0;overflow:auto;scrollbar-width:thin;scrollbar-color:var(--dsw-alias-border-l2) transparent}
+.connector-detail-dialog .tool-list-head{flex:none;display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
 .connector-detail-dialog .tool-list-head{color:var(--dsw-alias-label-secondary);font-weight:500}
 .connector-detail-dialog .tool-list-head .muted{color:var(--dsw-alias-label-tertiary);font-weight:400}
 .connector-detail-dialog .tool-item{padding:12px 0;border-top:1px solid var(--dsw-alias-border-l2)}
 .connector-detail-dialog .tool-item:first-of-type{border-top:0}
-.connector-detail-dialog .tool-item-top{display:flex;align-items:center;gap:8px}
+.connector-detail-dialog .tool-item-top{display:flex;align-items:baseline;gap:8px}
+/* 工具序号：与工具名同色（正文色），固定窄列宽，等宽数字避免工具名左右错位。 */
+.connector-detail-dialog .tool-index{flex:none;min-width:16px;color:var(--dsw-alias-label-primary);font-style:normal;font-variant-numeric:tabular-nums}
 .connector-detail-dialog .tool-item code{margin:0;overflow-wrap:anywhere}
-.connector-detail-dialog .tool-item code,.connector-detail-dialog code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#a8c9ff}
+.connector-detail-dialog .tool-item code,.connector-detail-dialog code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--dsw-alias-label-primary)}
 .connector-detail-dialog .tool-tag{margin-left:auto;padding:1px 8px;border-radius:999px}
 .connector-detail-dialog .tool-tag{background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-secondary);font-size:11px}
 .connector-detail-dialog .tool-item p{margin:6px 0 0;color:var(--dsw-alias-label-secondary)}
 .connector-detail-dialog .tool-item small{display:block;margin-top:4px}
 .connector-detail-dialog .tool-item small,.connector-detail-dialog .tool-empty{margin-top:6px;color:var(--dsw-alias-label-tertiary);font-size:12px}
 .connector-detail-dialog .tool-empty{margin:12px 0 0}
-.connector-detail-dialog .detail-footer{display:flex;align-items:center;gap:9px;margin-top:20px}
-.connector-detail-dialog .detail-footer .spacer{margin-left:auto}
+.connector-detail-dialog .error{flex:none}
+.connector-detail-dialog .hint{flex:none;margin:0 0 14px;color:var(--dsw-alias-label-tertiary)}
 .connector-detail-dialog .danger,.connector-config-dialog .danger{color:#ff8f89}
+/* 市场详情的「已安装」：与卡片上的已安装胶囊同色，和可点击的「安装」区分开。 */
+.connector-detail-dialog .installed-action{color:#55ce63}
 
 /* ------------------------------------------------------------ 表单与确认弹窗 */
 .wd-dialog.connector-config-dialog{width:min(680px,calc(100vw - 32px))}
@@ -193,7 +228,7 @@ export const connectorCss = `${modalCss}
 @media(max-width:1100px){.wd-connectors .grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:900px){.wd-connectors .head-tools{width:100%;margin-left:0}
 .wd-connectors .search{flex:1;width:100%}
-.connector-detail-dialog .metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+.connector-detail-dialog .metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 .connector-detail-dialog .detail-hero{grid-template-columns:48px minmax(0,1fr)}
 .connector-detail-dialog .detail-actions{grid-column:1/-1}}
 @media(max-width:620px){.wd-connectors{padding:16px}

@@ -209,7 +209,7 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
       const agent = this.ctx.agents.list().find(candidate =>
         this.selectionTable().get(String(candidate.id))?.connectorIds.includes(definition.id));
       if (!agent) {
-        runtime.diagnostic = '工具已连接，资源检查未完成。';
+        runtime.diagnostic = '工具已连接并可用；资源与 URI 模板需要在会话中探测，当前没有会话选择该 MCP，暂未统计。';
         return { state: 'ready', toolNames, tools, resourceCount: 0, resourceTemplateCount: 0, diagnostic: runtime.diagnostic };
       }
       const call = async (name: string, args: JsonRecord) => {
@@ -224,7 +224,7 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
         ? await call('list_mcp_resources', { server: definition.serverName }).catch(() => unavailable('resources')) : unavailable('resources');
       const templates: JsonRecord = this.ctx.tools.get('list_mcp_resource_templates')
         ? await call('list_mcp_resource_templates', { server: definition.serverName }).catch(() => unavailable('templates')) : unavailable('templates');
-      runtime.state = 'ready'; runtime.diagnostic = resourceDiagnostics.length ? '工具已连接，资源检查未完成。' : undefined;
+      runtime.state = 'ready'; runtime.diagnostic = resourceDiagnostics.length ? '工具已连接并可用；该服务未提供资源或 URI 模板能力，暂未统计。' : undefined;
       return { state: 'ready', toolNames, tools, ...(runtime.diagnostic ? { diagnostic: runtime.diagnostic } : {}), resourceCount: Array.isArray(resources.resources) ? resources.resources.length : 0,
         resourceTemplateCount: Array.isArray(templates.resourceTemplates) ? templates.resourceTemplates.length : 0 };
     } catch (cause) {

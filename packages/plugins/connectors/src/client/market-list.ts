@@ -14,25 +14,32 @@ export interface MarketListState {
 
 export const emptyMarketList: MarketListState = { items: [], total: 0, page: 0, hasMore: false };
 
-/** 当前生效的筛选条件：分类胶囊文案 + 搜索框关键词。 */
+/** 当前生效的筛选条件：已选中的分类胶囊文案（多选，顺序即选择顺序）+ 搜索框关键词。 */
 export interface MarketListFilter {
-  readonly category: string;
+  readonly categories: readonly string[];
   readonly keyword: string;
 }
 
-/** 分类文案 → 分类字典 value；「全部」或未命中字典时返回 undefined，表示不下发筛选。 */
-export function marketSceneOf(category: string, dictionary: readonly MarketCategory[]): string | undefined {
-  return dictionary.find(item => item.text === category)?.value;
+/** 分类文案 → 分类字典 value；未命中字典的值直接跳过，全部未命中时返回空数组，表示不下发筛选。 */
+export function marketSceneOf(categories: readonly string[], dictionary: readonly MarketCategory[]): readonly string[] {
+  return categories.flatMap(category => {
+    const value = dictionary.find(item => item.text === category)?.value;
+    return value ? [value] : [];
+  });
 }
 
-/** 一页的请求参数：分类与关键词都交给服务端，空值不下发。切换筛选时以 page = 1 重新取数。 */
+/**
+ * 一页的请求参数：分类与关键词都交给服务端，空值不下发。切换筛选时以 page = 1 重新取数。
+ * 多选时把各分类 value 用英文逗号连接后下发为单个 `bizScene`（如 `a,b`），语义为命中任一；
+ * 单选时下发结果与旧契约完全一致（如 `a`）。
+ */
 export function marketListQuery(filter: MarketListFilter, page: number, dictionary: readonly MarketCategory[]): MarketQuery {
-  const scene = marketSceneOf(filter.category, dictionary);
+  const scenes = marketSceneOf(filter.categories, dictionary);
   const keyword = filter.keyword.trim();
   return {
     page,
     pageSize: MARKET_PAGE_SIZE,
-    ...(scene ? { scene } : {}),
+    ...(scenes.length ? { scene: scenes.join(',') } : {}),
     ...(keyword ? { keyword } : {}),
   };
 }

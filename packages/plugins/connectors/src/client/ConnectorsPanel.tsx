@@ -23,17 +23,20 @@ type Injected = {
 };
 type Props = PropsRuntime<'main'> & InjectFace<Injected>;
 
-const ALL = '全部';
-const CUSTOM = '自定义';
 /** 滚动到距底部这么多像素时自动加载下一页。 */
 const MARKET_SCROLL_THRESHOLD = 160;
+/** 成功提示的自动消失时间：错误提示不做自动消失，避免用户还没看清就没了。 */
+const NOTICE_DURATION_MS = 3_000;
+/** 市场关键词防抖：关键词由服务端筛选，等输入停顿这么久再发请求，避免每敲一键打一次后台。 */
+const MARKET_QUERY_DEBOUNCE_MS = 250;
 const capabilityTabs = [['experts', '专家'], ['skills', '技能'], ['connectors', '连接器']] as const;
 const capabilityKey: Record<string, string> = { experts: 'workdsh-experts', skills: 'workdsh-skills', connectors: 'workdsh-connectors' };
 
 export function ConnectorsPanel({ toggleNavigation, management, openCapability, hasCapability }: Props) {
   const [rows, setRows] = useState<readonly ConnectorSummary[]>([]);
   const [tab, setTab] = useState<'local' | 'market'>('local');
-  const [category, setCategory] = useState(ALL);
+  /** 已选分类（多选，数组顺序即用户选择顺序）；空数组等价于「全部」。 */
+  const [categories, setCategories] = useState<readonly string[]>([]);
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState('');
@@ -54,28 +57,33 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
   const [marketMore, setMarketMore] = useState(false);
   const [marketError, setMarketError] = useState('');
   const [marketMoreError, setMarketMoreError] = useState('');
+  /** 正在安装的市场条目 id：驱动卡片/详情弹窗的加载态与进度条。 */
+  const [installingId, setInstallingId] = useState<string>();
+  /** 正在启停的本地实例 id：启停要拉起或断开 MCP 进程，同样需要逐行加载态。 */
+  const [togglingId, setTogglingId] = useState<string>();
   /** 分类字典的同步快照：发请求时立即读取，避免等待 state 更新。 */
   const dictionaryRef = useRef<readonly MarketCategory[]>([]);
   /** 请求代号：筛选变化时递增，用于丢弃过期响应，避免旧结果覆盖新筛选。 */
   const generationRef = useRef(0);
+  /** 关键词防抖计时器：市场关键词由服务端筛选，输入停顿后才发请求。 */
+  const queryTimerRef = useRef<number>(undefined);
 
   /** 市场分类代码 → 界面文案；字典缺失时退回代码本身。 */
   const categoryText = useCallback((code: string) => marketDict.find(item => item.value === code)?.text ?? code, [marketDict]);
-  /** 本地实例分类来自条目（bizScene 的第一个值），自建实例没有分类代码，归入「自定义」。 */
-  const categoryOf = useCallback((row: ConnectorSummary) => (row.category?.trim() ? categoryText(row.category.trim()) : CUSTOM), [categoryText]);
+  /** 本地实例分类来自条目（bizScene 的第一个值）；没有分类的实例不参与分类筛选，只在「全部」下出现。 */
+  const categoryOf = useCallback((row: ConnectorSummary) => (row.category?.trim() ? categoryText(row.category.trim()) : ''), [categoryText]);
   const searchTextOf = (row: ConnectorSummary): string =>
     `${row.title} ${row.description} ${row.serverName} ${categoryOf(row)} ${row.toolNames.join(' ')}`;
 
   const localCategories = useMemo(() => {
     const used = new Set(rows.map(categoryOf));
-    const list = marketDict.map(item => item.text).filter(text => used.has(text));
-    if (rows.some(row => !row.originId)) list.push(CUSTOM);
-    return list;
+    return marketDict.map(item => item.text).filter(text => used.has(text));
   }, [rows, categoryOf, marketDict]);
   const marketCategories = useMemo(() => marketDict.map(item => item.text), [marketDict]);
   const options = useMemo(() => (tab === 'local' ? localCategories : marketCategories), [tab, localCategories, marketCategories]);
-  const activeCategory = options.includes(category) ? category : ALL;
-  const filter: MarketListFilter = { category: activeCategory, keyword: query };
+  /** 只保留当前页签仍存在的选中项：切页签或分类字典变化后，失效的选择自动丢弃。 */
+  const activeCategories = useMemo(() => categories.filter(name => options.includes(name)), [categories, options]);
+  const filter: MarketListFilter = { categories: activeCategories, keyword: query };
 
   const refresh = useCallback(async () => {
     setBusy(true);
@@ -93,6 +101,14 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
   useEffect(() => {
     void refresh();
   }, [refresh]);
+  // 成功提示 3 秒后自动消失；错误提示保持显示，直到下一次操作把它清掉。
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(''), NOTICE_DURATION_MS);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+  // 面板卸载时取消还没发出的关键词请求。
+  useEffect(() => () => window.clearTimeout(queryTimerRef.current), []);
 
   /** 首屏与筛选变化：分类与关键词都交给服务端，一律从第 1 页重新取，并用新结果替换旧列表。 */
   const loadMarket = useCallback(async (next: MarketListFilter) => {
@@ -130,7 +146,7 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
       }
       if (!active) return;
       setMarketOn(available);
-      if (available) await loadMarket({ category: ALL, keyword: '' });
+      if (available) await loadMarket({ categories: [], keyword: '' });
     })();
     return () => {
       active = false;
@@ -163,15 +179,18 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
     if (await refresh()) setNotice('已重新检测全部本地 MCP 的连接状态。');
   };
   const toggle = async (row: ConnectorSummary, enabled: boolean) => {
-    setBusy(true);
     setError('');
     setNotice('');
+    // 启停会真正拉起或断开 MCP 进程：只标记这一行，卡片显示加载态，其余行保持可操作。
+    setTogglingId(row.id);
     try {
       await management.setEnabled(row.id, enabled);
-      await refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '连接器启停失败。');
-      setBusy(false);
+    } finally {
+      // 结束前保持加载态，避免开关先跳回旧状态再翻正。
+      await refresh();
+      setTogglingId(undefined);
     }
   };
   const edit = async (row: ConnectorSummary) => {
@@ -264,43 +283,54 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
     else setNotice(`已删除 ${targets.length} 个 MCP。`);
   };
   const installMarket = async (entry: MarketItem) => {
-    setBusy(true);
     setError('');
     setNotice('');
-    setMarketDetailId(undefined);
+    // 安装期间保持详情弹窗打开：进度条与按钮加载态都在原位反馈，安装结束后再收起。
+    setInstallingId(entry.originId);
     try {
       const installed = await management.marketInstall(entry.originId);
       setNotice(`已从市场安装「${installed.title}」。`);
-      await refresh();
-      if (marketOn) await loadMarket(filter);
+      setMarketDetailId(undefined);
     } catch (cause) {
+      // 安装是「后台上报 + 本机建连」两段串联：超时或中断时本机可能已经装好，
+      // 因此失败提示之外还要同步一次真实状态，避免界面显示"失败"但实例其实已存在。
       setError(cause instanceof Error ? cause.message : '从市场安装失败。');
     } finally {
-      setBusy(false);
+      // 保持加载态直到状态同步完成，避免卡片先闪回加号再变成「已安装」。
+      await refresh();
+      if (marketOn) await loadMarket(filter);
+      setInstallingId(undefined);
     }
   };
 
   const switchTab = (next: 'local' | 'market') => {
     setTab(next);
     setQuery('');
-    setCategory(ALL);
+    setCategories([]);
     setBatch(false);
     setSelected([]);
+    // 提示属于上一个页签的操作结果，切页签时一并清掉，否则出错信息会跟到另一个页签上。
+    setError('');
+    setNotice('');
+    window.clearTimeout(queryTimerRef.current);
     // 进入市场：清空筛选后按服务端最新数据重新取第一页。
-    if (next === 'market' && marketOn) void loadMarket({ category: ALL, keyword: '' });
+    if (next === 'market' && marketOn) void loadMarket({ categories: [], keyword: '' });
   };
-  const changeCategory = (next: string) => {
-    if (next === category) return;
-    setCategory(next);
-    // 分类由服务端筛选：切换分类重置到第 1 页并重新拉取。
+  const changeCategory = (next: readonly string[]) => {
+    setCategories(next);
+    // 分类是明确的一次点击，立即取数；同时作废还在等待中的关键词请求，避免重复请求。
+    window.clearTimeout(queryTimerRef.current);
     if (tab !== 'market' || !marketOn) return;
-    void loadMarket({ category: next, keyword: query });
+    void loadMarket({ categories: next, keyword: query });
   };
   const changeQuery = (next: string) => {
     setQuery(next);
-    // 市场关键词同样由服务端筛选；本地 Tab 的关键词仍是即时本地过滤。
+    // 本地页签的关键词是即时本地过滤；市场页签的关键词交给服务端，等输入停顿后再发一次请求。
     if (tab !== 'market' || !marketOn) return;
-    void loadMarket({ category: activeCategory, keyword: next });
+    window.clearTimeout(queryTimerRef.current);
+    queryTimerRef.current = window.setTimeout(() => {
+      void loadMarket({ categories: activeCategories, keyword: next });
+    }, MARKET_QUERY_DEBOUNCE_MS);
   };
   const toggleBatch = () => {
     setBatch(value => !value);
@@ -311,7 +341,7 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
 
   const normalized = query.trim().toLowerCase();
   const matchText = (text: string) => !normalized || text.toLowerCase().includes(normalized);
-  const visibleLocal = rows.filter(row => matchText(searchTextOf(row)) && (activeCategory === ALL || categoryOf(row) === activeCategory));
+  const visibleLocal = rows.filter(row => matchText(searchTextOf(row)) && (!activeCategories.length || activeCategories.includes(categoryOf(row))));
   // 市场不做任何本地过滤：分类与关键词都由服务端筛选，界面只负责拼接分页结果。
   const total = tab === 'local' ? rows.length : market.total;
   // 已安装判定：本机实例的 originId（市场条目 id）或 serverName（市场 serviceId）。
@@ -321,7 +351,7 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
   const detail = rows.find(row => row.id === detailId);
   const marketDetail = marketDetailId ? market.items.find(entry => entry.originId === marketDetailId) : undefined;
   const selectedTitles = rows.filter(row => selected.includes(row.id)).map(row => row.title);
-  const searchPlaceholder = tab === 'local' ? '搜索连接器' : '搜索 MCP 市场';
+  const searchPlaceholder = '请输入MCP名称搜索...';
   const empty = tab === 'local' ? !busy && !visibleLocal.length : !marketBusy && !marketError && !market.items.length;
   const marketReady = tab !== 'market' || (!marketError && !marketBusy);
 
@@ -366,8 +396,9 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
             value={query}
             onChange={event => changeQuery(event.currentTarget.value)}
           />
-          <Button className="secondary" disabled={busy} onClick={() => void handleRefresh()}>刷新状态</Button>
-          {tab === 'local' ? (
+          {/* 刷新状态只作用于本机实例的连接检测，因此在市场页签下不出现。 */}
+          {tab === 'local' ? <Button className="secondary" disabled={busy} onClick={() => void handleRefresh()}>刷新状态</Button> : null}
+          {/* {tab === 'local' ? (
             <Button className={batch ? 'secondary active' : 'secondary'} onClick={toggleBatch}>{batch ? '退出批量' : '批量删除'}</Button>
           ) : null}
           <Button
@@ -378,27 +409,27 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
             }}
           >
             ＋ 添加 MCP
-          </Button>
+          </Button> */}
         </div>
       </header>
 
       <div className="section-head">
-        <h1>MCP 管理</h1>
-        <span className="head-meta">{connected} 个已连接 · 本地共 {rows.length}</span>
+        <h1>MCP管理</h1>
       </div>
 
       <nav className="source-tabs" aria-label="MCP 来源">
         <button type="button" className={tab === 'local' ? 'active' : ''} aria-current={tab === 'local' ? 'page' : undefined} onClick={() => switchTab('local')}>
-          我的本地 MCP <i className="count">{rows.length}</i>
+          本地MCP<i className="count" title="本机 MCP 数量">{rows.length}</i>
         </button>
         {marketOn ? (
           <button type="button" className={tab === 'market' ? 'active' : ''} aria-current={tab === 'market' ? 'page' : undefined} onClick={() => switchTab('market')}>
-            MCP 市场
+            MCP市场{/* 数量恒取市场总数，不随当前页签变化；首次加载完成前不显示 0，避免与「正在加载市场…」冲突 */}
+            {marketBusy && !market.total ? null : <i className="count" title="市场上架 MCP 数量">{market.total}</i>}
           </button>
         ) : null}
       </nav>
 
-      <CategoryBar categories={options} value={activeCategory} onChange={changeCategory} />
+      <CategoryBar categories={options} values={activeCategories} onChange={changeCategory} />
 
       {tab === 'local' && batch ? (
         <BatchBar count={selected.length} busy={busy} onDelete={() => setBatchConfirm(true)} onExit={toggleBatch} />
@@ -427,6 +458,7 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
               category={categoryOf(row)}
               market={market.items}
               busy={busy}
+              toggling={togglingId === row.id}
               batchMode={batch}
               selected={selected.includes(row.id)}
               onOpen={setDetailId}
@@ -448,6 +480,7 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
               entry={entry}
               category={marketCategoryText(entry.categories, marketDict)}
               installed={isInstalled(entry)}
+              installing={installingId === entry.originId}
               busy={busy}
               onOpen={setMarketDetailId}
               onInstall={entry => void installMarket(entry)}
@@ -479,11 +512,11 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
 
       <LocalMcpDetailModal
         row={detail}
-        category={detail ? categoryOf(detail) : ALL}
+        category={detail ? categoryOf(detail) : ''}
         market={market.items}
         busy={busy}
+        toggling={Boolean(detail && togglingId === detail.id)}
         onClose={() => setDetailId(undefined)}
-        onEdit={target => void edit(target)}
         onToggle={(target, enabled) => void toggle(target, enabled)}
         onRemove={target => setConfirm({ row: target, mode: 'remove' })}
         onUninstall={target => setConfirm({ row: target, mode: 'uninstall' })}
@@ -492,6 +525,7 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
         entry={marketDetail}
         category={marketDetail ? marketCategoryText(marketDetail.categories, marketDict) : ''}
         installed={Boolean(marketDetail && isInstalled(marketDetail))}
+        installing={Boolean(marketDetail && installingId === marketDetail.originId)}
         busy={busy}
         onClose={() => setMarketDetailId(undefined)}
         onInstall={entry => void installMarket(entry)}

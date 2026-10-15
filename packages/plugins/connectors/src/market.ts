@@ -46,7 +46,10 @@ export interface MarketItem {
 export interface MarketQuery {
   readonly page?: number;
   readonly pageSize?: number;
-  /** 分类筛选：下发为列表接口的 `bizScene` 参数，取值是分类字典的 value；为空表示不筛选。 */
+  /**
+   * 分类筛选：下发为列表接口的 `bizScene` 参数，取值是分类字典的 value。
+   * 多选时用英文逗号连接（如 `a,b`），后台语义为命中任一；为空表示不筛选。
+   */
   readonly scene?: string;
   /** 关键词：下发为列表接口的 `keyword` 参数；为空表示不筛选。 */
   readonly keyword?: string;
