@@ -28,9 +28,10 @@ export function registerConnectorManagementConnection(ctx: Context): void {
     methods: ['POST'],
     requestBody: 'buffered',
     fetch: async request => {
+      let endpoint: unknown;
       try {
         const body = record(await request.json());
-        const endpoint = body?.endpoint;
+        endpoint = body?.endpoint;
         const payload = record(body?.payload) ?? {};
         if (endpoint === 'list') return Response.json(ok(await manager.list(request.signal)), noStore);
         if (endpoint === 'config' && typeof payload.id === 'string') return Response.json(ok(await manager.config(payload.id)), noStore);
@@ -71,9 +72,16 @@ export function registerConnectorManagementConnection(ctx: Context): void {
       } catch (cause) {
         if (cause instanceof MarketRequestError) return Response.json(fail(cause.code, cause.message), noStore);
         const known = new Set(['connector/not-found', 'connector/not-ready', 'connector/command-required', 'connector/url-required', 'connector/server-name-conflict']);
-        const code = cause instanceof Error && known.has(cause.message) ? cause.message : 'connector/internal';
+        // 治理/会话类错误自带 code（例如 access/not-ready、session/not-found）：原样透出并记录日志，
+        // 否则界面上只剩一句「连接器操作失败，请重试」，真实原因在客户机上完全不可见。
+        const declared = cause !== null && typeof cause === 'object' && 'code' in cause && typeof (cause as { code?: unknown }).code === 'string'
+          ? (cause as { code: string }).code
+          : undefined;
+        const code = declared ?? (cause instanceof Error && known.has(cause.message) ? cause.message : 'connector/internal');
         const messages: Record<string, string> = { 'connector/not-found': '未找到该连接器。', 'connector/command-required': 'stdio 连接需要填写启动命令。', 'connector/url-required': 'HTTP 连接需要填写 MCP URL。', 'connector/server-name-conflict': '服务标识已被其他 MCP 使用。' };
-        const message = code === 'connector/not-ready' ? '所选 MCP 尚未连接，请在连接器中检查运行状态后重试。' : messages[code] ?? '连接器操作失败，请重试。';
+        const detail = cause instanceof Error && cause.message ? cause.message : '连接器操作失败，请重试。';
+        const message = code === 'connector/not-ready' ? '所选 MCP 尚未连接，请在连接器中检查运行状态后重试。' : messages[code] ?? detail;
+        ctx.logger.warn(`连接器端点 ${endpoint === undefined ? '(未知)' : String(endpoint)} 失败（${code}）：${detail}`);
         return Response.json(fail(code, message));
       }
     },

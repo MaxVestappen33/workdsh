@@ -318,7 +318,7 @@ test('personal Session reads retain native listing and unbound historical inspec
 
 
 test('fixed-member Session inspection binds a native empty Session and rejects foreign, missing and revoked reads', async () => {
- for (const fixedIdentityId of ['workdsh-enterprise-process', 'workdsh-enterprise-desktop']) {
+ for (const fixedIdentityId of ['workdsh-enterprise-process', 'workdsh-enterprise-desktop', 'workdsh-account-desktop']) {
   const root = await mkdtemp(join(tmpdir(), 'workdsh-native-session-read-'));
   const selected = new Map(); const inspected = []; let ctx; let active = true;
   try {

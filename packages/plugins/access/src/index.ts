@@ -77,6 +77,13 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
+/**
+ * 允许把本机原生 Session 认领到工作区绑定的身份提供方：它们都是「单个固定成员」的 Host
+ * （企业进程 / 企业桌面 / 账号桌面），一个进程里只服务一个已认证主体，因此可以像个人模式一样
+ * 认领自己控制器里创建出来的空 Session。多用户共享运行时永远不在这个名单里。
+ */
+const TRUSTED_FIXED_MEMBER_IDENTITIES: readonly string[] = ['workdsh-enterprise-process', 'workdsh-enterprise-desktop', 'workdsh-account-desktop'];
+
 function sameResource(left: ResourceRef, right: ResourceRef): boolean {
   return left.domain === right.domain && left.id === right.id;
 }
@@ -483,7 +490,7 @@ export class SessionAccessBridge extends Service {
   }
 
   private canBindFixedMemberSession(actor: ActorContext): boolean {
-    if (!this.config.autoBindFixedMemberSessions || !['workdsh-enterprise-process', 'workdsh-enterprise-desktop'].includes(this.ctx.workdshIdentity.id)) return false;
+    if (!this.config.autoBindFixedMemberSessions || !TRUSTED_FIXED_MEMBER_IDENTITIES.includes(this.ctx.workdshIdentity.id)) return false;
     const profile = this.ctx.workdshIdentity.profile();
     return profile.organization.kind === 'team'
       && profile.principalId === actor.principalId
