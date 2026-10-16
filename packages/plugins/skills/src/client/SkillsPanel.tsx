@@ -328,11 +328,12 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
   const isInstalled = (entry: SkillMarketItem) => localNames.has(entry.slug.trim().toLowerCase());
 
   const dictTexts = marketDict.map(item => item.text);
-  /** 本地页签只提供本机技能真正用到的业务场景：字典顺序在前，字典里没有的按出现顺序追加。 */
-  const localSceneNames = [...new Set(skills.flatMap(scenesOf))];
-  const options = tab === 'local'
-    ? [...dictTexts.filter(text => localSceneNames.includes(text)), ...localSceneNames.filter(text => !dictTexts.includes(text))]
-    : dictTexts;
+  /**
+   * 业务场景栏恒为字典全量：本地技能页签同样完整展示所有业务场景，
+   * 本机没有技能用到某个场景时也照样显示（点它落到空列表），不因为没有数据就只剩「全部」。
+   * 字典里缺失、但本机技能实际带有的场景追加在后面，避免出现无法筛选的场景。
+   */
+  const options = [...dictTexts, ...[...new Set(skills.flatMap(scenesOf))].filter(name => !dictTexts.includes(name))];
   /** 只保留当前页签仍存在的选中项：切页签或字典变化后，失效的选择自动丢弃。 */
   const activeScenes = scenes.filter(name => options.includes(name));
   const filter: SkillMarketFilter = { scenes: activeScenes, keyword: query };

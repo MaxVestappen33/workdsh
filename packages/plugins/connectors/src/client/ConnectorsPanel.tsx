@@ -82,12 +82,16 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
   const searchTextOf = (row: ConnectorSummary): string =>
     `${row.title} ${row.description} ${row.serverName} ${categoryOf(row)} ${row.toolNames.join(' ')}`;
 
-  const localCategories = useMemo(() => {
-    const used = new Set(rows.flatMap(row => row.categories ?? []));
-    return marketDict.map(item => item.text).filter(text => used.has(text));
-  }, [rows, marketDict]);
   const marketCategories = useMemo(() => marketDict.map(item => item.text), [marketDict]);
-  const options = useMemo(() => (tab === 'local' ? localCategories : marketCategories), [tab, localCategories, marketCategories]);
+  /**
+   * 业务场景栏恒为字典全量：本地 MCP 页签同样完整展示所有业务场景，
+   * 本机没有实例用到某个场景时也照样显示（点它落到空列表），不因为没有数据就只剩「全部」。
+   * 字典里缺失、但本机实例实际带有的分类追加在后面，避免出现无法筛选的分类。
+   */
+  const options = useMemo(() => {
+    const extra = [...new Set(rows.flatMap(row => row.categories ?? []))].filter(text => !marketCategories.includes(text));
+    return [...marketCategories, ...extra];
+  }, [rows, marketCategories]);
   /** 只保留当前页签仍存在的选中项：切页签或分类字典变化后，失效的选择自动丢弃。 */
   const activeCategories = useMemo(() => categories.filter(name => options.includes(name)), [categories, options]);
   const filter: MarketListFilter = { categories: activeCategories, keyword: query };
