@@ -151,13 +151,15 @@ type MarketCardProps = {
   readonly installed: boolean;
   /** 该条目正在安装：加号变加载态，卡片底部显示流式进度条。 */
   readonly installing: boolean;
+  /** 上一次安装失败的原因（可直接展示）；失败时保留「＋」按钮，点一下就重试。 */
+  readonly failure?: string;
   readonly busy: boolean;
   readonly onOpen: (id: string) => void;
   readonly onInstall: (entry: MarketItem) => void;
 };
 
 /** 市场卡片：图标 · 名称 · 分类 · 描述 · 统计行 · 右上角「＋」（安装中为加载态，已安装时替换为禁用态胶囊）。 */
-export function MarketMcpCard({ entry, category, installed, installing, busy, onOpen, onInstall }: MarketCardProps) {
+export function MarketMcpCard({ entry, category, installed, installing, failure, busy, onOpen, onInstall }: MarketCardProps) {
   /** 整卡可点击：点卡片任意空白区都打开详情，卡片内的按钮区仍走各自行为。 */
   const openCard = (event: MouseEvent<HTMLElement>) => {
     if (isCardAction(event.target)) return;
@@ -187,6 +189,7 @@ export function MarketMcpCard({ entry, category, installed, installing, busy, on
           <i className="install-bar-fill" />
         </div>
       ) : null}
+      {failure && !installed ? <p className="card-error" role="alert">{failure}</p> : null}
       <MarketStats subscribers={entry.subscribers} downloads={entry.downloads} stars={entry.stars} />
     </article>
   );

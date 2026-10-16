@@ -66,6 +66,36 @@ export interface ConnectorInput {
   readonly categories?: readonly string[];
 }
 
+/**
+ * 本机包安装任务状态。市场条目里以包管理器（npx/npm/pnpm…）启动的 stdio MCP，
+ * 必须先把 npm 包从内网仓库落到本机才能启动，安装耗时无法在一次请求里等完，
+ * 因此安装期间对外暴露这个任务态，由界面轮询。
+ */
+export type ConnectorInstallState = 'installing' | 'ready' | 'failed';
+
+export interface ConnectorInstallTask {
+  /** 市场条目 id：安装任务是「条目 → 本机」的过程，按它索引。 */
+  readonly originId: string;
+  /** 安装成功后写入连接器的服务标识，也是本机安装目录名。 */
+  readonly serverName: string;
+  readonly title: string;
+  readonly state: ConnectorInstallState;
+  /** 失败原因（可直接展示的中文文案）；ready 时为空。 */
+  readonly message?: string;
+  readonly startedAt: string;
+  readonly updatedAt: string;
+}
+
+/**
+ * 市场安装的即时结果：直接执行的条目同步建连并返回 ready；
+ * 需要下载依赖的条目返回 installing，界面据此改为轮询安装状态。
+ */
+export interface MarketInstallResult {
+  readonly originId: string;
+  readonly title: string;
+  readonly state: 'ready' | 'installing';
+}
+
 export interface ConnectorManagementService {
   list(signal?: AbortSignal): Promise<readonly ConnectorSummary[]>;
   config(id: string): Promise<ConnectorConfigView>;

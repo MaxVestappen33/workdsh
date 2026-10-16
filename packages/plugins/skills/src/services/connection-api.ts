@@ -1,5 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type { ConnectionRpcResult, HostConnectionHandle } from '@deepseek-ai/dsh-client-connection';
+import { SkillMarketRequestError } from '../market.js';
+import type { SkillMarket, SkillMarketUninstall } from './market-entry.js';
 import type { SkillInstallScope, SkillManagementEndpoint, SkillManagementService } from '../shared.js';
 import { skillCatalogIconPath } from './catalog.js';
 
@@ -15,6 +17,7 @@ const nameFrom = (payload: unknown): string | undefined => typeof record(payload
 
 function publicFailure(error: unknown): ConnectionRpcResult<never> {
   if (error instanceof DOMException && error.name === 'AbortError') return fail('skill/request-cancelled', '操作已取消。');
+  if (error instanceof SkillMarketRequestError) return fail(error.code, error.message);
   const code = error instanceof Error && error.message.startsWith('skill/') ? error.message : 'skill/internal';
   const messages: Record<string, string> = {
     'skill/invalid-name': '技能名称无效。',
@@ -54,13 +57,27 @@ function publicFailure(error: unknown): ConnectionRpcResult<never> {
     'skill/catalog-entry-unknown': '本地技能目录中没有该技能。',
     'skill/catalog-entry-over-limit': '该技能的体积或文件数超过导入上限，不能从目录安装。',
     'skill/catalog-payload-missing': '本地技能目录缺少该技能的安装负载，请重新生成目录。',
+    'skill/market-install-pending': '已上报技能安装，本机安装将在下一轮接入。',
+    'skill/market-uninstall-pending': '已上报技能卸载，本机卸载将在下一轮接入。',
+    'skill/market-unavailable': '当前环境未接入技能市场。',
   };
   return fail(code, messages[code] ?? '技能操作失败，请重试。');
 }
 
-async function dispatch(manager: SkillManagementService, rawEndpoint: unknown, payload: unknown, signal: AbortSignal): Promise<ConnectionRpcResult<unknown>> {
+/** 市场分页参数：缺省表示交给后台取默认值，出现非法值则拒绝请求。 */
+const optionalCount = (value: unknown): number | undefined | null =>
+  value === undefined ? undefined : typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : null;
+/** 市场文本参数：缺省表示不过滤，出现非字符串则拒绝请求。 */
+const optionalText = (value: unknown): string | undefined | null => value === undefined ? undefined : typeof value === 'string' ? value : null;
+
+async function dispatch(manager: SkillManagementService, marketService: () => SkillMarket | undefined, rawEndpoint: unknown, payload: unknown, signal: AbortSignal): Promise<ConnectionRpcResult<unknown>> {
   if (typeof rawEndpoint !== 'string') return fail('skill/invalid-request', '技能管理操作无效。');
   const endpoint = rawEndpoint as SkillManagementEndpoint;
+  const market = (): SkillMarket => {
+    const service = marketService();
+    if (!service) throw new SkillMarketRequestError('skill/market-unavailable', '当前环境未接入技能市场。');
+    return service;
+  };
   try {
     if (endpoint === 'list') return ok(await manager.list(signal));
     if (endpoint === 'catalog') return ok(await manager.catalog(signal));
@@ -84,6 +101,31 @@ async function dispatch(manager: SkillManagementService, rawEndpoint: unknown, p
       const input = record(payload); const names = input?.names; const action = input?.action;
       if (!Array.isArray(names) || !names.every(name => typeof name === 'string') || (action !== 'enable' && action !== 'disable' && action !== 'uninstall')) return fail('skill/invalid-request', '批量技能操作无效。');
       return ok(await manager.batch({ names, action }));
+    }
+    // 技能市场：业务场景与关键词都由服务端筛选，参数非法直接拒绝，不把错误取值带给后台。
+    if (endpoint === 'market-available') {
+      const service = marketService();
+      return ok({ available: service ? await service.available() : false });
+    }
+    if (endpoint === 'market-list') {
+      const page = optionalCount(record(payload)?.page); const pageSize = optionalCount(record(payload)?.pageSize);
+      const scene = optionalText(record(payload)?.scene); const keyword = optionalText(record(payload)?.keyword);
+      if (page === null || pageSize === null || scene === null || keyword === null) return fail('skill/invalid-request', '技能市场查询参数无效。');
+      return ok(await market().list({ page, pageSize, scene, keyword }, signal));
+    }
+    if (endpoint === 'market-categories') return ok(await market().categories(signal));
+    if (endpoint === 'market-index') return ok(await market().index(signal));
+    if (endpoint === 'market-install' && typeof record(payload)?.id === 'string' && (record(payload)?.id as string).trim()) {
+      return ok(await market().install(record(payload)?.id as string, signal));
+    }
+    if (endpoint === 'market-uninstall') {
+      const input = record(payload);
+      if (typeof input?.id !== 'string' && typeof input?.slug !== 'string') return fail('skill/invalid-request', '技能市场卸载请求无效。');
+      const target: SkillMarketUninstall = {
+        ...(typeof input.id === 'string' ? { id: input.id } : {}),
+        ...(typeof input.slug === 'string' ? { slug: input.slug } : {}),
+      };
+      return ok(await market().uninstall(target, signal));
     }
     const name = nameFrom(payload);
     if (!name) return fail('skill/invalid-request', '请求缺少有效的技能名称。');
@@ -140,6 +182,8 @@ function json(result: ConnectionRpcResult<unknown>, status = 200): Response {
 export function registerSkillManagementConnection(ctx: Context): void {
   const connection = (ctx as Context & { connection: HostConnectionHandle }).connection;
   const manager = ctx.workdshSkills;
+  /** 市场服务是可选注入的宿主能力：缺失时市场端点明确返回「未接入」，不影响本地技能管理。 */
+  const marketService = (): SkillMarket | undefined => ctx.reflect.get('workdshSkillMarket') as SkillMarket | undefined;
   const lifetime = new AbortController();
   const pending = new Set<Promise<Response>>();
   const handle = (fetcher: (request: Request) => Promise<Response>) => (request: Request) => {
@@ -170,7 +214,7 @@ export function registerSkillManagementConnection(ctx: Context): void {
         if (text.length > maximumBodyBytes) return json(fail('skill/request-too-large', '技能管理请求过大。'), 413);
         const body = record(JSON.parse(text));
         if (!body) return json(fail('skill/invalid-request', '技能管理请求格式无效。'), 400);
-        return json(await dispatch(manager, body.endpoint, body.payload, request.signal));
+        return json(await dispatch(manager, marketService, body.endpoint, body.payload, request.signal));
       } catch (error) {
         if (error instanceof SyntaxError) return json(fail('skill/invalid-request', '技能管理请求格式无效。'), 400);
         return json(publicFailure(error));

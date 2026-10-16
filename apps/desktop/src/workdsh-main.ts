@@ -20,7 +20,7 @@ import { readAppConfig, type AppEnvironment, type ResolvedAppConfig } from './ap
 import { createDebugLog, type DebugLog } from './debug-log.ts'
 import { AccountLogin, AccountStore, restoreAccountLogin, startAccountAuthority, type AccountAuthority } from './member-auth.ts'
 import { EnterpriseLogin, startEnterpriseAuthority, type Authority } from './enterprise-auth.ts'
-import { desktopEnterprisePatch, desktopAccountPatch, desktopConnectorMarketPatch, accountSpace, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher, type AccountActor } from './local-runtime.ts'
+import { desktopEnterprisePatch, desktopAccountPatch, desktopConnectorMarketPatch, desktopSkillMarketPatch, accountSpace, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher, type AccountActor } from './local-runtime.ts'
 import { manageCommand } from './command-management.ts'
 import { cleanOwnedProcessTree, reclaimOrphanedToolProcesses, stopOwnedProcess } from './owned-process.ts'
 
@@ -424,15 +424,17 @@ function rememberCommandSpace(home?: string): void {
 }
 
 /**
- * 把载体配置里的 MCP 市场接口路径作为补丁层交给 connectors 插件（缺配置时它用内置默认值）。
+ * 把载体配置里的 MCP / 技能市场接口路径与本机包安装参数作为补丁层交给对应插件（缺配置时它们用内置默认值）。
  * 配置读取失败不阻断工作区启动：账号流程在启动前已读取并校验过同一份配置，这里退化为内置默认值。
  */
-function marketPatchLayer(home: string): string[] {
+function marketPatchLayers(home: string): string[] {
   try {
-    const patch = desktopConnectorMarketPatch(home, loadConfig().server)
-    return patch === undefined ? [] : [patch]
+    const server = loadConfig().server
+    const connector = desktopConnectorMarketPatch(home, server, { node: bundledNodeExecutable(), pnpm: join(bundledPrimaryRuntime(), 'dependencies', 'pnpm', 'bin', 'pnpm.cjs') })
+    const skill = desktopSkillMarketPatch(home, server)
+    return [connector, skill].filter((patch): patch is string => patch !== undefined)
   } catch (error) {
-    process.stderr.write(`[startup] MCP 市场接口路径未注入，连接器将使用内置默认值：${error instanceof Error ? error.message : String(error)}\n`)
+    process.stderr.write(`[startup] 市场接口路径与本机包安装配置未注入，插件将使用内置默认值：${error instanceof Error ? error.message : String(error)}\n`)
     return []
   }
 }
@@ -443,7 +445,7 @@ function startRuntime(home: string, connection: DesktopConnection, patches: stri
   const executable = bundledNodeExecutable()
   if (!existsSync(executable)) throw new Error(`Bundled Node.js runtime is missing: ${executable}`)
   const basePatch = join(bundledProfileDirectory(), 'cordis.patch.yml')
-  const layers = [...(existsSync(basePatch) ? [basePatch] : []), ...patches, ...marketPatchLayer(home)]
+  const layers = [...(existsSync(basePatch) ? [basePatch] : []), ...patches, ...marketPatchLayers(home)]
   const launcher = officialHostLauncher(bundledProfileDirectory(), home, executable, join(bundledPrimaryRuntime(), 'dependencies', 'pnpm', 'bin', 'pnpm.cjs'), layers)
   // 兜底：回收上次异常退出（终端 Ctrl+C / 被强杀）遗留的同一启动器进程，避免端口/资源冲突导致本次启动失败。
   reclaimOrphanedToolProcesses(launcher)

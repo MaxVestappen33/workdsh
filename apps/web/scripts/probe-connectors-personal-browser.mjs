@@ -78,7 +78,9 @@ try {
   const creation=await (await creationReply).json(); assert.equal(creation.ok,true);
   const sessionId=creation.value.sessionId;
   assert.deepEqual(await api('connectors','selection',{sessionId}),[]);
-  const rows=await api('connectors','list'); const example=rows.find(row=>row.id==='workdsh-example'); assert.equal(example.state,'ready');
+  assert.deepEqual(await api('connectors','list'),[]); // 出厂组成不预置 MCP 定义。
+  const example=await api('connectors','create',{title:'WorkDSH MCP 示例',description:'个人默认组成验收夹具',serverName:'workdsh-example',transport:'stdio',command:process.execPath,args:[join(profile,'node_modules/workdsh-plugin-connectors/dist/example-server.mjs')]});
+  assert.equal(example.state,'ready');
   await page.getByRole('button',{name:'连接器',exact:true}).click();
   await page.getByRole('button',{name:`用于本次对话 ${example.title}`,exact:true}).click();
   await expect(page.getByRole('button',{name:`从本次对话移除 ${example.title}`,exact:true})).toBeVisible();

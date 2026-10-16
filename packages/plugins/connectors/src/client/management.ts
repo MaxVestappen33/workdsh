@@ -2,7 +2,7 @@ import type { Context } from '@deepseek-ai/cordis';
 import type {} from '@deepseek-ai/dsh-client-connection/client';
 import type {} from '@deepseek-ai/dsh-api-remotes/client';
 import type { MarketCategory, MarketPage, MarketQuery } from '../market.js';
-import type { ConnectorConfigView, ConnectorInput, ConnectorSummary } from '../shared.js';
+import type { ConnectorConfigView, ConnectorInput, ConnectorInstallTask, ConnectorSummary, MarketInstallResult } from '../shared.js';
 
 const path = '/api/workdsh-connectors';
 /** 普通查询（列表、配置、分类）的超时：这些接口都是本机毫秒级响应。 */
@@ -59,7 +59,9 @@ export function createConnectorManagementClient(ctx: Context, lifetime?: AbortSi
     marketAvailable: () => invoke<{ available: boolean }>(ctx, 'market-available', {}, lifetime),
     marketList: (input: MarketQuery) => invoke<MarketPage>(ctx, 'market-list', input, lifetime),
     marketCategories: () => invoke<readonly MarketCategory[]>(ctx, 'market-categories', {}, lifetime),
-    marketInstall: (originId: string) => invoke<ConnectorSummary>(ctx, 'market-install', { originId }, lifetime, CONNECT_TIMEOUT_MS),
+    marketInstall: (originId: string) => invoke<MarketInstallResult>(ctx, 'market-install', { originId }, lifetime, CONNECT_TIMEOUT_MS),
+    /** 安装任务查询：需要下载依赖的条目在安装期间由界面轮询，直到 ready 或 failed。 */
+    marketInstallStatus: (originId: string) => invoke<ConnectorInstallTask | null>(ctx, 'market-install-status', { originId }, lifetime),
     marketUninstall: (target: { originId?: string; id?: string }) => invoke<{ uninstalled: boolean; reported: boolean }>(ctx, 'market-uninstall', target, lifetime, CONNECT_TIMEOUT_MS),
   };
 }

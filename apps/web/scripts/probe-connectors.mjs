@@ -32,6 +32,9 @@ const waitFor = async (predicate, timeoutMs = 5000) => {
 
 ctx.provide('systemPrompt', { tools() {}, section() {}, getSectionOrder() { return 0; } });
 ctx.provide('connection', { fetch: { register() { return async () => {}; } } });
+// ConnectorManager 要求会话归属可校验：这里放行，本探针只覆盖 MCP 工具/资源与会话隔离，
+// 授权判定由 connector-member-manager 集成测试覆盖。
+ctx.provide('workdshSessionAccess', { async inspect(id) { return { meta: { id }, events: [] }; } });
 
 const tools = await ctx.plugin(Tools).then(() => ctx.tools);
 try {
@@ -54,13 +57,15 @@ try {
   await ctx.plugin(MemoryCredentials);
   await ctx.plugin(McpResources);
   await ctx.plugin(Agents);
-  await ctx.plugin(Connectors);
+  // 出厂组成不预置 MCP：随包示例只作本探针的夹具，必须显式开启种子才写入本地列表。
+  await ctx.plugin(Connectors, { seedExample: true });
   const manager = ctx.workdshConnectors;
   const ready = await waitFor(async () => {
     const row = (await manager.list())[0];
     return row?.state === 'ready' ? row : undefined;
   });
-  if (ready.state !== 'ready' || ready.toolNames.length !== 2 || ready.resourceCount !== 1 || ready.resourceTemplateCount !== 1) {
+  // 资源与 URI 模板只在该 MCP 被某个会话选中后由健康检查探测，因此在选择之后单独核对。
+  if (ready.state !== 'ready' || ready.toolNames.length !== 2) {
     throw new Error(`Unexpected ready projection: ${JSON.stringify(ready)}`);
   }
   const agent = { id: 'probe-session', session: { id: 'probe-session' } };
@@ -75,6 +80,8 @@ try {
   const selected = await manager.setSelection('probe-session', [ready.id]);
   if (selected.length !== 1 || selected[0] !== ready.id) throw new Error('Conversation connector selection did not persist.');
   if (!tools.schemas(agent).some(tool => tool.name === 'mcp__workdsh-example__search_catalog')) throw new Error('Selected MCP tools were not exposed to the conversation.');
+  const selectedRow = (await manager.list()).find(row => row.id === ready.id);
+  if (selectedRow?.resourceCount !== 1 || selectedRow?.resourceTemplateCount !== 1) throw new Error(`Unexpected selected projection: ${JSON.stringify(selectedRow)}`);
   if ((await manager.setSelection('probe-session', [])).length !== 0) throw new Error('Conversation connector selection did not clear.');
   if (tools.schemas(agent).some(tool => tool.name.startsWith('mcp__workdsh-example__'))) throw new Error('Cleared MCP tools remained exposed to the conversation.');
   await unregisterAgent();
@@ -101,8 +108,8 @@ try {
     connector: restored.id,
     state: restored.state,
     tools: restored.toolNames,
-    resources: restored.resourceCount,
-    resourceTemplates: restored.resourceTemplateCount,
+    resources: selectedRow.resourceCount,
+    resourceTemplates: selectedRow.resourceTemplateCount,
     searchResult: searchResult.rows[0],
     disableRemovedTools: true,
     reenableRestoredTools: true,

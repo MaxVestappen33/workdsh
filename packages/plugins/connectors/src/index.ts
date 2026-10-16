@@ -22,8 +22,8 @@ export interface ConnectorPluginOptions extends ConnectorManagerOptions, Connect
 export async function apply(ctx: Context, options: ConnectorPluginOptions = {}): Promise<void> {
   await ctx.plugin(ConnectorManager, options);
   // MCP 市场依赖宿主提供的通用后台通道（workdshBackend）；通道或绑定缺失时市场整体不可用，
-  // 不影响插件加载。接口路径仍由宿主经插件选项注入（未配置时回退到内置默认值）。
-  await ctx.plugin(ConnectorMarketService, { paths: options.paths });
+  // 不影响插件加载。接口路径与本机包安装能力都由宿主经插件选项注入（未配置时回退到内置默认值 / 不支持本机安装）。
+  await ctx.plugin(ConnectorMarketService, { paths: options.paths, install: options.install });
   await ctx.plugin({
     name: 'workdsh-connectors-integration',
     inject: [...inject, 'workdshConnectors'],

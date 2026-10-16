@@ -37,6 +37,16 @@ export interface MarketItem {
   readonly url?: string;
   readonly command?: string;
   readonly args?: readonly string[];
+  /**
+   * 启动方式：`direct` 直接执行 command（node/python/绝对路径，本机自备解释器）；
+   * `package` 表示 command 是包管理器（npx/npm/pnpm…），必须先把 packageSpec 指向的 npm 包
+   * 从内网仓库装到本机，再以绝对路径启动。
+   */
+  readonly launch: 'direct' | 'package';
+  /** launch=package 时的包说明符，例如 `chrome-devtools-mcp@latest`。 */
+  readonly packageSpec?: string;
+  /** launch=package 时传给 MCP 服务自身的参数（已去掉包说明符与下载器子命令词）。 */
+  readonly packageArgs?: readonly string[];
   /** 卡片图标：后台下发 http(s) 可达的 URL，为空或不可达时由界面退回名称首字符。 */
   readonly icon?: string;
   /** 图标底色，可能为空，空时由界面使用默认底色。 */
@@ -158,6 +168,25 @@ const toolsOf = (value: unknown): readonly MarketTool[] => {
     return [{ name, ...(description ? { description } : {}), parameters: parametersOf(row.inputSchema) }];
   });
 };
+/**
+ * 包管理器型启动命令。后台维护的是「启动命令 + 每行一个参数」，
+ * 运维习惯写 `npx chrome-devtools-mcp@latest --channel=canary`，但这在离线环境里没有 npm/npx 可执行，
+ * 必须由客户端改成「先从内网仓库装包，再用随包 Node 起绝对路径」。
+ */
+const packageManagers = new Set(['npx', 'pnpx', 'bunx', 'npm', 'pnpm', 'yarn', 'yarnpkg', 'bun']);
+/** 下载器的子命令词：`pnpm dlx foo`、`npm exec foo` 里真正的包名在它后面。 */
+const dlxVerbs = new Set(['dlx', 'exec', 'x']);
+
+/** 拆出「需要装到本机」的包说明符与真正传给 MCP 的参数；不是包管理器启动时返回 undefined。 */
+const packageLaunchOf = (transport: 'stdio' | 'streamable-http', command: string | undefined, args: readonly string[] | undefined): { spec: string; args: readonly string[] } | undefined => {
+  if (transport !== 'stdio' || !command || !args?.length) return undefined;
+  if (!packageManagers.has(command.trim().toLowerCase())) return undefined;
+  const head = dlxVerbs.has(args[0]!.toLowerCase()) ? 1 : 0;
+  const spec = args[head];
+  if (!spec) return undefined;
+  return { spec, args: args.slice(head + 1) };
+};
+
 /** 缺少 id / serviceId / name 的条目无法安装或判重，跳过而不是让整页失败。 */
 const itemOf = (value: unknown): MarketItem | undefined => {
   const row = record(value); if (!row) return undefined;
@@ -165,9 +194,12 @@ const itemOf = (value: unknown): MarketItem | undefined => {
   if (!originId || !serverName || !title) return undefined;
   const url = text(row.endpoint); const command = text(row.command); const args = argsOf(row.args);
   const icon = iconOf(row.icon); const color = text(row.color);
+  const transport = transportOf(row.transport);
+  const launch = packageLaunchOf(transport, command, args);
   return { originId, serverName, title, description: text(row.description) ?? '', categories: categoriesOf(row.bizScene),
     categoryLabels: categoryLabelsOf(row.bizSceneList),
-    transport: transportOf(row.transport), ...(url ? { url } : {}), ...(command ? { command } : {}), ...(args ? { args } : {}),
+    transport, ...(url ? { url } : {}), ...(command ? { command } : {}), ...(args ? { args } : {}),
+    ...(launch ? { launch: 'package' as const, packageSpec: launch.spec, packageArgs: launch.args } : { launch: 'direct' as const }),
     ...(icon ? { icon } : {}), ...(color ? { color } : {}),
     subscribers: count(row.subscribers), downloads: count(row.downloadCount), stars: count(row.starCount),
     tools: toolsOf(row.tools) };

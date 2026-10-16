@@ -72,6 +72,8 @@ type MarketDetailProps = {
   readonly installed: boolean;
   /** 该条目正在安装：按钮进入加载态并禁止重复点击。 */
   readonly installing: boolean;
+  /** 上一次安装失败的原因（可直接展示）：按钮改为「重试安装」，原因就地显示。 */
+  readonly failure?: string;
   readonly busy: boolean;
   readonly onClose: () => void;
   readonly onInstall: (entry: MarketItem) => void;
@@ -84,7 +86,7 @@ const paramsText = (tool: MarketItem['tools'][number]): string | undefined => {
 };
 
 /** 市场条目详情：订阅数 / 下载数 / 收藏次数 / 工具数，以及订阅后的工具清单。 */
-export function MarketMcpDetailModal({ entry, category, installed, installing, busy, onClose, onInstall }: MarketDetailProps) {
+export function MarketMcpDetailModal({ entry, category, installed, installing, failure, busy, onClose, onInstall }: MarketDetailProps) {
   return (
     <Modal open={Boolean(entry)} label="MCP 市场详情" className="connector-detail-dialog" onClose={onClose}>
       {entry ? (
@@ -100,7 +102,7 @@ export function MarketMcpDetailModal({ entry, category, installed, installing, b
               {/* 未安装＝可点击的「安装」，已安装＝绿色只读「已安装」，一眼能区分状态。 */}
               {installed
                 ? <Button className="installed-action" disabled>已安装</Button>
-                : <Button variant="primary" className="primary" disabled={busy || installing} onClick={() => onInstall(entry)}>{installing ? '正在安装…' : '安装'}</Button>}
+                : <Button variant="primary" className="primary" disabled={busy || installing} onClick={() => onInstall(entry)}>{installing ? '正在安装…' : failure ? '重试安装' : '安装'}</Button>}
             </div>
           </div>
           <p className="detail-summary">{entry.description}</p>
@@ -109,6 +111,8 @@ export function MarketMcpDetailModal({ entry, category, installed, installing, b
               <i className="install-bar-fill" />
             </div>
           ) : null}
+          {/* 安装失败的原因（仓库不可达、包不存在、超时等）就地展示，不需要用户回列表里找。 */}
+          {failure && !installed && !installing ? <p className="error" role="alert">{failure}</p> : null}
           <div className="metrics">
             <div className="metric-grid">
               <div className="metric"><small>订阅数</small><strong>{formatMarketCount(entry.subscribers)}</strong></div>

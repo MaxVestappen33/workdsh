@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { load } from 'js-yaml'
 import { afterEach, expect, it } from 'vitest'
-import { desktopEnterprisePatch, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher } from '../src/local-runtime.ts'
+import { desktopConnectorMarketPatch, desktopSkillMarketPatch, desktopEnterprisePatch, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher } from '../src/local-runtime.ts'
+import type { ServerConfig } from '../src/app-config.ts'
 
 const roots: string[] = []
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
@@ -149,4 +150,69 @@ it('retries a failed version-policy installation after restart until official in
   expect(materializeRuntimeProfile(source, home).changed).toBe(true)
   markProfileUpdated(source, profile)
   expect(materializeRuntimeProfile(source, home).changed).toBe(false)
+})
+const MARKET_PATHS = {
+  mcpMarketListPath: '/desktop-client/mcptool/queryAuthorizedMcpToolList',
+  mcpMarketCategoriesPath: '/desktop-client/mcptool/queryMcpToolBizSceneList',
+  mcpMarketInstallPath: '/desktop-client/mcptool/installMcpTool',
+  mcpMarketUninstallPath: '/desktop-client/mcptool/unInstallMcpTool',
+}
+const asServer = (value: Record<string, unknown>) => value as unknown as ServerConfig
+
+it('injects market paths and the offline package registry as one connectors patch layer', () => {
+  const { home } = fixture()
+  mkdirSync(home, { recursive: true })
+  const registry = 'http://nexus.intranet:8081/repository/npm-group/'
+  const patch = desktopConnectorMarketPatch(home, asServer({ ...MARKET_PATHS, mcpPackageRegistry: registry }), { node: '/opt/workdsh/node', pnpm: '/opt/workdsh/pnpm.cjs' })
+  expect(patch).toBeTruthy()
+  // 同 id 的 config 会整体替换，所以路径与安装参数必须在同一个节点里。
+  const rows = load(readFileSync(patch!, 'utf8')) as { id: string, config: Record<string, unknown> }[]
+  expect(rows).toHaveLength(1)
+  expect(rows[0]?.id).toBe('workdsh-connectors')
+  expect(rows[0]?.config.paths).toEqual({ list: MARKET_PATHS.mcpMarketListPath, categories: MARKET_PATHS.mcpMarketCategoriesPath, install: MARKET_PATHS.mcpMarketInstallPath, uninstall: MARKET_PATHS.mcpMarketUninstallPath })
+  expect(rows[0]?.config.install).toEqual({ registry, node: '/opt/workdsh/node', pnpm: '/opt/workdsh/pnpm.cjs', root: join(home, 'mcp') })
+})
+
+it('injects only the package registry when no market path is configured', () => {
+  const { home } = fixture()
+  mkdirSync(home, { recursive: true })
+  const patch = desktopConnectorMarketPatch(home, asServer({ mcpPackageRegistry: 'http://nexus.intranet:8081/repository/npm-group/' }), { node: 'node', pnpm: 'pnpm.cjs' })
+  const rows = load(readFileSync(patch!, 'utf8')) as { config: Record<string, unknown> }[]
+  expect(rows[0]?.config.paths).toBeUndefined()
+  expect(rows[0]?.config.install).toBeTruthy()
+})
+
+it('skips the connectors patch layer when neither paths nor a package registry are configured', () => {
+  const { home } = fixture()
+  expect(desktopConnectorMarketPatch(home, asServer({}), { node: 'node', pnpm: 'pnpm.cjs' })).toBeUndefined()
+  // 非法 registry（不是 http(s) 地址）同样不落盘，让插件保持内置默认行为。
+  expect(desktopConnectorMarketPatch(home, asServer({ mcpPackageRegistry: 'nexus.intranet/repository' }), { node: 'node', pnpm: 'pnpm.cjs' })).toBeUndefined()
+})
+
+it('injects the four skill-market paths as one skills patch layer', () => {
+  const { home } = fixture()
+  mkdirSync(home, { recursive: true })
+  const patch = desktopSkillMarketPatch(home, asServer({
+    skillMarketListPath: '/desktop-client/skill/queryAuthorizedSkillList',
+    skillMarketCategoriesPath: '/desktop-client/skill/querySkillBizSceneList',
+    skillMarketInstallPath: '/desktop-client/skill/installSkill',
+    skillMarketUninstallPath: '/desktop-client/skill/unInstallSkill',
+  }))
+  expect(patch).toBeTruthy()
+  const rows = load(readFileSync(patch!, 'utf8')) as { id: string, config: { market: { paths: Record<string, unknown> } } }[]
+  expect(rows).toHaveLength(1)
+  expect(rows[0]?.id).toBe('workdsh-skills')
+  expect(rows[0]?.config.market.paths).toEqual({
+    list: '/desktop-client/skill/queryAuthorizedSkillList',
+    categories: '/desktop-client/skill/querySkillBizSceneList',
+    install: '/desktop-client/skill/installSkill',
+    uninstall: '/desktop-client/skill/unInstallSkill',
+  })
+})
+
+it('skips the skills patch layer when no legal skill-market path is configured', () => {
+  const { home } = fixture()
+  expect(desktopSkillMarketPatch(home, asServer({}))).toBeUndefined()
+  // 不以 / 开头的路径不是合法接口路径，同样不落盘。
+  expect(desktopSkillMarketPatch(home, asServer({ skillMarketListPath: 'desktop-client/skill/queryAuthorizedSkillList' }))).toBeUndefined()
 })

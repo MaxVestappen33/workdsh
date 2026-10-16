@@ -2,6 +2,7 @@ import type { Context } from '@deepseek-ai/cordis';
 import type {} from '@deepseek-ai/dsh-client-connection/client';
 import type {} from '@deepseek-ai/dsh-api-remotes/client';
 import type {} from '@deepseek-ai/dsh-api-session-controller/client';
+import type { SkillMarketAuthorized, SkillMarketPage, SkillMarketQuery, SkillScene } from '../market.js';
 import type { ManagedSkillDetail, ManagedSkillResource, ManagedSkillSummary, SkillBatchAction, SkillBatchResult, SkillCatalogSummary, SkillDependencyImpact, SkillInstallScope, SkillMutationReceipt, SkillResourceWriteRequest, SkillWriteRequest, StagedSkillImport, TrashedSkillSummary } from '../shared.js';
 
 const path = '/api/workdsh-skills';
@@ -67,6 +68,15 @@ export function createSkillManagementClient(ctx: Context, lifetime?: AbortSignal
     },
     commitImport: (id: string, scope: SkillInstallScope, signal?: AbortSignal) => invoke<SkillMutationReceipt>('commit-import', { id, scope }, signal),
     discardImport: (id: string) => invoke<null>('discard-import', { id }),
+    marketAvailable: () => invoke<{ available: boolean }>('market-available', {}),
+    marketList: (input: SkillMarketQuery) => invoke<SkillMarketPage>('market-list', input),
+    marketCategories: () => invoke<readonly SkillScene[]>('market-categories', {}),
+    /** 全量授权技能索引：本地技能的业务场景标签按标识匹配这份数据。 */
+    marketIndex: () => invoke<readonly SkillMarketAuthorized[]>('market-index', {}),
+    /** 安装：调用后台安装接口上报行为；本机安装待下一轮接入，宿主返回明确提示。 */
+    marketInstall: (id: string) => invoke<never>('market-install', { id }),
+    /** 卸载：调用后台卸载接口上报行为；本机卸载待下一轮接入。 */
+    marketUninstall: (target: { id?: string; slug?: string }) => invoke<never>('market-uninstall', target),
     openDirectory: async (path: string) => {
       lifetime?.throwIfAborted();
       const result = await ctx.remote.session.openWorkspacePath({ path, action: 'reveal' });

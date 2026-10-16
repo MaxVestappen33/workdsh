@@ -61,6 +61,11 @@ export function registerConnectorManagementConnection(ctx: Context): void {
         if (endpoint === 'market-install' && typeof payload.originId === 'string' && payload.originId.trim()) {
           return Response.json(ok(await market().install(payload.originId, request.signal)), noStore);
         }
+        // 安装任务状态：需要下载依赖的条目在安装期间由界面轮询这里，避免把一次安装压在一个 HTTP 请求上。
+        if (endpoint === 'market-install-status' && typeof payload.originId === 'string' && payload.originId.trim()) {
+          const service = marketService();
+          return Response.json(ok(service ? await service.installStatus(payload.originId) : null), noStore);
+        }
         if (endpoint === 'market-uninstall' && (typeof payload.originId === 'string' || typeof payload.id === 'string')) {
           const target: ConnectorMarketUninstall = {
             ...(typeof payload.originId === 'string' ? { originId: payload.originId } : {}),

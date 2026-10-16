@@ -103,6 +103,8 @@ export const connectorCss = `${modalCss}
 .wd-connectors .card-desc{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .wd-connectors .card-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:auto;padding-top:10px}
 .wd-connectors .card-foot{color:var(--dsw-alias-label-tertiary);font-size:12px}
+.wd-connectors .card-error{overflow:hidden;margin:8px 0 0;color:#ff746c;font-size:12px;line-height:18px}
+.wd-connectors .card-error{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .wd-connectors .status-line{display:flex;align-items:center;gap:7px;color:var(--dsw-alias-label-tertiary)}
 .wd-connectors .dot,.connector-detail-dialog .dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--dsw-alias-label-dimmed)}
 .wd-connectors .dot.ready,.connector-detail-dialog .dot.ready{background:#55ce63;box-shadow:0 0 0 3px #55ce6329}

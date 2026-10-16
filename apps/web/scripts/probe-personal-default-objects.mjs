@@ -28,8 +28,10 @@ try{
  const asset=await api('library','import',{parentId:folder.id,name:'analysis.md',mediaType:'text/markdown',base64:Buffer.from('# '+marker).toString('base64'),operationId:crypto.randomUUID()});
  assert.equal((await api('library','search',{query:marker})).length,1);const references=await api('library','set-task-selection',{sessionId,nodeIds:[asset.asset.nodeId]});assert.equal(references.length,1);
  assert.ok((await api('library','read-text',{assetId:references[0].assetId,revisionId:references[0].revisionId})).includes(marker));pass('Library import/search/read and fixed Session revision work in default composition');
- assert.deepEqual(await api('connectors','selection',{sessionId}),[]);const connectors=await api('connectors','list');const example=connectors.find(x=>x.id==='workdsh-example');assert.equal(example.state,'ready');
- await api('connectors','set-selection',{sessionId,connectorIds:[example.id]});pass('MCP subprocess becomes ready and Session selection is explicit');
+ assert.deepEqual(await api('connectors','selection',{sessionId}),[]);
+ assert.deepEqual(await api('connectors','list'),[]); // 出厂组成不预置 MCP 定义。
+ const example=await api('connectors','create',{title:'WorkDSH MCP 示例',description:'个人默认组成验收夹具',serverName:'workdsh-example',transport:'stdio',command:process.execPath,args:[join(home,'../../profiles/personal/node_modules/workdsh-plugin-connectors/dist/example-server.mjs')]});assert.equal(example.state,'ready');
+ await api('connectors','set-selection',{sessionId,connectorIds:[example.id]});pass('A user-added MCP subprocess becomes ready and Session selection is explicit');
  await stop();await start();await api('experts','verify-binding',{sessionId});assert.equal((await api('skills','detail',{name:skillName})).document,edited);
  assert.deepEqual(await api('library','task-selection',{sessionId}),references);assert.ok((await api('library','read-text',{assetId:references[0].assetId,revisionId:references[0].revisionId})).includes(marker));assert.deepEqual(await api('connectors','selection',{sessionId}),[example.id]);assert.equal((await api('connectors','list')).find(x=>x.id===example.id).state,'ready');
  pass('Cold Host restart restores expert binding, edited Skill, library revision and MCP selection');

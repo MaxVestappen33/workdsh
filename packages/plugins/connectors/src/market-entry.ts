@@ -1,8 +1,9 @@
 import { Service } from '@deepseek-ai/cordis';
 import type { Context } from '@deepseek-ai/cordis';
 import type { BackendChannel } from 'workdsh-provider-backend-channel';
-import { ConnectorMarketClient, MarketRequestError, type MarketCategory, type MarketPage, type MarketPaths, type MarketQuery } from './market.js';
-import type { ConnectorSummary } from './shared.js';
+import { ConnectorMarketClient, MarketRequestError, type MarketCategory, type MarketItem, type MarketPage, type MarketPaths, type MarketQuery } from './market.js';
+import { installNodePackage, removeNodePackage, type ConnectorInstallOptions } from './install-package.js';
+import type { ConnectorInstallState, ConnectorInstallTask, ConnectorSummary, MarketInstallResult } from './shared.js';
 
 /**
  * 市场接口路径缺省值：与 Desktop 随包 workdsh-app.json 的 server 段保持一致。
@@ -21,6 +22,11 @@ export interface ConnectorMarketOptions {
    * connectors 是 Desktop/Web 共用的 Profile 包，因此不从 Desktop 专有模块读取配置。
    */
   readonly paths?: Partial<MarketPaths>;
+  /**
+   * 本机包安装能力（内网仓库地址 + 随包 Node/pnpm + 安装根目录），同样由宿主注入。
+   * 缺失时市场里需要下载依赖的条目会明确报错，直接执行与本机自建的条目不受影响。
+   */
+  readonly install?: ConnectorInstallOptions;
 }
 
 export interface ConnectorMarketUninstall {
@@ -39,7 +45,10 @@ export interface ConnectorMarket {
   available(): Promise<boolean>;
   list(input?: MarketQuery, signal?: AbortSignal): Promise<MarketPage>;
   categories(signal?: AbortSignal): Promise<readonly MarketCategory[]>;
-  install(originId: string, signal?: AbortSignal): Promise<ConnectorSummary>;
+  /** 安装市场条目：直接执行的条目同步建连；需要下载依赖的条目返回 installing 并转入后台任务。 */
+  install(originId: string, signal?: AbortSignal): Promise<MarketInstallResult>;
+  /** 查询某条目的本机安装任务；没有任务（未安装过或已清理）时返回 null。 */
+  installStatus(originId: string): Promise<ConnectorInstallTask | null>;
   uninstall(target: ConnectorMarketUninstall, signal?: AbortSignal): Promise<ConnectorMarketUninstallResult>;
 }
 
@@ -49,6 +58,11 @@ declare module '@deepseek-ai/cordis' { interface Context { workdshConnectorMarke
 export class ConnectorMarketService extends Service implements ConnectorMarket {
   static inject = ['workdshConnectors'];
   private client?: ConnectorMarketClient;
+  /**
+   * 本机安装任务：只存在于当前 Host 进程。进程重启后未完成的安装随之中断，
+   * 界面也随页面重载回到「未安装」，重试时会先清空目标目录再装，不会留下半装状态。
+   */
+  private readonly tasks = new Map<string, ConnectorInstallTask>();
 
   constructor(ctx: Context, private readonly options: ConnectorMarketOptions = {}) { super(ctx, 'workdshConnectorMarket'); }
 
@@ -67,32 +81,38 @@ export class ConnectorMarketService extends Service implements ConnectorMarket {
   }
 
   /**
-   * 从市场安装：先调安装上报接口告知后台（后台只记录，不回传业务字段），
-   * 再用列表里已返回的字段在本地创建连接器定义，最后交给既有 ConnectorManager（负责判重与凭据写入）。
-   * 不再调用「取连接配置」类接口：连接方式与地址全部来自市场列表。
+   * 从市场安装：先调安装上报接口告知后台（后台只记录，不回传业务字段），再按条目描述的启动方式在本机建连。
+   * 启动方式有两种：直接执行（node/python/绝对路径，本机自备）同步完成；
+   * 依赖 npm 包（command 是 npx/npm/pnpm…）则先从内网仓库装包，安装期间返回 installing 由界面轮询。
    */
-  async install(originId: string, signal?: AbortSignal): Promise<ConnectorSummary> {
+  async install(originId: string, signal?: AbortSignal): Promise<MarketInstallResult> {
     const client = await this.client_();
     const key = originId.trim();
     const item = key ? client.item(key) : undefined;
     if (!item) throw new MarketRequestError('connector/market-item-unknown', '市场条目信息已失效，请刷新市场后重试。');
+    // 同一条目重复点击时复用正在跑的安装任务：不能让两份 pnpm 同时装同一个目录。
+    if (this.tasks.get(item.originId)?.state === 'installing')
+      return { originId: item.originId, title: item.title, state: 'installing' };
     await client.reportInstall(item.originId, item.serverName, signal);
-    // 连接器定义对名称与说明有长度上限，超长时截断，避免市场文案过长导致安装失败。
-    return this.ctx.workdshConnectors.create({
-      title: item.title.slice(0, 80),
-      description: item.description.slice(0, 240),
-      serverName: item.serverName,
-      transport: item.transport,
-      ...(item.transport === 'stdio' ? { command: item.command, args: [...(item.args ?? [])] } : { url: item.url }),
-      originId: item.originId,
-      // 本机实例的分类取后台展开后的 bizSceneList 名称（多值全部保留）：本地卡片、详情与分类筛选
-      // 直接用这份文案，不再回查分类字典，也就不会出现「编码没被翻译」的情况。
-      ...(item.categoryLabels.length ? { categories: [...item.categoryLabels] } : {}),
-    });
+    if (item.launch === 'direct') {
+      await this.createFrom(item, item.transport === 'stdio'
+        ? { kind: 'stdio', command: item.command, args: item.args }
+        : { kind: 'http', url: item.url });
+      this.record(item, 'ready');
+      return { originId: item.originId, title: item.title, state: 'ready' };
+    }
+    // 装包耗时无法在一次请求里等完：先落任务态再进后台，超时/失败都留在任务里可见、可重试。
+    this.record(item, 'installing');
+    void this.installPackage(item);
+    return { originId: item.originId, title: item.title, state: 'installing' };
+  }
+
+  async installStatus(originId: string): Promise<ConnectorInstallTask | null> {
+    return this.tasks.get(originId.trim()) ?? null;
   }
 
   /**
-   * 从市场卸载：先调卸载上报接口，再移除本机实例。
+   * 从市场卸载：先调卸载上报接口，再移除本机实例，最后清理该条目的本机安装目录。
    * 上报失败不阻断本地卸载：后台异常或网络问题时若先报错，用户会卡在「卸载不了、也删不掉」的状态；
    * 这里优先保证本机可清理，上报结果通过返回值暴露，界面据此提示后台记录可能未同步。
    */
@@ -111,7 +131,67 @@ export class ConnectorMarketService extends Service implements ConnectorMarket {
       reported = false;
     }
     if (matched?.id) await manager.remove(matched.id);
+    // 安装目录是市场安装的产物：卸载条目时一并清掉，避免留下没人引用的包树。
+    const install = this.options.install;
+    if (install && matched?.serverName) {
+      await removeNodePackage(install.root, matched.serverName).catch(cause => {
+        this.ctx.logger.warn(`连接器：清理 ${matched.serverName} 的安装目录失败（${cause instanceof Error ? cause.message : String(cause)}）。`);
+      });
+    }
+    this.tasks.delete(originId);
     return { uninstalled: true, reported };
+  }
+
+  /**
+   * 需要依赖的条目：先用随包 pnpm 从内网仓库把包（含全部依赖）装到本机目录，
+   * 再用「随包 Node + 包内入口」建连。整个过程在后台跑，状态写进安装任务供界面轮询。
+   */
+  private async installPackage(item: MarketItem): Promise<void> {
+    try {
+      const install = this.options.install;
+      if (!install) throw new MarketRequestError('connector/package-install-unsupported', '当前环境未配置内网包仓库，无法安装依赖 npm 包的 MCP。');
+      if (!item.packageSpec) throw new MarketRequestError('connector/package-spec-missing', '市场条目没有提供要安装的包名。');
+      const installed = await installNodePackage({ ...install, serverName: item.serverName, spec: item.packageSpec });
+      await this.createFrom(item, { kind: 'stdio', command: install.node, args: [installed.entry, ...(item.packageArgs ?? [])] });
+      this.record(item, 'ready');
+      this.ctx.logger.info(`连接器：已从内网仓库安装 ${installed.packageName}@${installed.version}（${installed.directory}）。`);
+    } catch (cause) {
+      const message = cause instanceof Error && cause.message ? cause.message : '依赖安装失败，请重试。';
+      this.record(item, 'failed', message);
+      this.ctx.logger.warn(`连接器：市场条目 ${item.serverName} 安装失败（${message}）。`);
+    }
+  }
+
+  /** 记录安装任务状态：startedAt 保留首次安装时间，便于界面提示「已等待多久」。 */
+  private record(item: MarketItem, state: ConnectorInstallState, message?: string): void {
+    const now = new Date().toISOString();
+    this.tasks.set(item.originId, {
+      originId: item.originId, serverName: item.serverName, title: item.title, state,
+      ...(message ? { message } : {}), startedAt: this.tasks.get(item.originId)?.startedAt ?? now, updatedAt: now,
+    });
+  }
+
+  /**
+   * 用最终启动方式在本机建连。同一市场条目重复安装时改现有实例的启动配置，
+   * 而不是新建同名连接器（serverName 唯一，重复 create 会被拒）；
+   * 只有同来源（originId 相同）的实例才会被改写，避免覆盖用户自建的连接器。
+   */
+  private async createFrom(item: MarketItem, launch: { kind: 'stdio'; command?: string; args?: readonly string[] } | { kind: 'http'; url?: string }): Promise<ConnectorSummary> {
+    const manager = this.ctx.workdshConnectors;
+    // 连接器定义对名称与说明有长度上限，超长时截断，避免市场文案过长导致安装失败。
+    const input = {
+      title: item.title.slice(0, 80),
+      description: item.description.slice(0, 240),
+      serverName: item.serverName,
+      transport: item.transport,
+      ...(launch.kind === 'stdio' ? { command: launch.command, args: [...(launch.args ?? [])] } : { url: launch.url }),
+      originId: item.originId,
+      // 本机实例的分类取后台展开后的 bizSceneList 名称（多值全部保留）：本地卡片、详情与分类筛选
+      // 直接用这份文案，不再回查分类字典，也就不会出现「编码没被翻译」的情况。
+      ...(item.categoryLabels.length ? { categories: [...item.categoryLabels] } : {}),
+    };
+    const existing = (await manager.list()).find(row => row.originId === item.originId);
+    return existing ? manager.update(existing.id, input) : manager.create(input);
   }
 
   private async client_(): Promise<ConnectorMarketClient> {

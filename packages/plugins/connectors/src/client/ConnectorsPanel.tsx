@@ -2,7 +2,7 @@ import { Button, Icon, Input, Modal } from 'workdsh-ui';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots';
 import type { MarketCategory, MarketItem } from '../market.js';
-import type { ConnectorSummary } from '../shared.js';
+import type { ConnectorInstallTask, ConnectorSummary } from '../shared.js';
 import type { ConnectorManagementClient } from './management.js';
 import { connectorCss } from './styles.js';
 import {
@@ -29,6 +29,11 @@ const MARKET_SCROLL_THRESHOLD = 160;
 const NOTICE_DURATION_MS = 3_000;
 /** 市场关键词防抖：关键词由服务端筛选，等输入停顿这么久再发请求，避免每敲一键打一次后台。 */
 const MARKET_QUERY_DEBOUNCE_MS = 250;
+/**
+ * 本机安装任务的轮询间隔。依赖下载在 Host 侧后台执行，装多久由内网仓库和包体积决定，
+ * 这里只负责定期取状态：装完刷新列表，失败把原因留在卡片上，不做时间上的失败判定。
+ */
+const MARKET_INSTALL_POLL_MS = 5_000;
 const capabilityTabs = [['experts', '专家'], ['skills', '技能'], ['connectors', '连接器']] as const;
 const capabilityKey: Record<string, string> = { experts: 'workdsh-experts', skills: 'workdsh-skills', connectors: 'workdsh-connectors' };
 
@@ -57,8 +62,12 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
   const [marketMore, setMarketMore] = useState(false);
   const [marketError, setMarketError] = useState('');
   const [marketMoreError, setMarketMoreError] = useState('');
-  /** 正在安装的市场条目 id：驱动卡片/详情弹窗的加载态与进度条。 */
-  const [installingId, setInstallingId] = useState<string>();
+  /** 市场条目的本机安装任务：驱动卡片/详情弹窗的安装中、失败与重试，由固定间隔轮询推进。 */
+  const [installs, setInstalls] = useState<Record<string, ConnectorInstallTask>>({});
+  /** 正在等待 market-install 首次响应的条目：任务态回来之前先让卡片进入安装中。 */
+  const [installPending, setInstallPending] = useState<string>();
+  /** 轮询读取的安装任务快照：轮询器读 ref，避免把 installs 放进依赖数组后每次状态更新都重置计时器。 */
+  const installsRef = useRef<Record<string, ConnectorInstallTask>>({});
   /** 正在启停的本地实例 id：启停要拉起或断开 MCP 进程，同样需要逐行加载态。 */
   const [togglingId, setTogglingId] = useState<string>();
   /** 分类字典的同步快照：发请求时立即读取，避免等待 state 更新。 */
@@ -154,6 +163,66 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
     if (!marketOn && tab === 'market') setTab('local');
   }, [marketOn, tab]);
 
+  // 轮询器读 ref 里的最新任务快照：安装态自身的变化不该重置计时器。
+  useEffect(() => {
+    installsRef.current = installs;
+  }, [installs]);
+
+  /** 取仍在安装中的条目的任务状态：装完刷新本地列表与市场，失败把原因留在卡片上可重试。 */
+  const pollInstalls = useCallback(async (originIds: readonly string[]) => {
+    let finished = false;
+    for (const originId of originIds) {
+      let task: ConnectorInstallTask | null = null;
+      try {
+        task = await management.marketInstallStatus(originId);
+      } catch {
+        continue;
+      }
+      if (!task) continue;
+      setInstalls(current => ({ ...current, [originId]: task }));
+      if (task.state === 'ready') {
+        finished = true;
+        setNotice(`已从市场安装「${task.title}」。`);
+        setMarketDetailId(undefined);
+      } else if (task.state === 'failed') {
+        setError(`${task.title} 安装失败：${task.message ?? '请重试。'}`);
+      }
+    }
+    if (finished) {
+      await refresh();
+      if (marketOn) await loadMarket(filter);
+    }
+  }, [management, refresh, marketOn, loadMarket, filter]);
+  const pollRef = useRef(pollInstalls);
+  useEffect(() => {
+    pollRef.current = pollInstalls;
+  }, [pollInstalls]);
+  useEffect(() => {
+    if (!marketOn) return;
+    // 常驻的固定间隔轮询器：没有安装任务时什么都不做，避免按任务增删计时器。
+    const timer = window.setInterval(() => {
+      const pending = Object.values(installsRef.current).filter(task => task.state === 'installing').map(task => task.originId);
+      if (pending.length) void pollRef.current(pending);
+    }, MARKET_INSTALL_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [marketOn]);
+
+  /** 市场条目上的安装态：等待首次响应或后台任务仍在安装都算「安装中」，失败则带上原因供重试。 */
+  const installStateOf = (originId: string): { installing: boolean; failure?: string } => {
+    const task = installs[originId];
+    if (installPending === originId || task?.state === 'installing') return { installing: true };
+    return task?.state === 'failed' ? { installing: false, failure: task.message ?? '安装失败，请重试。' } : { installing: false };
+  };
+
+  /** 清掉某条目留在界面上的安装态（任务已是 ready，或条目被卸载）。 */
+  const clearInstall = (originId: string) =>
+    setInstalls(current => {
+      if (!(originId in current)) return current;
+      const next = { ...current };
+      delete next[originId];
+      return next;
+    });
+
   // 加载更多：滚动接近底部时按当前筛选追加下一页；失败只影响加载更多，不清空已有列表。
   const loadMoreMarket = async () => {
     if (marketBusy || marketMore || !market.hasMore) return;
@@ -246,6 +315,8 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
       let reported = true;
       if (mode === 'uninstall') reported = (await management.marketUninstall({ originId: row.originId, id: row.id })).reported;
       else await management.remove(row.id);
+      // 卸载后条目重新变成「未安装」：清掉遗留的安装态，避免卡片还显示上次的失败原因。
+      if (row.originId) clearInstall(row.originId);
       setConfirm(undefined);
       setDetailId(undefined);
       setSelected(current => current.filter(value => value !== row.id));
@@ -280,24 +351,41 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
     if (failed.length) setError(`${targets.length - failed.length} 项已删除，${failed.length} 项失败：${failed.join('；')}`);
     else setNotice(`已删除 ${targets.length} 个 MCP。`);
   };
+  /**
+   * 从市场安装。直接执行的条目一次请求就完成（建连后返回 ready）；
+   * 需要从内网仓库下载依赖的条目立即返回 installing，之后由轮询推进——
+   * 界面不会把一次可能几分钟的装包过程挂在单个请求上。
+   */
   const installMarket = async (entry: MarketItem) => {
     setError('');
     setNotice('');
-    // 安装期间保持详情弹窗打开：进度条与按钮加载态都在原位反馈，安装结束后再收起。
-    setInstallingId(entry.originId);
+    setInstallPending(entry.originId);
     try {
-      const installed = await management.marketInstall(entry.originId);
-      setNotice(`已从市场安装「${installed.title}」。`);
-      setMarketDetailId(undefined);
+      const result = await management.marketInstall(entry.originId);
+      if (result.state === 'ready') {
+        clearInstall(entry.originId);
+        setNotice(`已从市场安装「${result.title}」。`);
+        setMarketDetailId(undefined);
+        // 保持加载态直到状态同步完成，避免卡片先闪回加号再变成「已安装」。
+        await refresh();
+        if (marketOn) await loadMarket(filter);
+      } else {
+        // 先落一个安装中态让卡片立刻有反馈；真实状态从下一次轮询开始覆盖它。
+        setInstalls(current => ({
+          ...current,
+          [entry.originId]: {
+            originId: entry.originId, serverName: entry.serverName, title: entry.title, state: 'installing',
+            startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+          },
+        }));
+      }
     } catch (cause) {
       // 安装是「后台上报 + 本机建连」两段串联：超时或中断时本机可能已经装好，
       // 因此失败提示之外还要同步一次真实状态，避免界面显示"失败"但实例其实已存在。
       setError(cause instanceof Error ? cause.message : '从市场安装失败。');
-    } finally {
-      // 保持加载态直到状态同步完成，避免卡片先闪回加号再变成「已安装」。
       await refresh();
-      if (marketOn) await loadMarket(filter);
-      setInstallingId(undefined);
+    } finally {
+      setInstallPending(undefined);
     }
   };
 
@@ -480,7 +568,7 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
               entry={entry}
               category={marketCategoryText(entry, marketDict)}
               installed={isInstalled(entry)}
-              installing={installingId === entry.originId}
+              {...installStateOf(entry.originId)}
               busy={busy}
               onOpen={setMarketDetailId}
               onInstall={entry => void installMarket(entry)}
@@ -525,7 +613,7 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
         entry={marketDetail}
         category={marketDetail ? marketCategoryText(marketDetail, marketDict) : ''}
         installed={Boolean(marketDetail && isInstalled(marketDetail))}
-        installing={Boolean(marketDetail && installingId === marketDetail.originId)}
+        {...(marketDetail ? installStateOf(marketDetail.originId) : { installing: false })}
         busy={busy}
         onClose={() => setMarketDetailId(undefined)}
         onInstall={entry => void installMarket(entry)}

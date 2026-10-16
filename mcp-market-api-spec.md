@@ -53,6 +53,8 @@
 
 **字段改名记录**：原来的 `mcpMarketSubscribePath` / `mcpMarketUnsubscribePath`（订阅 / 取消订阅语义）已改名为 `mcpMarketInstallPath` / `mcpMarketUninstallPath`（安装 / 卸载**上报**语义）。三处同步：随包 `workdsh-app.json`、Desktop `app-config.ts` 的 `ServerConfig` 与 `DEFAULTS`、connectors 插件的 `DEFAULT_MARKET_PATHS`。校验规则与其它路径一致（字符串且以 `/` 开头）。
 
+离线环境还需要一个字段：`mcpPackageRegistry` —— 内网 npm 仓库（Sonatype Nexus）基址，例如 `http://nexus.intranet:8081/repository/npm-group/`，校验规则是字符串且以 `http://` 或 `https://` 开头。它只用于 §2.7 的「本机依赖安装」，未配置时该能力整体关闭（市场里直接执行本机命令的条目不受影响）。凭据不写进该文件：Nexus 需要认证时按部署策略改为匿名读，或后续单独提供客户端侧配置。
+
 已确认的列表接口完整形式（桌面端默认每页 24 条，按页取数）：
 
 ```text
@@ -117,7 +119,7 @@ JSON 字段使用 **lowerCamelCase**（如 `serviceId`、`toolCount`），对应
 | `service_id` | `serverName` | **唯一键判重**；表上已有唯一索引 `uk_ai_mcp_tool_service_id`，正好对应 |
 | `description` | `description` | 说明 |
 | `transport` | `transport` | `http` 与 `sse` 都按 `streamable-http` 处理，`stdio` 按 `stdio`（见 §5 决策 3） |
-| `command` + `args` | `command` + `args` | `args` 表里是「每行一个」，连接器侧是字符串数组 |
+| `command` + `args` | `command` + `args` | `args` 表里是「每行一个」，连接器侧是字符串数组。`transport = stdio` 且 `command` 是包管理器（`npx` / `npm` / `pnpm` / `yarn` / `bunx` 等）时，客户端认定这是「需要从内网仓库装到本机的 npm 包」，`args` 第一行是包说明符，见 §2.7 |
 | `endpoint` | `url` | `transport = http` 或 `sse` 时使用 |
 | `token` | 暂不使用 | 列表接口**永不返回** token；返回 token 的「取连接配置」接口本轮推迟（见 §2.3） |
 | `biz_scene` | `categories` | **已确认**：分类取 `biz_scene`；该字段是**逗号分隔的多值**，桌面端拆成值的数组，仅用于分类筛选取值与安装时判重（见 §2.2 实测补充） |
@@ -307,6 +309,36 @@ POST {base}/mcp/market/{id}/unstar  // 取消收藏
 
 本轮**不要求实现**。
 
+### 2.7 本机依赖安装（stdio + 包管理器条目）
+
+后台维护的 stdio 启动命令习惯写成 `npx chrome-devtools-mcp@latest --channel=canary`，但离线/内网客户端上这**必然失败**：随包运行时只有 Node 与 pnpm，没有 npm/npx，子进程的 PATH 里也没有随包 Node。因此客户端对这类条目改为「先从内网仓库装包，再用随包 Node 以绝对路径启动」，全程不访问外网，也不需要客户端安装 Node/npm。
+
+**判定规则（客户端侧，后台无需新增字段）：**
+
+| 条目形态 | 客户端处理 |
+| --- | --- |
+| 非 `stdio`，或 `command` 不是包管理器 | 直接执行 `command`（本机自备的 node/python/绝对路径），与既有行为一致 |
+| `command` 是 `npx` / `pnpx` / `bunx` / `npm` / `pnpm` / `yarn` / `yarnpkg` / `bun` | 判定为需要安装：`args` 第一行是包说明符；若写成 `pnpm dlx <包>` / `npm exec <包>`，会跳过 `dlx`/`exec`/`x` 再取包名 |
+| `args` 的其余行 | 原样作为参数传给 MCP 服务本身 |
+
+**客户端行为：**
+
+1. 点卡片「＋」→ 先调 §2.3 安装上报；
+2. 用随包 pnpm 执行 `--dir <DSH_HOME>/mcp/<service_id> --ignore-scripts --registry <mcpPackageRegistry> <包说明符>`（装包目录每次整体清空重建，不保留上一次的依赖树）；
+3. 读包内 `package.json` 的 `bin`（字符串或「命令名 → 文件」映射，优先取与包名同名的命令，其次第一项；没有 `bin` 时兜底 `main`）解析出入口文件绝对路径；
+4. 以 `「随包 Node 绝对路径」「入口文件」「其余 args」` 建连，连接器定义里落盘的就是这两个绝对路径；
+5. 装包期间界面每 5 秒查询一次安装任务状态（宿主端点 `market-install-status`），完成后再刷新列表；失败原因就地显示在卡片/详情里，点一下即可重试；
+6. 卸载时先调 §2.4 上报，移除本机实例，再删除 `<DSH_HOME>/mcp/<service_id>` 目录。
+
+**后台需要配合的：**
+
+- 把条目依赖的 npm 包及其**全部传递依赖**发布到内网 Nexus（`npm publish --registry http://<nexus>/repository/npm-hosted/`），保证 `pnpm install` 能解析出完整包树；
+- `args` 第一行写包名，建议带固定版本（如 `chrome-devtools-mcp@1.2.3`）；写 `@latest` 也能装（客户端按仓库的 `dist-tags` 解析），但升级不受控；
+- `service_id` 会直接作为本机目录名，沿用现有字符集（字母、数字、`-`、`_`）即可；
+- 与 npm 包无关的运行时依赖仍要随镜像铺好：例如 Chrome DevTools MCP 需要本机 Chrome，必须预装并用 `--executablePath` 指到固定路径；`--channel=canary` 这类需要联网下载浏览器的参数在离线环境不可用。
+
+**本轮不覆盖：** `python` / `uvx` 等非 node 运行时的自动安装（仍按「直接执行」处理，需要镜像预装解释器）。
+
 ---
 
 ## 3. 工具清单 `tools` 的 JSON 结构
@@ -392,6 +424,7 @@ ORDER BY builtin DESC, subscribers DESC, update_time DESC
 | 6 | 员工令牌权限 | 员工令牌（`/sys/pcClientLogin` 签发）**可访问**这些接口，无需额外授权 |
 | 7 | 分类数据来源 | 后台**新建业务场景字典**，`biz_scene` 改存字典 `value`；分类接口返回该字典（此后 `biz_scene` 不再是自由文本） |
 | 8 | `icon` 字段 | 后台把 `icon` 改成 **http 可达的 URL**；桌面端按「设置页用户头像」的同一套方式加载，**URL 不可达或为空时退回「名称首字母 + `color` 底色」** |
+| 9 | 离线环境的 stdio 包管理器条目 | 后台照旧写 `command = npx` + `args` 第一行包名；客户端改为「先从部署预置的内网 registry 装包，再用随包 Node 以绝对路径启动」并轮询安装状态，口径见 §2.7。后台无需新增接口或字段，但必须把包及其全部传递依赖发布到 Nexus |
 
 ### 5.2 决策说明
 
@@ -502,6 +535,8 @@ Jeecg 默认序列化输出的是 `value` / `text` / `color`（另有派生的 `
 | 市场 Tab 界面（双 Tab、分类胶囊、卡片统计、已安装态、详情工具清单、滚动加载更多） | 已完成 |
 | 宿主代理端点 + 市场服务客户端（列表 / 分类字典 / 安装上报 / 卸载上报） | 已完成 |
 | 分类与关键词服务端筛选（下发 `bizScene` / `keyword`） | 已完成 |
+| 本机依赖安装：随包 pnpm 从内网 registry 装到 `<DSH_HOME>/mcp/<service_id>`，随包 Node 绝对路径启动，卸载清目录 | 已完成（载体未配置 `server.mcpPackageRegistry` 时该能力关闭并明确报错） |
+| 安装任务状态：`market-install` 立即返回、`market-install-status` 轮询、失败原因就地展示并可重试 | 已完成 |
 | 取连接配置（含 token）接口 | **本轮推迟**（§2.5） |
 
 后台按本规范补齐「安装上报 / 卸载上报」的实现（并让 `bizScene` 支持多值包含匹配）后，市场链路即为完整。

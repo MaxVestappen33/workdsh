@@ -213,21 +213,45 @@ export function desktopEnterprisePatch(home: string, authority: Authority, actor
 }
 
 /**
- * MCP 市场接口路径的注入层。路径归载体配置（workdsh-app.json 的 server 段）所有，而
- * connectors 是 Desktop/Web 共用的 Profile 包、不能自己去读载体配置，因此由这里按运行时
- * 配置生成 overlay，把四个路径作为插件选项交给 connectors 插件。
- * app-config 已保证取值以 `/` 开头；缺失或取值非法的字段不写进本层，插件回退到内置默认值。
+ * MCP 市场接口路径与本机包安装配置的注入层。两者都归载体配置（workdsh-app.json 的 server 段）
+ * 所有，而 connectors 是 Desktop/Web 共用的 Profile 包、不能自己去读载体配置，因此由这里按运行时
+ * 配置生成 overlay，把市场路径与本机 npm 安装参数作为插件选项交给 connectors 插件。
+ * app-config 已保证路径以 `/` 开头、registry 为 http(s) 地址；缺失或取值非法的字段不写进本层，
+ * 插件回退到内置默认值。两段配置必须合并进同一个 `- id: workdsh-connectors` 节点的 config：
+ * Cordis 补丁对同 id 的 config 是整体替换，拆成两个节点会互相覆盖。
  */
-export function desktopConnectorMarketPatch(home: string, server: ServerConfig): string | undefined {
+export function desktopConnectorMarketPatch(home: string, server: ServerConfig, runtime: { node: string, pnpm: string }): string | undefined {
   const rows = ([
     ['list', server.mcpMarketListPath],
     ['categories', server.mcpMarketCategoriesPath],
     ['install', server.mcpMarketInstallPath],
     ['uninstall', server.mcpMarketUninstallPath],
   ] as const).flatMap(([name, value]) => (typeof value === 'string' && /^\//u.test(value) ? [[name, value] as const] : []))
-  if (rows.length === 0) return undefined
+  const registry = server.mcpPackageRegistry
+  const installable = typeof registry === 'string' && /^https?:\/\//u.test(registry)
+  if (rows.length === 0 && !installable) return undefined
+  const paths = rows.length === 0 ? '' : `    paths:\n${rows.map(([name, value]) => `      ${name}: ${JSON.stringify(value)}\n`).join('')}`
+  const install = installable ? `    install:\n      registry: ${JSON.stringify(registry)}\n      node: ${JSON.stringify(runtime.node)}\n      pnpm: ${JSON.stringify(runtime.pnpm)}\n      root: ${JSON.stringify(join(home, 'mcp'))}\n` : ''
   const patch = join(home, '.connector-market.patch.yml')
-  writeFileSync(patch, `- id: workdsh-connectors\n  config:\n    paths:\n${rows.map(([name, value]) => `      ${name}: ${JSON.stringify(value)}\n`).join('')}`, { mode: 0o600 })
+  writeFileSync(patch, `- id: workdsh-connectors\n  config:\n${paths}${install}`, { mode: 0o600 })
+  return patch
+}
+
+/**
+ * 技能市场接口路径的注入层。与 MCP 市场同理：skills 是 Desktop/Web 共用的 Profile 包，
+ * 不能自己去读载体配置，因此由这里按运行时配置生成 overlay，把接口路径作为插件选项交给 skills 插件。
+ * 安装/卸载接口后台当前是预留实现；路径缺失或非法时不写进本层，插件回退到内置默认值。
+ */
+export function desktopSkillMarketPatch(home: string, server: ServerConfig): string | undefined {
+  const rows = ([
+    ['list', server.skillMarketListPath],
+    ['categories', server.skillMarketCategoriesPath],
+    ['install', server.skillMarketInstallPath],
+    ['uninstall', server.skillMarketUninstallPath],
+  ] as const).flatMap(([name, value]) => (typeof value === 'string' && /^\//u.test(value) ? [[name, value] as const] : []))
+  if (rows.length === 0) return undefined
+  const patch = join(home, '.skill-market.patch.yml')
+  writeFileSync(patch, `- id: workdsh-skills\n  config:\n    market:\n      paths:\n${rows.map(([name, value]) => `        ${name}: ${JSON.stringify(value)}\n`).join('')}`, { mode: 0o600 })
   return patch
 }
 

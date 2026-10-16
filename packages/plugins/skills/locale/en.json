@@ -1,5 +1,5 @@
 {
   "meta": {
-    "description": "Manages installed skills, local skill packages and SkillHub browsing."
+    "description": "Manages installed skills and the authorized skill market."
   }
 }

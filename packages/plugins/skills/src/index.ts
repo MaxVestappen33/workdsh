@@ -7,8 +7,11 @@ import { professionalAuthoringSkills, skillCreatorContent, skillCreatorMeta } fr
 import { SkillManager, type SkillManagerOptions } from './services/manager.js';
 import { registerSkillManagementConnection } from './services/connection-api.js';
 import { registerSkillLifecycleTools } from './services/lifecycle-tools.js';
+import { SkillMarketService, type SkillMarketOptions } from './services/market-entry.js';
 
 export * from './services/manager.js';
+export * from './services/market-entry.js';
+export * from './market.js';
 export * from './shared.js';
 export { registerSkillManagementConnection } from './services/connection-api.js';
 export { registerSkillLifecycleTools } from './services/lifecycle-tools.js';
@@ -18,8 +21,16 @@ export const inject = ['skills', 'connection', 'tools'];
 
 export { skillCreatorContent } from './authoring/professional.js';
 
-export function applySkillsHost(ctx: Context, options: SkillManagerOptions = {}): void {
+/** 宿主可选项：本地技能管理 + 技能市场接口路径（未配置时市场回退到内置默认值）。 */
+export interface SkillPluginOptions extends SkillManagerOptions {
+  readonly market?: SkillMarketOptions;
+}
+
+export function applySkillsHost(ctx: Context, options: SkillPluginOptions = {}): void {
   new SkillManager(ctx, options);
+  // 技能市场依赖宿主提供的通用后台通道（workdshBackend）：通道或绑定缺失时市场整体不可用，
+  // 不影响插件加载；接口路径由宿主经插件选项注入。
+  new SkillMarketService(ctx, options.market ?? {});
   for (const skill of professionalAuthoringSkills) {
     ctx.effect(() => ctx.skills.register({
       ...skill,

@@ -61,7 +61,7 @@
     "fflate": "0.8.3",
     "yaml": "2.9.0"
   },
-  "description": "Manages installed skills, local skill packages and SkillHub browsing.",
+  "description": "Manages installed skills and the authorized skill market.",
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"

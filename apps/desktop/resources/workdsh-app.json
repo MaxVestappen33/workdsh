@@ -9,6 +9,7 @@
   },
   "server": {
     "baseUrl": "http://127.0.0.1:18080/ytsj-ai",
+    "mcpPackageRegistry": "http://56.82.7.213:8081/repository/npm-group/",
     "loginPath": "/sys/pcClientLogin",
     "logoutPath": "/sys/logout",
     "mePath": "/sys/pcClientVerifyUser",
@@ -16,6 +17,10 @@
     "mcpMarketListPath": "/desktop-client/mcptool/queryAuthorizedMcpToolList",
     "mcpMarketCategoriesPath": "/desktop-client/mcptool/queryMcpToolBizSceneList",
     "mcpMarketInstallPath": "/desktop-client/mcptool/installMcpTool",
-    "mcpMarketUninstallPath": "/desktop-client/mcptool/unInstallMcpTool"
+    "mcpMarketUninstallPath": "/desktop-client/mcptool/unInstallMcpTool",
+    "skillMarketListPath": "/desktop-client/skill/queryAuthorizedSkillList",
+    "skillMarketCategoriesPath": "/desktop-client/skill/querySkillBizSceneList",
+    "skillMarketInstallPath": "/desktop-client/skill/installSkill",
+    "skillMarketUninstallPath": "/desktop-client/skill/unInstallSkill"
   }
 }
