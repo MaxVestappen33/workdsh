@@ -6,6 +6,7 @@ import { credentialRef } from '@deepseek-ai/dsh-credentials';
 import * as McpClient from '@deepseek-ai/dsh-mcp-client';
 import type { KvTable } from '@deepseek-ai/dsh-storage-domain';
 import type { ConnectorConfigView, ConnectorInput, ConnectorManagementService, ConnectorState, ConnectorSummary, ConnectorTool } from './shared.js';
+import { installEmptyCursorCompat } from './mcp-compat.js';
 import { connectorDefinitionSchema, connectorSelectionsDomainSpec, connectorsDomainSpec, type ConnectorDefinition, type ConnectorSelection } from './storage.js';
 
 declare module '@deepseek-ai/cordis' { interface Context { workdshConnectors: ConnectorManagementService; } }
@@ -34,6 +35,24 @@ const toolDetail = (schema: { name: string; description?: string; parameters?: R
 };
 const idPart = (value: string) => value.replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
 const refFor = (value: string) => credentialRef(value) as unknown as Parameters<Context['credentials']['resolve']>[0];
+/** 分类文案去空、去重并限定条目数，与连接器定义的存储上限保持一致。 */
+const categoriesOf = (value: readonly string[] | undefined): readonly string[] =>
+  [...new Set((value ?? []).flatMap(item => (item.trim() ? [item.trim()] : [])))].slice(0, 8);
+/**
+ * 连接失败的诊断文案。官方 MCP 客户端把真实原因放在包装错误的 `cause` 里
+ * （外层只有「initial connection or tool synchronization failed」），只取 message 会让界面
+ * 失去全部信息；这里沿 cause 链把每一层原文都带出来，网络不通、404、非 MCP 协议才区分得开。
+ */
+const failureText = (cause: unknown): string => {
+  const parts: string[] = [];
+  let current: unknown = cause;
+  while (current instanceof Error && parts.length < 4) {
+    const message = current.message.trim();
+    if (message && !parts.includes(message)) parts.push(message);
+    current = current.cause;
+  }
+  return parts.length ? parts.join('：') : 'MCP 服务启动失败。';
+};
 
 export interface ConnectorManagerOptions {
   seedExample?: boolean;
@@ -51,6 +70,11 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
   constructor(ctx: Context, private readonly options: ConnectorManagerOptions = {}) { super(ctx, 'workdshConnectors'); }
 
   async [Service.init](): Promise<void> {
+    // 必须早于任何 MCP 建连：服务端在没有下一页时下发空 nextCursor 会让官方客户端多翻一页、
+    // 取到重复工具并判重失败，这里装一层最小兼容（详见 mcp-compat.ts）。
+    this.ctx.effect(() => installEmptyCursorCompat(detail => {
+      this.ctx.logger.warn(`连接器：${detail.url} 的 ${detail.method} 返回了空 nextCursor，已在本机兼容处理。`);
+    }), 'workdshConnectors.emptyCursorCompat');
     const domain = await this.ctx.storageDomain.open(connectorsDomainSpec);
     this.ctx.effect(() => () => domain.close(), 'workdshConnectors.domainClose');
     this.definitions = domain.table('definitions');
@@ -180,7 +204,7 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
     const fiber = this.ctx.plugin(McpClient, { ...transportConfig, failOnStartupError: true, toolCallTimeoutMs: 10_000, maxInstructionBytes: 8_192,
       reconnect: { enabled: true, initialDelayMs: 250, maxDelayMs: 5_000, maxAttempts: 4 } }) as ChildFiber & PromiseLike<unknown>;
     try { await fiber; runtime.child = fiber; runtime.state = 'ready'; }
-    catch (cause) { await fiber.dispose().catch(() => undefined); runtime.state = 'offline'; runtime.diagnostic = cause instanceof Error ? cause.message : 'MCP 服务启动失败。'; throw cause; }
+    catch (cause) { await fiber.dispose().catch(() => undefined); runtime.state = 'offline'; runtime.diagnostic = failureText(cause); throw cause; }
   }
 
   private async stop(id: string, remainsEnabled: boolean): Promise<void> {
@@ -193,7 +217,7 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
     return { id: definition.id, title: definition.title, description: definition.description, serverName: definition.serverName,
       transport: definition.transport, scope: 'shared', enabled: definition.enabled, state: health.state, toolNames: health.toolNames,
       tools: health.tools, resourceCount: health.resourceCount, resourceTemplateCount: health.resourceTemplateCount, lastCheckedAt: new Date().toISOString(),
-      ...(definition.originId ? { originId: definition.originId } : {}), ...(definition.category ? { category: definition.category } : {}),
+      ...(definition.originId ? { originId: definition.originId } : {}), categories: definition.categories ?? [],
       ...(health.diagnostic ? { diagnostic: health.diagnostic } : {}) };
   }
 
@@ -234,11 +258,12 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
   }
 
   private normalize(input: ConnectorInput): Omit<ConnectorDefinition, 'id' | 'enabled' | 'createdAt' | 'updatedAt'> {
+    const categories = categoriesOf(input.categories);
     const value = connectorDefinitionSchema.omit({ id: true, enabled: true, createdAt: true, updatedAt: true }).parse({
       title: input.title.trim(), description: input.description?.trim() ?? '', serverName: input.serverName.trim(), transport: input.transport,
       ...(input.transport === 'stdio' ? { command: input.command?.trim(), args: [...(input.args ?? [])] } : { url: input.url?.trim() }),
-      // 仅市场安装流程会传入来源与分类；用户自建实例两者皆为空，界面按「自建」呈现。
-      ...(input.category?.trim() ? { category: input.category.trim() } : {}),
+      // 仅市场安装流程会传入来源与分类；用户自建实例两者皆为空，界面按「内置」呈现。
+      ...(categories.length ? { categories } : {}),
       ...(input.originId?.trim() ? { originId: input.originId.trim() } : {}),
     });
     if (value.transport === 'stdio' && !value.command) throw new Error('connector/command-required');

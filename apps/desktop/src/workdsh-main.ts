@@ -16,7 +16,8 @@ import { connectionEntryHtml, enterpriseLoginHtml, connectionLoadingHtml, accoun
 import { connectionPartition, enterpriseConnection, type DesktopConnection } from './connection-mode.ts'
 import { parseDeploymentConfig } from './deployment-config.ts'
 import { readModelCredentials } from './model-credentials.ts'
-import { readAppConfig, type ResolvedAppConfig } from './app-config.ts'
+import { readAppConfig, type AppEnvironment, type ResolvedAppConfig } from './app-config.ts'
+import { createDebugLog, type DebugLog } from './debug-log.ts'
 import { AccountLogin, AccountStore, restoreAccountLogin, startAccountAuthority, type AccountAuthority } from './member-auth.ts'
 import { EnterpriseLogin, startEnterpriseAuthority, type Authority } from './enterprise-auth.ts'
 import { desktopEnterprisePatch, desktopAccountPatch, desktopConnectorMarketPatch, accountSpace, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher, type AccountActor } from './local-runtime.ts'
@@ -348,6 +349,10 @@ function runtimeEnvironment(home: string): NodeJS.ProcessEnv {
     DSH_AGENTS_HOME: enterprise ? join(enterprise.root, 'agents') : join(home, 'agents'),
     DSH_BUNDLED_PRIMARY_RUNTIME: bundledPrimaryRuntime(),
     DSH_ELECTRON_EXECUTABLE: process.execPath,
+    // 调试开关（workdsh-app.json 的 environment）：dev 时 Host 侧把出站 HTTP 请求与响应
+    // 写入 WORKDSH_LOG_DIR；prod 下 Host 不产生这些日志。读取失败按 prod 处理。
+    WORKDSH_ENVIRONMENT: debugEnvironment(),
+    WORKDSH_LOG_DIR: debugLogDirectory(),
     // A packaged carrier embeds the WorkDSH entry point, but a development
     // Electron binary needs the app directory as the worker's first argument.
     DSH_ELECTRON_APP_PATH: app.isPackaged ? undefined : app.getAppPath(),
@@ -459,8 +464,12 @@ function startRuntime(home: string, connection: DesktopConnection, patches: stri
   markStartup('DSH Host 进程已拉起（等待就绪）')
   let ready = false
   let output = ''
+  // 调试开关打开时把 Host 的原始输出落到 userData/logs：打包应用没有终端，
+  // 官方插件记录的真实错误原因（例如 MCP 连接失败的 warn）原本完全看不到。
+  const hostOutputLog: DebugLog | undefined = debugEnvironment() === 'dev' ? createDebugLog(debugLogDirectory(), 'host-output') : undefined
   const consume = (chunk: Buffer): void => {
     const text = chunk.toString('utf8')
+    hostOutputLog?.write(text)
     process.stderr.write(text.replace(/\?token=[^\s]+/gu, '?token=[redacted]'))
     if (ready || switching || runtime !== child) return
     output = `${output}${text}`.slice(-16_384)
@@ -474,7 +483,11 @@ function startRuntime(home: string, connection: DesktopConnection, patches: stri
     }
   }
   child.stdout.on('data', consume)
-  child.stderr.on('data', chunk => process.stderr.write(chunk.toString().replace(/\?token=[^\s]+/gu, '?token=[redacted]')))
+  child.stderr.on('data', chunk => {
+    const text = chunk.toString()
+    hostOutputLog?.write(text)
+    process.stderr.write(text.replace(/\?token=[^\s]+/gu, '?token=[redacted]'))
+  })
   child.once('error', cause => {
     if (!quitting && runtime === child) { dialog.showErrorBox('启动失败', cause.message); void returnToEntry() }
   })
@@ -645,6 +658,16 @@ function carrierResources(): string {
 function loadConfig(): ResolvedAppConfig {
   if (!appConfig) appConfig = readAppConfig(carrierResources(), app.getPath('userData'))
   return appConfig
+}
+
+/** 调试开关的取值；配置读取失败按 prod 处理，绝不影响启动。 */
+function debugEnvironment(): AppEnvironment {
+  try { return loadConfig().environment } catch { return 'prod' }
+}
+
+/** 调试日志目录：与启动耗时日志同处 userData/logs，便于一次性收集。 */
+function debugLogDirectory(): string {
+  return join(app.getPath('userData'), 'logs')
 }
 
 /** Read the configured logo and return a base64 data URI for embedding (CSP keeps img-src data:). */

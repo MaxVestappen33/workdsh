@@ -11,8 +11,8 @@ export const connectorDefinitionSchema = z.object({
   args: z.array(z.string().max(4096)).max(64).optional(),
   url: z.string().url().max(2048).optional(),
   authorizationCredentialRef: z.string().regex(/^[A-Z_][A-Z0-9_]*$/).max(128).optional(),
-  /** 市场分类代码，安装时随定义一起落盘，供「我的本地 MCP」按分类筛选。自建实例为 undefined。 */
-  category: z.string().max(64).optional(),
+  /** 市场分类名称（安装时取市场 bizSceneList 文案，多值全部保留），落盘供「我的本地 MCP」展示与按分类筛选。自建实例为 undefined。 */
+  categories: z.array(z.string().min(1).max(64)).max(8).optional(),
   /** 来源市场条目 id。存在即表示该实例由市场安装而来，用于「已安装」判定与卸载。 */
   originId: z.string().max(128).optional(),
   enabled: z.boolean(),

@@ -28,6 +28,11 @@ export interface MarketItem {
    * 取值与分类字典 value、列表 bizScene 筛选参数同一口径。
    */
   readonly categories: readonly string[];
+  /**
+   * bizSceneList 逐项展开后的分类名称（后台按 bizScene 顺序下发，见 §2.2）。
+   * 界面标签直接用这里的文案展示，不再回查分类字典；为空时再退回字典映射。
+   */
+  readonly categoryLabels: readonly string[];
   readonly transport: 'stdio' | 'streamable-http';
   readonly url?: string;
   readonly command?: string;
@@ -112,6 +117,20 @@ const categoriesOf = (value: unknown): readonly string[] => {
   if (!raw) return [];
   return [...new Set(raw.split(',').map(part => part.trim()).filter(Boolean))];
 };
+/**
+ * bizSceneList：后台按 biz_scene 逐项展开后的分类对象数组（DictModel 形态：value / text / label / title / color）。
+ * 只取名称字段作为展示文案（text 优先，其次 label / title），去空、去重并保持后台顺序；
+ * 不拿 value 兜底，避免把编码当成名称显示给用户。
+ */
+const categoryLabelsOf = (value: unknown): readonly string[] => {
+  if (!Array.isArray(value)) return [];
+  const labels = value.flatMap(item => {
+    const row = record(item);
+    const label = text(row?.text) ?? text(row?.label) ?? text(row?.title);
+    return label ? [label] : [];
+  });
+  return [...new Set(labels)];
+};
 /** 入参取自 inputSchema.properties，必填由 inputSchema.required 数组决定。 */
 const parametersOf = (value: unknown): readonly ConnectorToolParameter[] => {
   const schema = record(value);
@@ -147,6 +166,7 @@ const itemOf = (value: unknown): MarketItem | undefined => {
   const url = text(row.endpoint); const command = text(row.command); const args = argsOf(row.args);
   const icon = iconOf(row.icon); const color = text(row.color);
   return { originId, serverName, title, description: text(row.description) ?? '', categories: categoriesOf(row.bizScene),
+    categoryLabels: categoryLabelsOf(row.bizSceneList),
     transport: transportOf(row.transport), ...(url ? { url } : {}), ...(command ? { command } : {}), ...(args ? { args } : {}),
     ...(icon ? { icon } : {}), ...(color ? { color } : {}),
     subscribers: count(row.subscribers), downloads: count(row.downloadCount), stars: count(row.starCount),

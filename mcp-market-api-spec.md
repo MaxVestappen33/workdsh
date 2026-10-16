@@ -120,7 +120,9 @@ JSON 字段使用 **lowerCamelCase**（如 `serviceId`、`toolCount`），对应
 | `command` + `args` | `command` + `args` | `args` 表里是「每行一个」，连接器侧是字符串数组 |
 | `endpoint` | `url` | `transport = http` 或 `sse` 时使用 |
 | `token` | 暂不使用 | 列表接口**永不返回** token；返回 token 的「取连接配置」接口本轮推迟（见 §2.3） |
-| `biz_scene` | `categories` | **已确认**：分类取 `biz_scene`；该字段是**逗号分隔的多值**，桌面端拆成值的数组，卡片与详情展示全部可映射的分类文本（见 §2.2 实测补充） |
+| `biz_scene` | `categories` | **已确认**：分类取 `biz_scene`；该字段是**逗号分隔的多值**，桌面端拆成值的数组，仅用于分类筛选取值与安装时判重（见 §2.2 实测补充） |
+| `biz_scene_list`（新） | `categoryLabels` | **已确认**：后台按 `biz_scene` 逐项展开的 DictModel 数组（`value` / `text` / `label` / `title` / `color`）。桌面端**只取名称字段**（`text` → `label` → `title`）作为卡片与详情的标签文案，多值全部展示、按后台顺序去重，**不再回查分类字典**；字段缺失时才退回用分类字典映射 `biz_scene` |
+| `source_node` + `source_node_list`（新） | 暂不使用 | 来源节点，本轮界面不展示，仅确认字段已下发 |
 | `subscribers` | 卡片「订阅数」 | 原样整数 |
 | `download_count` | 卡片「下载数」 | 原样整数 |
 | `star_count` | 卡片「收藏次数」 | 原样整数 |
@@ -233,7 +235,7 @@ GET  {server.baseUrl}/desktop-client/mcptool/queryAuthorizedMcpToolList
 
 1. `tools` 是 JSON **字符串**（不是数组），结构与 §3 一致，按 `[{name, description, inputSchema}]` 解析；`"[]"` 或空表示该 MCP 暂无工具清单，界面显示空清单而不是报错。
 2. `status` 目前包含非上架记录（例如 `"1"` 草稿）。**接口返回什么就显示什么，桌面端不做 `status` 过滤**（与 §4 的服务端过滤要求的关系待后台确认）。
-3. `bizScene` 目前是测试数据、形态混乱：有的是逗号分隔的雪花 ID（如 `1990030000000000001,1990030000000000011`），有的是自由文本（如 `网页检索`、`AI 推理`），个别还是把名称粘进来的脏数据。后台后续会统一改成存字典 `value`。桌面端**只按逗号拆分并去空去重**（不做清洗、不猜测匹配），展示时用分类字典逐项映射 `value → text`：**映射不上的项直接跳过**，一个都映射不上就整个不显示分类（不留空占位）。
+3. `bizScene` 目前是测试数据、形态混乱：有的是逗号分隔的雪花 ID（如 `1990030000000000001,1990030000000000011`），有的是自由文本（如 `网页检索`、`AI 推理`），个别还是把名称粘进来的脏数据。桌面端**只按逗号拆分并去空去重**（不做清洗、不猜测匹配）。**标签文案一律取 `bizSceneList` 的名称字段**（见 §1），多值全部展示；`bizSceneList` 缺失时才退回用分类字典逐项映射 `value → text`，映射不上的项直接跳过，一个都映射不上就整个不显示分类（不留空占位、不显示原始编码）。
 4. `icon` 仍是 `ant-design:api-outlined` 这类值或 `null`，后台后续会改成 http 可达 URL；桌面端按 §5.1 决策 8 处理（URL 可达才渲染，否则回退「名称首字母 + `color`」）。
 5. `endpoint` / `command` / `args` / `transport` / `token` 的映射与本文其余部分一致，无需改动。
 
@@ -492,7 +494,7 @@ Jeecg 默认序列化输出的是 `value` / `text` / `color`（另有派生的 `
 | 能力 | 状态 |
 | --- | --- |
 | 连接器定义新增 `originId`（来源市场条目 id，用于「已安装」判定） | 已完成 |
-| 连接器定义新增 `category`（市场分类，取多值 `bizScene` 的第一个值，用于本地分类筛选） | 已完成 |
+| 连接器定义新增 `categories`（市场分类名称，取 `bizSceneList` 全部名称，用于本地卡片/详情展示与分类筛选） | 已完成 |
 | 按 `service_id` → `serverName` 判重（冲突报错） | 已完成 |
 | stdio / streamable-http 两种传输的连接与断线重连 | 已完成 |
 | token 写入官方凭据服务，定义只存引用，不回显（待「取连接配置」接口就绪后启用） | 已完成 |

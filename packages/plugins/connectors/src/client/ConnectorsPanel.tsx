@@ -68,17 +68,15 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
   /** 关键词防抖计时器：市场关键词由服务端筛选，输入停顿后才发请求。 */
   const queryTimerRef = useRef<number>(undefined);
 
-  /** 市场分类代码 → 界面文案；字典缺失时退回代码本身。 */
-  const categoryText = useCallback((code: string) => marketDict.find(item => item.value === code)?.text ?? code, [marketDict]);
-  /** 本地实例分类来自条目（bizScene 的第一个值）；没有分类的实例不参与分类筛选，只在「全部」下出现。 */
-  const categoryOf = useCallback((row: ConnectorSummary) => (row.category?.trim() ? categoryText(row.category.trim()) : ''), [categoryText]);
+  /** 本地实例分类：安装时落盘的市场分类名称（bizSceneList 文案），多个用「 · 」分隔；自建实例为空。 */
+  const categoryOf = useCallback((row: ConnectorSummary) => (row.categories ?? []).join(' · '), []);
   const searchTextOf = (row: ConnectorSummary): string =>
     `${row.title} ${row.description} ${row.serverName} ${categoryOf(row)} ${row.toolNames.join(' ')}`;
 
   const localCategories = useMemo(() => {
-    const used = new Set(rows.map(categoryOf));
+    const used = new Set(rows.flatMap(row => row.categories ?? []));
     return marketDict.map(item => item.text).filter(text => used.has(text));
-  }, [rows, categoryOf, marketDict]);
+  }, [rows, marketDict]);
   const marketCategories = useMemo(() => marketDict.map(item => item.text), [marketDict]);
   const options = useMemo(() => (tab === 'local' ? localCategories : marketCategories), [tab, localCategories, marketCategories]);
   /** 只保留当前页签仍存在的选中项：切页签或分类字典变化后，失效的选择自动丢弃。 */
@@ -341,7 +339,9 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
 
   const normalized = query.trim().toLowerCase();
   const matchText = (text: string) => !normalized || text.toLowerCase().includes(normalized);
-  const visibleLocal = rows.filter(row => matchText(searchTextOf(row)) && (!activeCategories.length || activeCategories.includes(categoryOf(row))));
+  const visibleLocal = rows.filter(row =>
+    matchText(searchTextOf(row))
+    && (!activeCategories.length || (row.categories ?? []).some(label => activeCategories.includes(label))));
   // 市场不做任何本地过滤：分类与关键词都由服务端筛选，界面只负责拼接分页结果。
   const total = tab === 'local' ? rows.length : market.total;
   // 已安装判定：本机实例的 originId（市场条目 id）或 serverName（市场 serviceId）。
@@ -478,7 +478,7 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
             <MarketMcpCard
               key={entry.originId}
               entry={entry}
-              category={marketCategoryText(entry.categories, marketDict)}
+              category={marketCategoryText(entry, marketDict)}
               installed={isInstalled(entry)}
               installing={installingId === entry.originId}
               busy={busy}
@@ -523,7 +523,7 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
       />
       <MarketMcpDetailModal
         entry={marketDetail}
-        category={marketDetail ? marketCategoryText(marketDetail.categories, marketDict) : ''}
+        category={marketDetail ? marketCategoryText(marketDetail, marketDict) : ''}
         installed={Boolean(marketDetail && isInstalled(marketDetail))}
         installing={Boolean(marketDetail && installingId === marketDetail.originId)}
         busy={busy}

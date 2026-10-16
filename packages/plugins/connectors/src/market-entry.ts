@@ -85,8 +85,9 @@ export class ConnectorMarketService extends Service implements ConnectorMarket {
       transport: item.transport,
       ...(item.transport === 'stdio' ? { command: item.command, args: [...(item.args ?? [])] } : { url: item.url }),
       originId: item.originId,
-      // 多值 bizScene 取第一个值作为本机实例的分类（本地分类筛选与卡片展示用单值）。
-      ...(item.categories.length ? { category: item.categories[0] } : {}),
+      // 本机实例的分类取后台展开后的 bizSceneList 名称（多值全部保留）：本地卡片、详情与分类筛选
+      // 直接用这份文案，不再回查分类字典，也就不会出现「编码没被翻译」的情况。
+      ...(item.categoryLabels.length ? { categories: [...item.categoryLabels] } : {}),
     });
   }
 

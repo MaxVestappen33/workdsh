@@ -23,8 +23,8 @@ export interface ConnectorSummary {
   readonly scope: 'shared';
   /** 来源市场条目 id；有值表示由市场安装，无值表示本机自建。 */
   readonly originId?: string;
-  /** 市场分类代码；自建实例通常为空，界面归入「自定义」。 */
-  readonly category?: string;
+  /** 市场分类名称（安装时取市场 bizSceneList 文案，多值全部保留）；自建实例为空。 */
+  readonly categories: readonly string[];
   readonly enabled: boolean;
   readonly state: ConnectorState;
   readonly toolNames: readonly string[];
@@ -62,8 +62,8 @@ export interface ConnectorInput {
   readonly authorizationToken?: string;
   /** 来源市场条目 id；仅市场安装流程写入，用于「已安装」判定与卸载。 */
   readonly originId?: string;
-  /** 市场分类代码；仅市场安装流程写入，供本地按分类筛选。 */
-  readonly category?: string;
+  /** 市场分类名称（市场 bizSceneList 文案，多值全部保留）；仅市场安装流程写入，供本地展示与按分类筛选。 */
+  readonly categories?: readonly string[];
 }
 
 export interface ConnectorManagementService {

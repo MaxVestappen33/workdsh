@@ -2,6 +2,7 @@
   "logo": "logo.png",
   "loginLogo": "login-logo.png",
   "splashLogo": "splash-logo.png",
+  "environment": "dev",
   "splash": {
     "title": "环境准备中",
     "subtitle": "正在准备好您的工作区，请稍候..."

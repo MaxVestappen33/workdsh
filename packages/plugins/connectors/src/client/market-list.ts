@@ -70,7 +70,12 @@ export function marketCategoryLabels(categories: readonly string[], dictionary: 
   });
 }
 
-/** 界面上的分类文案：多个分类用「 · 」分隔；一个都映射不出时返回空串，由界面决定不显示。 */
-export function marketCategoryText(categories: readonly string[], dictionary: readonly MarketCategory[]): string {
-  return marketCategoryLabels(categories, dictionary).join(' · ');
+/**
+ * 界面上的分类文案：后台下发的 bizSceneList 名称优先（多值全部展示），
+ * 该字段缺失时才退回用分类字典把 bizScene 编码映射成名称；多个用「 · 」分隔。
+ * 两种来源都映射不出时返回空串，由界面决定不显示，任何情况下都不展示原始编码。
+ */
+export function marketCategoryText(entry: MarketItem, dictionary: readonly MarketCategory[]): string {
+  const labels = entry.categoryLabels.length ? entry.categoryLabels : marketCategoryLabels(entry.categories, dictionary);
+  return labels.join(' · ');
 }

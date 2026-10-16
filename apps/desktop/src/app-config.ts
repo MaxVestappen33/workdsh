@@ -4,9 +4,15 @@ import { join, isAbsolute, resolve, dirname } from 'node:path'
 
 export const APP_CONFIG_FILENAME = 'workdsh-app.json'
 
+/**
+ * 运行环境。仅 dev 打开调试日志（Host 出站 HTTP、Host 原始输出落盘），
+ * prod 下这些日志完全不产生，避免内网机器长期写入敏感数据。
+ */
+export type AppEnvironment = 'dev' | 'prod'
+
 /** Splash screen copy. All fields are user-editable without repackaging. */
 export interface SplashCopy {
-  /** Big centig title. */
+  /** Big cent title. */
   title: string
   /** Subtitle below the title. */
   subtitle: string
@@ -37,6 +43,8 @@ export interface ServerConfig {
 export interface AppConfig {
   /** Path of the general PNG logo. Absolute, or relative to the config file that declared it. */
   logo: string
+  /** 运行环境开关：dev 打开调试日志，默认 prod。 */
+  environment: AppEnvironment
   splash: SplashCopy
   server: ServerConfig
 }
@@ -52,6 +60,7 @@ interface ConfigSource {
 
 const DEFAULTS: AppConfig = {
   logo: 'logo.png',
+  environment: 'prod',
   splash: {
     title: '环境准备中',
     subtitle: '正在准备好你的工作区，请稍候...',
@@ -75,6 +84,7 @@ type PartialAppConfig = {
   logo?: string
   loginLogo?: string
   splashLogo?: string
+  environment?: AppEnvironment
   splash?: Partial<SplashCopy>
   server?: Partial<ServerConfig>
 }
@@ -97,7 +107,11 @@ export function parseAppConfig(value: unknown): PartialAppConfig {
   const result: PartialAppConfig = {}
   const logoFields: LogoField[] = ['logo', 'loginLogo', 'splashLogo']
   for (const key of Object.keys(root)) {
-    if (key !== 'logo' && key !== 'loginLogo' && key !== 'splashLogo' && key !== 'splash' && key !== 'server') throw new Error(`应用外观配置不接受字段 ${key}`)
+    if (key !== 'logo' && key !== 'loginLogo' && key !== 'splashLogo' && key !== 'environment' && key !== 'splash' && key !== 'server') throw new Error(`应用外观配置不接受字段 ${key}`)
+  }
+  if (root.environment !== undefined) {
+    if (root.environment !== 'dev' && root.environment !== 'prod') throw new Error('environment 只能是 dev 或 prod')
+    result.environment = root.environment
   }
   for (const field of logoFields) {
     const raw = root[field]
@@ -143,6 +157,8 @@ export interface ResolvedAppConfig {
   loginLogoPath: string
   /** Absolute path of the logo shown on the splash page. */
   splashLogoPath: string
+  /** 运行环境：dev 时载体与 Host 打开调试日志。 */
+  environment: AppEnvironment
   splash: SplashCopy
   server: ServerConfig
 }
@@ -183,6 +199,7 @@ export function readAppConfig(resources: string, userData: string): ResolvedAppC
     logoPath: resolveLogo(['logo']),
     loginLogoPath: resolveLogo(['loginLogo', 'logo']),
     splashLogoPath: resolveLogo(['splashLogo', 'logo']),
+    environment: override?.parsed.environment ?? packaged?.parsed.environment ?? DEFAULTS.environment,
     splash,
     server,
   }
