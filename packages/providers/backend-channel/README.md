@@ -30,7 +30,7 @@
 | 错误码 | 含义 |
 | --- | --- |
 | `backend/unavailable` | 当前环境没有后台绑定 |
-| `backend/address-invalid` | 绑定地址不是合法 HTTPS（或本机回环 HTTP）地址 |
+| `backend/address-invalid` | 绑定地址不是合法的 HTTP/HTTPS 地址（含查询串、片段或账号密码，或协议不是 http/https） |
 | `backend/path-invalid` | 接口路径不以 `/` 开头，或含查询串/片段 |
 | `backend/authority-invalid` | 下发的授权值不可用，通常意味着登录状态已变化 |
 | `backend/unreachable` | 网络错误或超时（10 秒，`redirect: 'error'`） |

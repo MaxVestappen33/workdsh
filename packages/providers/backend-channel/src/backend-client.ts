@@ -37,7 +37,7 @@ export interface BackendBindingProvider {
 export type BackendErrorCode =
   /** 当前环境没有后台绑定（个人模式、未登录或登录态已失效）。 */
   | 'backend/unavailable'
-  /** 绑定地址不是合法的 HTTPS（或本机回环 HTTP）地址。 */
+  /** 绑定地址不是合法的 HTTP/HTTPS 地址（含查询串、片段或账号密码，或协议不是 http/https）。 */
   | 'backend/address-invalid'
   /** 接口路径不是以 / 开头、或含查询串与片段。 */
   | 'backend/path-invalid'
@@ -83,16 +83,20 @@ const record = (value: unknown): Record<string, unknown> | undefined =>
   value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 const text = (value: unknown): string | undefined => typeof value === 'string' && value.trim() ? value.trim() : undefined;
 
-/** 绑定地址已含网关前缀，去掉结尾多余的 / 后按字面拼接路径，避免吃掉前缀。只接受 HTTPS，本机回环允许 HTTP。 */
+/**
+ * 绑定地址已含网关前缀，去掉结尾多余的 / 后按字面拼接路径，避免吃掉前缀。
+ * 协议只允许 http / https：隔离内网（如公安网）按明文 HTTP 部署是既定事实，
+ * 这里不再强制 HTTPS，否则整条后台能力链路（MCP 市场等）在部署环境直接不可用。
+ * 地址里不允许带查询串、片段与账号密码，避免把凭据写进配置。
+ */
 function backendBaseUrl(value: unknown): string {
   let url: URL;
   try { url = new URL(typeof value === 'string' ? value : ''); }
   catch { throw new BackendRequestError('backend/address-invalid', '业务后台地址无效。'); }
   if (url.search || url.hash || url.username || url.password)
     throw new BackendRequestError('backend/address-invalid', '业务后台地址无效。');
-  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
-  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback))
-    throw new BackendRequestError('backend/address-invalid', '业务后台地址必须使用 HTTPS。');
+  if (url.protocol !== 'https:' && url.protocol !== 'http:')
+    throw new BackendRequestError('backend/address-invalid', '业务后台地址必须使用 HTTP 或 HTTPS。');
   return `${url.origin}${url.pathname}`.replace(/\/+$/u, '');
 }
 
