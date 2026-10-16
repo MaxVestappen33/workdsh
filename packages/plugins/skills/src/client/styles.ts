@@ -155,9 +155,24 @@ export const skillsMarketCss = `${modalCss}
 .wd-skills .install{min-height:40px;height:40px;padding:0;border-radius:50%;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);font-size:20px;line-height:1}
 .wd-skills .install:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);border-color:var(--dsw-alias-border-l2)}
 .wd-skills .install:disabled{opacity:.45}
+/* 安装中：加号位置换成转圈，卡片与详情页底部显示流式进度条；失败原因就地显示在卡片上。 */
+.wd-skills .plus{display:grid;place-items:center;width:40px;min-height:40px;height:40px;border-radius:50%;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2)}
+.wd-skills .plus.installing{cursor:default}
+.wd-skills .spinner{width:15px;height:15px;border-radius:50%;border:2px solid var(--dsw-alias-border-l2);border-top-color:var(--dsw-alias-brand-primary);animation:wd-skill-spin .7s linear infinite}
+@keyframes wd-skill-spin{to{transform:rotate(360deg)}}
+.wd-skills .install-bar,.skill-detail-dialog .install-bar{position:relative;overflow:hidden;height:3px;margin-top:10px;border-radius:999px;background:var(--dsw-alias-bg-layer-3)}
+.wd-skills .install-bar-fill,.skill-detail-dialog .install-bar-fill{position:absolute;top:0;bottom:0;left:0;width:40%;border-radius:999px;background:var(--dsw-alias-brand-primary);animation:wd-skill-install 1.2s ease-in-out infinite}
+@keyframes wd-skill-install{0%{transform:translateX(-110%)}100%{transform:translateX(260%)}}
+.skill-detail-dialog .install-bar{margin:0 0 16px}
+.wd-skills .card.is-installing{border-color:var(--dsw-alias-brand-primary)}
+.wd-skills .card-error{overflow:hidden;margin:8px 0 0;color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:18px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 /* 卡片内的业务场景标签、市场卡片的版本行与「已安装」胶囊。 */
 .wd-skills .card-title small.tag{color:var(--dsw-alias-label-secondary)}
 .wd-skills .market-version{display:block;margin-top:10px;color:var(--dsw-alias-label-dimmed);font-size:11px}
+/* 市场卡片的主信息（技能编号、简介、版本号）改用主文字色，dimmed/tertiary 在浅色主题下对比度不足。 */
+.wd-skills .market-card .card-title small.slug{color:var(--dsw-alias-label-primary)}
+.wd-skills .market-card p.muted{color:var(--dsw-alias-label-primary)}
+.wd-skills .market-card .market-version{color:var(--dsw-alias-label-primary)}
 .wd-skills .installed-pill{flex:none;padding:4px 10px;border-radius:999px}
 .wd-skills .installed-pill{background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-state-success-primary);font-size:12px;font-weight:500}
 .wd-skills .market-foot{display:flex;justify-content:center;padding:22px 0 6px;color:var(--dsw-alias-label-tertiary);font-size:12px}

@@ -57,8 +57,10 @@ function publicFailure(error: unknown): ConnectionRpcResult<never> {
     'skill/catalog-entry-unknown': '本地技能目录中没有该技能。',
     'skill/catalog-entry-over-limit': '该技能的体积或文件数超过导入上限，不能从目录安装。',
     'skill/catalog-payload-missing': '本地技能目录缺少该技能的安装负载，请重新生成目录。',
-    'skill/market-install-pending': '已上报技能安装，本机安装将在下一轮接入。',
-    'skill/market-uninstall-pending': '已上报技能卸载，本机卸载将在下一轮接入。',
+    'skill/market-file-missing': '该技能缺少技能说明文件，不能安装。',
+    'skill/market-file-unavailable': '技能文件下载失败，请检查网络后重试。',
+    'skill/market-file-too-large': '技能文件超过 50 MiB 上限，不能安装。',
+    'skill/market-item-unknown': '市场条目信息已失效，请刷新技能市场后重试。',
     'skill/market-unavailable': '当前环境未接入技能市场。',
   };
   return fail(code, messages[code] ?? '技能操作失败，请重试。');
@@ -126,6 +128,10 @@ async function dispatch(manager: SkillManagementService, marketService: () => Sk
         ...(typeof input.slug === 'string' ? { slug: input.slug } : {}),
       };
       return ok(await market().uninstall(target, signal));
+    }
+    // 详情页说明：宿主下载附件并取出 SKILL.md 正文（md 直读，zip 解包）。
+    if (endpoint === 'market-document' && typeof record(payload)?.id === 'string' && (record(payload)?.id as string).trim()) {
+      return ok(await market().document(record(payload)?.id as string, signal));
     }
     const name = nameFrom(payload);
     if (!name) return fail('skill/invalid-request', '请求缺少有效的技能名称。');

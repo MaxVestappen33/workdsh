@@ -2,7 +2,7 @@ import type { Context } from '@deepseek-ai/cordis';
 import type {} from '@deepseek-ai/dsh-client-connection/client';
 import type {} from '@deepseek-ai/dsh-api-remotes/client';
 import type {} from '@deepseek-ai/dsh-api-session-controller/client';
-import type { SkillMarketAuthorized, SkillMarketPage, SkillMarketQuery, SkillScene } from '../market.js';
+import type { SkillMarketAuthorized, SkillMarketDocument, SkillMarketInstallResult, SkillMarketPage, SkillMarketQuery, SkillScene } from '../market.js';
 import type { ManagedSkillDetail, ManagedSkillResource, ManagedSkillSummary, SkillBatchAction, SkillBatchResult, SkillCatalogSummary, SkillDependencyImpact, SkillInstallScope, SkillMutationReceipt, SkillResourceWriteRequest, SkillWriteRequest, StagedSkillImport, TrashedSkillSummary } from '../shared.js';
 
 const path = '/api/workdsh-skills';
@@ -39,7 +39,17 @@ async function call<T>(ctx: Context, endpoint: string, payload: unknown, signal?
     credentials: 'same-origin',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ endpoint, payload }),
-  }, endpoint === 'commit-import' || endpoint === 'install-catalog' ? 60_000 : 30_000, signal);
+  }, timeoutOf(endpoint), signal);
+}
+
+/**
+ * 端点级超时：市场安装要下载技能包并完成官方导入，详情说明要下载并解包附件，
+ * 都远超普通查询，单独放宽；其余查询与写入维持原有口径。
+ */
+function timeoutOf(endpoint: string): number {
+  if (endpoint === 'market-install' || endpoint === 'market-document' || endpoint === 'commit-import') return 120_000;
+  if (endpoint === 'install-catalog') return 60_000;
+  return 30_000;
 }
 
 export function createSkillManagementClient(ctx: Context, lifetime?: AbortSignal) {
@@ -73,10 +83,12 @@ export function createSkillManagementClient(ctx: Context, lifetime?: AbortSignal
     marketCategories: () => invoke<readonly SkillScene[]>('market-categories', {}),
     /** 全量授权技能索引：本地技能的业务场景标签按标识匹配这份数据。 */
     marketIndex: () => invoke<readonly SkillMarketAuthorized[]>('market-index', {}),
-    /** 安装：调用后台安装接口上报行为；本机安装待下一轮接入，宿主返回明确提示。 */
-    marketInstall: (id: string) => invoke<never>('market-install', { id }),
-    /** 卸载：调用后台卸载接口上报行为；本机卸载待下一轮接入。 */
-    marketUninstall: (target: { id?: string; slug?: string }) => invoke<never>('market-uninstall', target),
+    /** 安装到本机：宿主下载市场附件后走官方导入链路（共享范围），返回技能名与落地状态。 */
+    marketInstall: (id: string) => invoke<SkillMarketInstallResult>('market-install', { id }),
+    /** 卸载上报：后台记账失败不阻断本机卸载，reported 表示上报是否成功。 */
+    marketUninstall: (target: { id?: string; slug?: string }) => invoke<{ reported: boolean }>('market-uninstall', target),
+    /** 详情页说明：附件信息与 SKILL.md 正文（zip 附件由宿主解包）。 */
+    marketDocument: (id: string) => invoke<SkillMarketDocument>('market-document', { id }),
     openDirectory: async (path: string) => {
       lifetime?.throwIfAborted();
       const result = await ctx.remote.session.openWorkspacePath({ path, action: 'reveal' });

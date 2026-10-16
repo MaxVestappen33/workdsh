@@ -1,14 +1,38 @@
 /**
  * 技能市场（后台「查询已授权的技能列表」）在本插件内的契约：
- * 接口路径、查询参数、归一化后的条目结构，以及只做协议转发的 HTTP 客户端。
+ * 接口路径、查询参数、归一化后的条目结构，附件下载与正文提取，以及只做协议转发的 HTTP 客户端。
  * 请求头、地址拼接、信封解开与错误透传都由通用后台通道（workdshBackend）负责。
  */
+import { unzipSync } from 'fflate';
 
 /** 业务场景字典项：字段名沿用后台字典对象（DictModel）。 */
 export interface SkillScene {
   readonly value: string;
   readonly text: string;
   readonly color?: string;
+}
+
+/** 技能附件：后台 fjxxList 的第一条，既是安装要下载的文件，也是详情页说明的来源。 */
+export interface SkillMarketFile {
+  readonly fileName: string;
+  /** 后台下发的文件地址（内网文件服务的绝对 http(s) 地址）。 */
+  readonly filePath: string;
+  readonly size?: number;
+}
+
+/** 详情页展示用的附件信息与正文：正文取不到时为空，界面只显示文件信息。 */
+export interface SkillMarketDocument {
+  readonly fileName: string;
+  readonly filePath: string;
+  readonly size?: number;
+  /** SKILL.md 正文：md 附件直接读；zip 附件解出其中的 SKILL.md。 */
+  readonly text?: string;
+}
+
+/** 安装结果：`installed` 本次写入成功；`existing` 本机已有同名技能，按「已安装」处理。 */
+export interface SkillMarketInstallResult {
+  readonly name: string;
+  readonly state: 'installed' | 'existing';
 }
 
 /** 市场条目归一化后的结构。 */
@@ -33,6 +57,14 @@ export interface SkillMarketItem {
   readonly icon?: string;
   /** 图标底色，可能为空。 */
   readonly color?: string;
+  /** 技能附件（fjxxList 的第一条）：为空表示后台没有上传说明文件，不能安装。 */
+  readonly file?: SkillMarketFile;
+  /**
+   * 本机安装状态，由宿主在返回列表时补充（后台不下发这两个字段）：
+   * `installed` 为真表示本机已有该条目对应的技能，`installedName` 是本机技能标识（卸载按它定位）。
+   */
+  readonly installed?: boolean;
+  readonly installedName?: string;
 }
 
 /** 市场查询参数：业务场景与关键词都由服务端筛选。 */
@@ -137,6 +169,23 @@ const sceneLabelsOf = (value: unknown): readonly string[] => {
   return [...new Set(labels)];
 };
 
+/** 路径末段：用于从附件地址推导暂存文件名与在压缩包里找 SKILL.md。 */
+const basenameOf = (path: string): string => path.split(/[\\/]/u).pop() ?? path;
+
+/**
+ * 技能附件：按约定只取 fjxxList 的第一条（后台把技能说明放在第一个附件里）。
+ * 没有附件、或第一条缺少可用地址时返回 undefined，由调用方给出「缺少技能说明文件」的提示。
+ */
+const fileOf = (value: unknown): SkillMarketFile | undefined => {
+  if (!Array.isArray(value) || !value.length) return undefined;
+  const row = record(value[0]); if (!row) return undefined;
+  const filePath = text(row.filePath);
+  if (!filePath) return undefined;
+  const fileName = text(row.fileName) ?? basenameOf(filePath);
+  const size = typeof row.fileSize === 'string' ? Number(row.fileSize) : row.fileSize;
+  return { fileName, filePath, ...(typeof size === 'number' && Number.isFinite(size) && size > 0 ? { size: Math.trunc(size) } : {}) };
+};
+
 /** 缺少 id 或技能名的条目无法判重与展示，跳过而不是让整页失败。 */
 const itemOf = (value: unknown): SkillMarketItem | undefined => {
   const row = record(value); if (!row) return undefined;
@@ -145,12 +194,12 @@ const itemOf = (value: unknown): SkillMarketItem | undefined => {
   const slug = text(row.skillNameEn) ?? title;
   const version = text(row.skillVersion);
   const description = text(row.skillDescr);
-  const icon = iconOf(row.icon); const color = text(row.color);
+  const icon = iconOf(row.icon); const color = text(row.color); const file = fileOf(row.fjxxList);
   return {
     id, title, slug, description: description ?? '',
     ...(version ? { version } : {}),
     scenes: scenesOf(row.bizScene), sceneLabels: sceneLabelsOf(row.bizSceneList),
-    ...(icon ? { icon } : {}), ...(color ? { color } : {}),
+    ...(icon ? { icon } : {}), ...(color ? { color } : {}), ...(file ? { file } : {}),
   };
 };
 
@@ -205,6 +254,88 @@ const marketError = (error: unknown): Error => {
   if (error instanceof Error) return new SkillMarketRequestError('skill/market-unavailable', '无法连接技能市场，请检查网络后重试。');
   return new SkillMarketRequestError('skill/market-unavailable', '无法连接技能市场，请检查网络后重试。');
 };
+
+/** 技能文件大小上限：与官方导入边界一致（50 MiB）。 */
+const MAXIMUM_FILE_BYTES = 50 * 1024 * 1024;
+/** 详情页展示的正文上限：SKILL.md 正常只有几 KB，超过就截断，避免把大文件塞进界面。 */
+const MAXIMUM_DOCUMENT_CHARS = 200_000;
+/** 压缩包解压时的条目数与展开体积上限：与官方导入的校验口径一致。 */
+const MAXIMUM_ARCHIVE_FILES = 400;
+
+/** 暂存用的文件名：优先取附件地址的末段（fileName 可能没带扩展名），官方导入按扩展名区分 md / zip。 */
+export function stagedNameOf(file: SkillMarketFile): string {
+  const fromPath = basenameOf(file.filePath);
+  if (/\.(?:md|zip)$/iu.test(fromPath)) return fromPath;
+  if (/\.(?:md|zip)$/iu.test(file.fileName)) return file.fileName;
+  throw new SkillMarketRequestError('skill/market-file-unavailable', '技能文件缺少 .md 或 .zip 扩展名，无法安装。');
+}
+
+/**
+ * 打开技能文件下载流。后台下发的是内网文件服务的绝对 http(s) 地址，
+ * 因此不走通用后台通道（通道只接受相对路径，也不需要带上会话令牌）。
+ */
+async function openSkillFile(file: SkillMarketFile, signal?: AbortSignal): Promise<Response> {
+  if (!/^https?:\/\//iu.test(file.filePath))
+    throw new SkillMarketRequestError('skill/market-file-unavailable', '技能文件地址无效，无法下载。');
+  const timeout = AbortSignal.timeout(60_000);
+  let response: Response;
+  try {
+    response = await fetch(file.filePath, { redirect: 'follow', signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
+  } catch (cause) {
+    if (signal?.aborted) throw new SkillMarketRequestError('skill/request-cancelled', '操作已取消。');
+    throw new SkillMarketRequestError('skill/market-file-unavailable', cause instanceof DOMException && cause.name === 'TimeoutError'
+      ? '技能文件下载超时，请检查网络后重试。'
+      : '技能文件下载失败，请检查网络后重试。');
+  }
+  if (!response.ok) throw new SkillMarketRequestError('skill/market-file-unavailable', `技能文件下载失败（HTTP ${response.status}）。`);
+  const declared = Number(response.headers.get('content-length') ?? '0');
+  if (Number.isFinite(declared) && declared > MAXIMUM_FILE_BYTES)
+    throw new SkillMarketRequestError('skill/market-file-too-large', '技能文件超过 50 MiB 上限，不能安装。');
+  return response;
+}
+
+/** 安装用：把响应体直接交给官方导入暂存，不整包读进内存。 */
+export async function streamSkillFile(file: SkillMarketFile, signal?: AbortSignal): Promise<ReadableStream<Uint8Array>> {
+  const response = await openSkillFile(file, signal);
+  if (!response.body) throw new SkillMarketRequestError('skill/market-file-unavailable', '技能文件下载失败，请稍后重试。');
+  return response.body;
+}
+
+/** 展示用：整份读回附件字节（受 50 MiB 上限约束）。 */
+export async function readSkillFile(file: SkillMarketFile, signal?: AbortSignal): Promise<Uint8Array> {
+  const bytes = new Uint8Array(await (await openSkillFile(file, signal)).arrayBuffer());
+  if (!bytes.byteLength) throw new SkillMarketRequestError('skill/market-file-unavailable', '技能文件为空，无法读取说明。');
+  if (bytes.byteLength > MAXIMUM_FILE_BYTES) throw new SkillMarketRequestError('skill/market-file-too-large', '技能文件超过 50 MiB 上限，无法在详情中展示。');
+  return bytes;
+}
+
+const boundedText = (value: string): string => value.length > MAXIMUM_DOCUMENT_CHARS ? `${value.slice(0, MAXIMUM_DOCUMENT_CHARS)}\n\n…（内容过长，此处已截断）` : value;
+
+/**
+ * 附件正文：md 附件直接按 UTF-8 读取；zip 附件解出其中的 SKILL.md（取层级最浅的一个）。
+ * 非法压缩包、缺少 SKILL.md、条目数或体积超限时返回 undefined，由界面降级为只显示文件信息。
+ */
+export function skillDocumentText(file: SkillMarketFile, bytes: Uint8Array): string | undefined {
+  const decoder = new TextDecoder('utf-8');
+  const name = basenameOf(file.filePath).toLowerCase();
+  if (name.endsWith('.md')) return boundedText(decoder.decode(bytes));
+  if (!name.endsWith('.zip')) return undefined;
+  let entries: Record<string, Uint8Array>;
+  try {
+    let count = 0; let expanded = 0;
+    entries = unzipSync(bytes, { filter: info => {
+      if (!info.name || info.name.endsWith('/')) return false;
+      count += 1; expanded += info.originalSize;
+      if (count > MAXIMUM_ARCHIVE_FILES || expanded > MAXIMUM_FILE_BYTES) throw new Error('skill/market-file-too-large');
+      return true;
+    }});
+  } catch { return undefined; }
+  const match = Object.keys(entries)
+    .filter(path => basenameOf(path).toLowerCase() === 'skill.md')
+    .sort((left, right) => left.split('/').length - right.split('/').length)[0];
+  const content = match === undefined ? undefined : entries[match];
+  return content ? boundedText(decoder.decode(content)) : undefined;
+}
 
 /** 宿主侧市场客户端：只声明路径与字段映射；地址、授权头、信封与超时都由通用后台通道负责。 */
 export class SkillMarketClient {
