@@ -31,7 +31,7 @@ try {
  await personal.waitForFunction(()=>Boolean(window.__DSH_BOOT__),null,{timeout:30000});
  const entries=await personal.evaluate(()=>window.__DSH_BOOT__.entries.map(entry=>entry.id));
  assert.ok(!entries.some(name=>/identity-enterprise|enterprise-collaboration/.test(name)));
- for(const name of ['workdsh-plugin-experts','workdsh-plugin-skills','workdsh-plugin-library','workdsh-plugin-connectors'])assert.ok(entries.includes(name));
+ for(const name of ['workdsh-plugin-experts','workdsh-plugin-skills','workdsh-plugin-library','workdsh-plugin-connectors','workdsh-plugin-model-market'])assert.ok(entries.includes(name));
  await personal.getByRole('button',{name:'资料库',exact:true}).waitFor();
  assert.equal(await personal.getByRole('button',{name:'登录企业账号',exact:true}).count(),0);
  for(const label of ['Continue','继续','Configure later','稍后配置','保留当前显示','Keep current display']) {

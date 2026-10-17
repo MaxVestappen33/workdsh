@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { load } from 'js-yaml'
 import { afterEach, expect, it } from 'vitest'
-import { desktopConnectorMarketPatch, desktopSkillMarketPatch, desktopEnterprisePatch, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher } from '../src/local-runtime.ts'
+import { desktopConnectorMarketPatch, desktopSkillMarketPatch, desktopModelMarketPatch, desktopEnterprisePatch, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher } from '../src/local-runtime.ts'
 import type { ServerConfig } from '../src/app-config.ts'
 
 const roots: string[] = []
@@ -215,4 +215,29 @@ it('skips the skills patch layer when no legal skill-market path is configured',
   expect(desktopSkillMarketPatch(home, asServer({}))).toBeUndefined()
   // 不以 / 开头的路径不是合法接口路径，同样不落盘。
   expect(desktopSkillMarketPatch(home, asServer({ skillMarketListPath: 'desktop-client/skill/queryAuthorizedSkillList' }))).toBeUndefined()
+})
+
+it('injects model-market paths as one model-market patch layer', () => {
+  const { home } = fixture()
+  mkdirSync(home, { recursive: true })
+  const patch = desktopModelMarketPatch(home, asServer({
+    modelMarketListPath: '/desktop-client/model/queryAuthorizedModelList',
+    modelMarketUsePath: '/desktop-client/model/useModel',
+    modelMarketUnusePath: '/desktop-client/model/unUseModel',
+  }))
+  expect(patch).toBeTruthy()
+  const rows = load(readFileSync(patch!, 'utf8')) as { id: string, config: { paths: Record<string, unknown> } }[]
+  expect(rows).toHaveLength(1)
+  expect(rows[0]?.id).toBe('workdsh-model-market')
+  expect(rows[0]?.config.paths).toEqual({
+    list: '/desktop-client/model/queryAuthorizedModelList',
+    use: '/desktop-client/model/useModel',
+    unuse: '/desktop-client/model/unUseModel',
+  })
+})
+
+it('skips the model-market patch layer when no legal path is configured', () => {
+  const { home } = fixture()
+  expect(desktopModelMarketPatch(home, asServer({}))).toBeUndefined()
+  expect(desktopModelMarketPatch(home, asServer({ modelMarketListPath: 'desktop-client/model/queryAuthorizedModelList' }))).toBeUndefined()
 })

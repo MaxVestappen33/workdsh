@@ -21,6 +21,9 @@
     "skillMarketListPath": "/desktop-client/skill/queryAuthorizedSkillList",
     "skillMarketCategoriesPath": "/desktop-client/skill/querySkillBizSceneList",
     "skillMarketInstallPath": "/desktop-client/skill/installSkill",
-    "skillMarketUninstallPath": "/desktop-client/skill/unInstallSkill"
+    "skillMarketUninstallPath": "/desktop-client/skill/unInstallSkill",
+    "modelMarketListPath": "/desktop-client/model/queryAuthorizedModelList",
+    "modelMarketUsePath": "/desktop-client/model/useModel",
+    "modelMarketUnusePath": "/desktop-client/model/unUseModel"
   }
 }

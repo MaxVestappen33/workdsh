@@ -125,6 +125,20 @@
     ]
   },
   {
+    "path": "../../packages/plugins/model-market",
+    "title": "模型市场",
+    "status": "in_progress",
+    "directories": [
+      "src",
+      "src/client",
+      "tests"
+    ],
+    "moduleVersion": "0.1",
+    "requirements": [
+      "R14"
+    ]
+  },
+  {
     "path": "../../packages/plugins/applications",
     "title": "行业应用",
     "status": "planned",

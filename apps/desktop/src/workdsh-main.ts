@@ -20,7 +20,7 @@ import { readAppConfig, type AppEnvironment, type ResolvedAppConfig } from './ap
 import { createDebugLog, type DebugLog } from './debug-log.ts'
 import { AccountLogin, AccountStore, restoreAccountLogin, startAccountAuthority, type AccountAuthority } from './member-auth.ts'
 import { EnterpriseLogin, startEnterpriseAuthority, type Authority } from './enterprise-auth.ts'
-import { desktopEnterprisePatch, desktopAccountPatch, desktopConnectorMarketPatch, desktopSkillMarketPatch, accountSpace, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher, type AccountActor } from './local-runtime.ts'
+import { desktopEnterprisePatch, desktopAccountPatch, desktopConnectorMarketPatch, desktopSkillMarketPatch, desktopModelMarketPatch, accountSpace, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher, type AccountActor } from './local-runtime.ts'
 import { manageCommand } from './command-management.ts'
 import { cleanOwnedProcessTree, reclaimOrphanedToolProcesses, stopOwnedProcess } from './owned-process.ts'
 
@@ -432,7 +432,8 @@ function marketPatchLayers(home: string): string[] {
     const server = loadConfig().server
     const connector = desktopConnectorMarketPatch(home, server, { node: bundledNodeExecutable(), pnpm: join(bundledPrimaryRuntime(), 'dependencies', 'pnpm', 'bin', 'pnpm.cjs') })
     const skill = desktopSkillMarketPatch(home, server)
-    return [connector, skill].filter((patch): patch is string => patch !== undefined)
+    const model = desktopModelMarketPatch(home, server)
+    return [connector, skill, model].filter((patch): patch is string => patch !== undefined)
   } catch (error) {
     process.stderr.write(`[startup] 市场接口路径与本机包安装配置未注入，插件将使用内置默认值：${error instanceof Error ? error.message : String(error)}\n`)
     return []

@@ -1,0 +1,63 @@
+{
+  "name": "workdsh-plugin-model-market",
+  "version": "0.1.0-alpha.1",
+  "private": false,
+  "type": "module",
+  "description": "Authorized model marketplace and Host-side model installation for WorkDSH Desktop and Web.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "default": "./dist/client.browser.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "cordis.patch.yml"
+  ],
+  "scripts": {
+    "build": "node ../../../apps/web/node_modules/pnpm/bin/pnpm.cjs --dir ../../../apps/web --filter workdsh-contracts build && tsc -p tsconfig.json && node ../../../apps/web/scripts/build-model-market.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.4",
+    "@deepseek-ai/dsh-client-connection": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-renderer": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-settings": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-slots": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-credentials": "0.2.0-rc.2",
+    "react": "19.2.4"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.4",
+    "@deepseek-ai/dsh-client-connection": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-renderer": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-settings": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-slots": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-credentials": "0.2.0-rc.2",
+    "@types/node": "22.19.0",
+    "@types/react": "19.2.14",
+    "react": "19.2.4"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ]
+    }
+  }
+}

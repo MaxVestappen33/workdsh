@@ -255,6 +255,22 @@ export function desktopSkillMarketPatch(home: string, server: ServerConfig): str
   return patch
 }
 
+/**
+ * 模型市场接口路径的注入层。模型查询与安装/卸载上报都走 desktop-client 命名空间；
+ * 安装动作本身在 Host 侧写官方 llm-pi-ai 配置，这里只提供路径。
+ */
+export function desktopModelMarketPatch(home: string, server: ServerConfig): string | undefined {
+  const rows = ([
+    ['list', server.modelMarketListPath],
+    ['use', server.modelMarketUsePath],
+    ['unuse', server.modelMarketUnusePath],
+  ] as const).flatMap(([name, value]) => (typeof value === 'string' && /^\//u.test(value) ? [[name, value] as const] : []))
+  if (rows.length === 0) return undefined
+  const patch = join(home, '.model-market.patch.yml')
+  writeFileSync(patch, `- id: workdsh-model-market\n  config:\n    paths:\n${rows.map(([name, value]) => `      ${name}: ${JSON.stringify(value)}\n`).join('')}`, { mode: 0o600 })
+  return patch
+}
+
 export interface AccountActor {
   principalId: string
   organizationId: string

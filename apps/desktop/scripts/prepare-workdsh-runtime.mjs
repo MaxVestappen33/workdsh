@@ -143,4 +143,4 @@ if (!prepared) {
   }
 }
 cpSync(join(profile, 'package.json'), join(output, 'profile-package.json'))
-console.log(`Prepared official DSH ${DSH_VERSION} with five default features and no preinstalled enterprise plugins at ${output}; enterprise plugins require explicit installation`)
+console.log(`Prepared official DSH ${DSH_VERSION} with six default features and no preinstalled enterprise plugins at ${output}; enterprise plugins require explicit installation`)

@@ -55,4 +55,4 @@ const manifest = { kind: 'workdsh-desktop-source-candidate', version: project.ve
   runtimeOverrides: project.pnpm?.overrides ?? {}, requiredPeers, packages, officialWeb }
 verifyProfileRelease(manifest, DSH_VERSION, RELEASE_PACKAGES)
 writeFileSync(join(output, 'release-manifest.json'), JSON.stringify(manifest, null, 2) + '\n')
-console.log(`Packed ${packages.length} owned packages for DSH ${DSH_VERSION}; five default features selected, enterprise plugins are distributed separately`)
+console.log(`Packed ${packages.length} owned packages for DSH ${DSH_VERSION}; six default features selected, enterprise plugins are distributed separately`)

@@ -46,6 +46,12 @@ export interface ServerConfig {
   skillMarketInstallPath: string
   /** 技能市场：卸载接口路径（后台当前为预留实现，只记录卸载行为）。 */
   skillMarketUninstallPath: string
+  /** 模型市场：已授权模型列表接口路径。 */
+  modelMarketListPath: string
+  /** 模型市场：使用模型上报接口路径（后台当前为预留实现）。 */
+  modelMarketUsePath: string
+  /** 模型市场：卸载模型上报接口路径（后台当前为预留实现）。 */
+  modelMarketUnusePath: string
   /** 内网 npm registry 基址（Sonatype Nexus），用于离线安装基于 stdio 的 npm MCP；未配置表示该部署不支持本机包安装。 */
   mcpPackageRegistry?: string
 }
@@ -91,6 +97,10 @@ const DEFAULTS: AppConfig = {
     skillMarketCategoriesPath: '/desktop-client/skill/querySkillBizSceneList',
     skillMarketInstallPath: '/desktop-client/skill/installSkill',
     skillMarketUninstallPath: '/desktop-client/skill/unInstallSkill',
+    // 模型市场与技能/MCP 市场同属 desktop-client 命名空间；安装与卸载只做后台上报。
+    modelMarketListPath: '/desktop-client/model/queryAuthorizedModelList',
+    modelMarketUsePath: '/desktop-client/model/useModel',
+    modelMarketUnusePath: '/desktop-client/model/unUseModel',
   },
 }
 
@@ -144,7 +154,7 @@ export function parseAppConfig(value: unknown): PartialAppConfig {
   if (root.server !== undefined) {
     if (!root.server || typeof root.server !== 'object' || Array.isArray(root.server)) throw new Error('server 配置无效')
     const a = root.server as Record<string, unknown>
-    for (const k of Object.keys(a)) if (k !== 'baseUrl' && k !== 'loginPath' && k !== 'logoutPath' && k !== 'mePath' && k !== 'syncIntervalSeconds' && k !== 'mcpMarketListPath' && k !== 'mcpMarketCategoriesPath' && k !== 'mcpMarketInstallPath' && k !== 'mcpMarketUninstallPath' && k !== 'skillMarketListPath' && k !== 'skillMarketCategoriesPath' && k !== 'skillMarketInstallPath' && k !== 'skillMarketUninstallPath' && k !== 'mcpPackageRegistry') throw new Error(`server 配置不接受字段 ${k}`)
+    for (const k of Object.keys(a)) if (k !== 'baseUrl' && k !== 'loginPath' && k !== 'logoutPath' && k !== 'mePath' && k !== 'syncIntervalSeconds' && k !== 'mcpMarketListPath' && k !== 'mcpMarketCategoriesPath' && k !== 'mcpMarketInstallPath' && k !== 'mcpMarketUninstallPath' && k !== 'skillMarketListPath' && k !== 'skillMarketCategoriesPath' && k !== 'skillMarketInstallPath' && k !== 'skillMarketUninstallPath' && k !== 'modelMarketListPath' && k !== 'modelMarketUsePath' && k !== 'modelMarketUnusePath' && k !== 'mcpPackageRegistry') throw new Error(`server 配置不接受字段 ${k}`)
     if (a.baseUrl !== undefined) {
       if (typeof a.baseUrl !== 'string') throw new Error('server.baseUrl 必须是字符串')
       result.server = { ...(result.server ?? {}), baseUrl: normalizeBase(a.baseUrl) }
@@ -160,6 +170,9 @@ export function parseAppConfig(value: unknown): PartialAppConfig {
     if (a.skillMarketCategoriesPath !== undefined) { if (typeof a.skillMarketCategoriesPath !== 'string' || !/^\//u.test(a.skillMarketCategoriesPath)) throw new Error('server.skillMarketCategoriesPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), skillMarketCategoriesPath: a.skillMarketCategoriesPath } }
     if (a.skillMarketInstallPath !== undefined) { if (typeof a.skillMarketInstallPath !== 'string' || !/^\//u.test(a.skillMarketInstallPath)) throw new Error('server.skillMarketInstallPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), skillMarketInstallPath: a.skillMarketInstallPath } }
     if (a.skillMarketUninstallPath !== undefined) { if (typeof a.skillMarketUninstallPath !== 'string' || !/^\//u.test(a.skillMarketUninstallPath)) throw new Error('server.skillMarketUninstallPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), skillMarketUninstallPath: a.skillMarketUninstallPath } }
+    if (a.modelMarketListPath !== undefined) { if (typeof a.modelMarketListPath !== 'string' || !/^\//u.test(a.modelMarketListPath)) throw new Error('server.modelMarketListPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), modelMarketListPath: a.modelMarketListPath } }
+    if (a.modelMarketUsePath !== undefined) { if (typeof a.modelMarketUsePath !== 'string' || !/^\//u.test(a.modelMarketUsePath)) throw new Error('server.modelMarketUsePath 必须以 / 开头'); result.server = { ...(result.server ?? {}), modelMarketUsePath: a.modelMarketUsePath } }
+    if (a.modelMarketUnusePath !== undefined) { if (typeof a.modelMarketUnusePath !== 'string' || !/^\//u.test(a.modelMarketUnusePath)) throw new Error('server.modelMarketUnusePath 必须以 / 开头'); result.server = { ...(result.server ?? {}), modelMarketUnusePath: a.modelMarketUnusePath } }
     if (a.mcpPackageRegistry !== undefined) { if (typeof a.mcpPackageRegistry !== 'string' || !/^https?:\/\//u.test(a.mcpPackageRegistry)) throw new Error('server.mcpPackageRegistry 必须是 http(s) 地址'); result.server = { ...(result.server ?? {}), mcpPackageRegistry: a.mcpPackageRegistry } }
     if (a.syncIntervalSeconds !== undefined) {
       // 轮询间隔需为正整数秒，且不超过 1 小时，避免配置错误导致请求风暴或长期不校验。
