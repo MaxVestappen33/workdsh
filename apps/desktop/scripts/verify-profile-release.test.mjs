@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process'
 import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, delimiter, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { DSH_VERSION } from './runtime-version.mjs'
 import { ENTERPRISE_PACKAGES, PRODUCT_PACKAGES, RELEASE_PACKAGES } from './workdsh-package-boundary.mjs'
 
@@ -37,7 +37,7 @@ test('release bootstrap installs dependencies before loading package validators'
     if (process.platform !== 'win32') chmodSync(shim, 0o755)
     const preload = join(directory, 'test-platform.mjs')
     writeFileSync(preload, "if (process.platform === 'linux') Object.defineProperty(process, 'platform', { value: 'darwin' })\n")
-    const result = spawnSync(process.execPath, ['--import', preload, join(directory, 'scripts/package-desktop-release.mjs'), '--source=local'], {
+    const result = spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, join(directory, 'scripts/package-desktop-release.mjs'), '--source=local'], {
       cwd: directory,
       encoding: 'utf8',
       timeout: 10_000,
