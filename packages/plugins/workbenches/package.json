@@ -1,0 +1,91 @@
+{
+  "name": "workdsh-plugin-workbenches",
+  "version": "3.0.0-alpha.49",
+  "private": true,
+  "type": "module",
+  "description": "WorkDSH workbench platform Host services; Client management integration is in development.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json",
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "default": "./dist/client.browser.js"
+    },
+    "./startup-check": "./scripts/check-startup.mjs",
+    "./delivery": "./scripts/run-delivery.mjs"
+  },
+  "files": [
+    "dist",
+    "cordis.patch.yml",
+    "README.md",
+    "scripts/check-startup.mjs",
+    "scripts/run-delivery.mjs"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@deepseek-ai/dsh-client-ui-primitives"
+      ]
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.client.build.json && node ../../../apps/web/scripts/build-workbenches.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json"
+  },
+  "dependencies": {
+    "semver": "7.8.5",
+    "typescript": "5.9.3",
+    "zod": "4.4.3"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/dsh-app-boot": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-client-connection": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-conversation": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-layout": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-primitives": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-renderer": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-sidebar": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-slots": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-workspace": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-fs": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-storage-domain": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/dsh-api-session-controller": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-api-workspace-controller": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-app-boot": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-client-connection": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-conversation": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-layout": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-primitives": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-renderer": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-sidebar": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-slots": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-workspace": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-fs": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-storage-domain": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.1",
+    "@types/node": "22.19.0",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@types/semver": "7.7.1",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "workdsh-contracts": "workspace:*"
+  }
+}

@@ -31,6 +31,10 @@ This repository owns WorkDSH Web and Desktop. Desktop and Web consume the same e
 - Keep presentation and WorkDSH feature changes in the Profile rather than adding a second Desktop Host or Client implementation.
 - Keep graphical application launch explicit. Builds, typechecks, unit tests, and Loader smokes must remain headless-safe.
 
+## Current authorized npm migration
+
+- The user explicitly requires the latest published DSH release, currently `0.2.1-rc.1` (2026-10-17). `upstream.json` locks the same npm target and downloaded official Desktop artifacts. Web preview opens the complete native Conversation through public Workspace/Layout APIs, without embedded custom conversation controls; the narrowly authorized local-preview outer-frame patch below applies. Matching artifact hashes do not prove Desktop packaged-runtime acceptance; do not package or release Desktop until its runtime checks pass.
+
 ## Personal and enterprise product boundary
 
 - Personal Desktop, enterprise Desktop use one validated official DSH version and the same owned feature implementations. Preserve the complete official interface; never copy its settings, sidebar or right panel.
@@ -41,6 +45,8 @@ This repository owns WorkDSH Web and Desktop. Desktop and Web consume the same e
 - Preserve user-facing README content and organize new material in the corresponding sections. Development logs, raw acceptance evidence, credentials and generated packages are not submission content.
 
 - Never clone, import or compile official DSH source as part of product builds. `upstream.json` locks published package versions and Desktop archive URLs, sizes and SHA-512 hashes. Extract only runtime dependencies, Office assets and prebuilt command helpers; do not carry a second official Electron application or DSH installation.
+
+- Explicit user-authorized exception (2026-10-17): local Web preview may apply the exact-version/checksum-locked `native-workbench-frame-patch` for official `0.2.1-rc.1` to restore the rightmost complete native Conversation. Only the two outer-frame seams may change; preserve original headers, views, Composer and right-sidebar owners. Fail closed on unknown bytes and keep exact rollback. This does not authorize Desktop packaging or release patches.
 
 ## Delivery regression gate
 

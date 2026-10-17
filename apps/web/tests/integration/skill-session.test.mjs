@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { createMessage, Context, Agents, AgentLoop, Sessions, Projections, SystemPrompt, Tools, Llm, Skills, filesystem, skillTool, SkillRequestAdapter } from '../helpers/skill-runtime.mjs';
+import { FileSystem, LocalFileSystem, WorkingDirectory, createMessage, Context, Agents, AgentLoop, Sessions, Projections, SystemPrompt, Tools, Llm, Skills, filesystem, skillTool, SkillRequestAdapter } from '../helpers/skill-runtime.mjs';
 
 class RepeatingSkillRequestAdapter extends SkillRequestAdapter {
   requests = [];
@@ -31,7 +31,7 @@ test(`official Session skill consumption: model invocation ${allowed ? 'allowed'
   try {
     await mkdir(join(root, 'sample'));
     await writeFile(join(root, 'sample/SKILL.md'), `---\nname: sample\ndescription: Session skill fixture\ndisable-model-invocation: ${!allowed}\n---\nSESSION_BODY_SENTINEL\n`);
-    for (const plugin of [Sessions, Projections, SystemPrompt, Tools, Llm, Agents, Skills, AgentLoop]) await ctx.plugin(plugin);
+    for (const plugin of [LocalFileSystem, WorkingDirectory, Sessions, Projections, SystemPrompt, Tools, Llm, Agents, Skills, AgentLoop]) await ctx.plugin(plugin);
     const adapter = new SkillRequestAdapter();
     ctx.llm.registerAdapter(['workdsh-test'], adapter);
     handle = await ctx.agents.create({
@@ -87,7 +87,7 @@ test('live Agent Sessions isolate same-named skill calls through peer disposal',
       await mkdir(directory, { recursive: true });
       await writeFile(join(directory, 'SKILL.md'), `---\nname: sample\ndescription: Scoped Session fixture ${name.toUpperCase()}\n---\n${body}\n`);
     }
-    for (const plugin of [Sessions, Projections, SystemPrompt, Tools, Llm, Agents, Skills, AgentLoop]) await ctx.plugin(plugin);
+    for (const plugin of [LocalFileSystem, WorkingDirectory, Sessions, Projections, SystemPrompt, Tools, Llm, Agents, Skills, AgentLoop]) await ctx.plugin(plugin);
     const adapters = { a: new RepeatingSkillRequestAdapter(), b: new RepeatingSkillRequestAdapter() };
     ctx.llm.registerAdapter(['workdsh-scope-a'], adapters.a);
     ctx.llm.registerAdapter(['workdsh-scope-b'], adapters.b);

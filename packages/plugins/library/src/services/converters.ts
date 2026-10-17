@@ -1,4 +1,4 @@
-import { extractTabularText } from 'workdsh-plugin-office/tabular';
+import { extractTabularText } from 'workdsh-tabular';
 import JSZip from 'jszip';
 import type { LibraryAssetKind } from 'workdsh-contracts/library';
 

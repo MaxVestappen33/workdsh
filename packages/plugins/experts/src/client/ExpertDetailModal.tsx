@@ -154,10 +154,10 @@ export function ExpertDetailModal({ expertId, management, acting, onClose, onSum
 
     {definition.futureRequirements.length > 0 && <section aria-label="扩展能力">
       <h2 className="detail-section-title">扩展能力</h2>
-      <p className="detail-subtitle">这些是专家声明的额外能力，不属于已配备技能。当前尚不支持接入与可用性校验；必需项会阻止召唤，可选项不阻止召唤。</p>
+      <p className="detail-subtitle">这些是专家声明的额外能力，不属于已配备技能。必需连接器会在创建任务时检查并选入会话；缺失时会提示。可选连接器由你在会话中选择，其他能力尚未接入。</p>
       <div className="cap-list">{definition.futureRequirements.map(req => <div className={`cap-row ${req.required ? 'missing' : ''}`} key={`${req.kind}:${req.key}`}>
         <span>{req.kind === 'connector' ? '连接器' : req.kind} · {req.key}</span>
-        <span className="cap-state">{req.required ? '必需 · 暂不支持接入' : '可选 · 暂不支持接入'}</span>
+        <span className="cap-state">{req.kind === 'connector' ? (req.required ? '必需 · 创建任务时检查' : '可选 · 在会话中选择') : (req.required ? '必需 · 暂不支持接入' : '可选 · 暂不支持接入')}</span>
       </div>)}</div>
     </section>}
 

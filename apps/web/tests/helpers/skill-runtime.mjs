@@ -1,3 +1,8 @@
+import FileSystem from '@deepseek-ai/dsh-fs';
+import LocalFileSystem from '@deepseek-ai/dsh-fs-local';
+export { FileSystem, LocalFileSystem };
+import WorkingDirectory from '@deepseek-ai/dsh-working-directory';
+export { WorkingDirectory };
 import { Context } from '@deepseek-ai/cordis';
 import Agents from '@deepseek-ai/dsh-agent';
 import AgentLoop from '@deepseek-ai/dsh-agent-loop';

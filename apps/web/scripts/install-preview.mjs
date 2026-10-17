@@ -8,6 +8,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { withoutRedundantAgentTeamProfile } from './preview-agent-team.mjs';
+import { previewHome as resolvePreviewHome } from './preview-home.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const rootManifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
@@ -19,9 +20,11 @@ const baseSpec = `@deepseek-ai/dsh-base@${baseVersion}`;
 const webAppSpec = `@deepseek-ai/dsh-web-app@${webAppVersion}`;
 const marketVersion = '1.66.8';
 const marketSpec = `dshmarket@${marketVersion}`;
+const groupVersion = rootManifest.pnpm?.overrides?.['@deepseek-ai/cordis-plugin-group'];
+if (typeof groupVersion !== 'string') throw new Error('Missing exact Cordis group pin.');
 const cliVersion = JSON.parse(await readFile(join(root, 'node_modules/@deepseek-ai/dsh/package.json'), 'utf8')).version;
 if (cliVersion !== baseVersion) throw new Error('Preview CLI and Base must use the same pinned version.');
-const home = resolve(process.env.WORKDSH_PREVIEW_HOME ?? join(root, '.test-runtime/preview'));
+const home = resolvePreviewHome();
 const artifacts = join(root, '.artifacts');
 // pnpm includes local archive paths in its store index filename. Keep the
 // immutable archive path short even when this checkout is a nested worktree.
@@ -29,13 +32,27 @@ const previewPacks = resolve(process.env.WORKDSH_PREVIEW_PACKS_HOME ?? join(home
 const env = { ...process.env, DSH_HOME: home, DSH_AGENTS_HOME: process.env.DSH_AGENTS_HOME ?? join(home, 'agents'), PATH: `${join(root, 'node_modules/.bin')}:${dirname(process.execPath)}:${process.env.PATH}` };
 const exec = promisify(execFile);
 const run = async (tool, args) => {
-  await exec(process.execPath, [join(root, 'node_modules', tool), ...args], { cwd: root, env, timeout: 600_000, maxBuffer: 8 * 1024 * 1024 });
+  const pending = exec(process.execPath, [join(root, 'node_modules', tool), ...args], { cwd: root, env, timeout: 600_000, maxBuffer: 8 * 1024 * 1024 });
+  // Print only package-manager counters; command/config output may contain private data.
+  let lastProgress = '', lastPrintedAt = 0, partial = '';
+  const observe = chunk => {
+    partial = (partial + chunk.toString()).slice(-16384);
+    const lines = partial.split(/\r?\n/); partial = lines.pop() ?? '';
+    for (const line of lines) {
+      if (!/^Progress: resolved \d+, reused \d+, downloaded \d+, added \d+(?:, done)?$/.test(line.trim())) continue;
+      lastProgress = line.trim();
+      if (Date.now() - lastPrintedAt >= 15000) { console.log(lastProgress); lastPrintedAt = Date.now(); }
+    }
+  };
+  pending.child.stdout?.on('data', observe);
+  try { await pending; }
+  finally { pending.child.stdout?.off('data', observe); if (lastProgress) console.log(lastProgress); }
 };
 await mkdir(home, { recursive: true }); await mkdir(artifacts, { recursive: true });
 const tarballs = [];
 const packages = [];
 const shared = await sharedProfileFeatures();
-for (const directory of ['../../packages/providers/identity-local', '../../packages/providers/browser-session', '../../packages/plugins/audit', '../../packages/plugins/access', ...shared.features.map(feature => feature.directory), '../../packages/plugins/activity', '../../packages/bundle']) {
+for (const directory of ['../../packages/providers/identity-local', '../../packages/providers/browser-session', '../../packages/plugins/audit', '../../packages/plugins/access', ...shared.features.map(feature => feature.directory), '../../packages/plugins/workbenches', '../../packages/plugins/quality-analysis', '../../packages/plugins/activity', '../../packages/bundle']) {
   const manifest = JSON.parse(await readFile(join(root, directory, 'package.json'), 'utf8'));
   await access(join(root, directory, manifest.exports['.'].default));
   await run('pnpm/bin/pnpm.cjs', ['--filter', manifest.name, 'pack', '--pack-destination', artifacts]);
@@ -52,13 +69,13 @@ for (const directory of ['../../packages/providers/identity-local', '../../packa
   packages.push({ directory, manifest });
 }
 let initialized = false;
-try { await access(join(home, '../../profiles/preview/package.json')); initialized = true; }
+try { await access(join(home, 'profiles/preview/package.json')); initialized = true; }
 catch (error) { if (error.code !== 'ENOENT') throw error; }
 if (!initialized) await run('@deepseek-ai/dsh/lib/bin.js', ['--profile', 'preview', '--from-default-profile', 'web', '--dump-config']);
 // Experts already contributes the official Team service, tools and Web action.
 // The standalone Team profile adds the same loader ids again and can be toggled
 // on from the upstream plugin gallery. Keep this preview's bundle list singular.
-const previewManifestPath = join(home, '../../profiles/preview/package.json');
+const previewManifestPath = join(home, 'profiles/preview/package.json');
 const previewManifest = JSON.parse(await readFile(previewManifestPath, 'utf8'));
 const normalizedManifest = withoutRedundantAgentTeamProfile(previewManifest);
 if (normalizedManifest) {
@@ -83,15 +100,15 @@ if (!layersMatch) {
 // Profiles disable automatic peer installation. The platform account adapter
 // also needs its declared native account peer in this standalone runtime.
 const installedVersion = async (name) => {
-  try { return JSON.parse(await readFile(join(home, '../../profiles/preview/node_modules/@deepseek-ai', name, 'package.json'), 'utf8')).version; }
+  try { return JSON.parse(await readFile(join(home, 'profiles/preview/node_modules/@deepseek-ai', name, 'package.json'), 'utf8')).version; }
   catch (error) { if (error.code === 'ENOENT') return undefined; throw error; }
 };
-if (await installedVersion('dsh') !== cliVersion || await installedVersion('dsh-deepseek-account') !== cliVersion || await installedVersion('cordis-plugin-group') !== '1.0.4') {
-  await run('pnpm/bin/pnpm.cjs', ['--dir', join(home, '../../profiles/preview'), 'add', '--save-exact', `@deepseek-ai/dsh@${cliVersion}`, `@deepseek-ai/dsh-deepseek-account@${cliVersion}`, '@deepseek-ai/cordis-plugin-group@1.0.4']);
+if (await installedVersion('dsh') !== cliVersion || await installedVersion('dsh-deepseek-account') !== cliVersion || await installedVersion('cordis-plugin-group') !== groupVersion) {
+  await run('pnpm/bin/pnpm.cjs', ['--dir', join(home, 'profiles/preview'), 'add', '--save-exact', `@deepseek-ai/dsh@${cliVersion}`, `@deepseek-ai/dsh-deepseek-account@${cliVersion}`, `@deepseek-ai/cordis-plugin-group@${groupVersion}`]);
 }
 // DSH Profiles disable automatic peer installation. A fresh preview must
 // install and upgrade the same official runtime peer closure as the release installer.
-const profile = join(home, '../../profiles/preview');
+const profile = join(home, 'profiles/preview');
 const officialScope = join(profile, 'node_modules/@deepseek-ai');
 for (let pass = 0; pass < 9; pass++) {
   const missing = new Map();
@@ -108,7 +125,8 @@ for (let pass = 0; pass < 9; pass++) {
       if (!name.startsWith('@deepseek-ai/') || manifest.peerDependenciesMeta?.[name]?.optional) continue;
       const actual = await installedVersion(name.slice('@deepseek-ai/'.length));
       const version = rootManifest.pnpm?.overrides?.[name] ?? (name.startsWith('@deepseek-ai/dsh-') ? baseVersion : range);
-      if (actual && (!name.startsWith('@deepseek-ai/dsh') || actual === version)) continue;
+      const locked = rootManifest.pnpm?.overrides?.[name] ?? (name.startsWith('@deepseek-ai/dsh') ? baseVersion : undefined);
+      if (actual && (locked === undefined || actual === locked)) continue;
       missing.set(name, `${name}@${version}`);
     }
   }
@@ -139,16 +157,16 @@ if ((await officialResolutionDrift()).length) {
   const drift = await officialResolutionDrift();
   if (drift.length) throw new Error(`Official preview dependency resolution mismatch: ${drift.join('; ')}`);
 }
-const installedBase = JSON.parse(await readFile(join(home, '../../profiles/preview/node_modules/@deepseek-ai/dsh-base/package.json'), 'utf8'));
+const installedBase = JSON.parse(await readFile(join(home, 'profiles/preview/node_modules/@deepseek-ai/dsh-base/package.json'), 'utf8'));
 if (installedBase.version !== baseVersion) throw new Error(`Installed @deepseek-ai/dsh-base ${installedBase.version} does not match pinned ${baseVersion}.`);
-const installedWebApp = JSON.parse(await readFile(join(home, '../../profiles/preview/node_modules/@deepseek-ai/dsh-web-app/package.json'), 'utf8'));
+const installedWebApp = JSON.parse(await readFile(join(home, 'profiles/preview/node_modules/@deepseek-ai/dsh-web-app/package.json'), 'utf8'));
 if (installedWebApp.version !== webAppVersion) throw new Error(`Installed @deepseek-ai/dsh-web-app ${installedWebApp.version} does not match pinned ${webAppVersion}.`);
 // DSH scopes are module-instance local. Installing only the Web bundle
 // beside a CLI-provided Base bundle can load two physical dsh-scope copies: the
 // Agent consumers must resolve one shared scope module; otherwise new
 // session fails as an "unscoped context". Resolve both consumers from the
 // Profile and fail installation unless they share the exact same module file.
-const profileRequire = createRequire(join(home, '../../profiles/preview/package.json'));
+const profileRequire = createRequire(join(home, 'profiles/preview/package.json'));
 const resolveProfileDependency = async (consumer, dependency) => {
   const consumerManifest = profileRequire.resolve(`${consumer}/package.json`);
   const consumerRequire = createRequire(consumerManifest);
@@ -165,9 +183,22 @@ for (const { directory, manifest } of packages) {
     const entry = manifest.exports[face]?.default;
     if (!entry) continue;
     const expected = await readFile(join(root, directory, entry));
-    const installed = await readFile(join(home, '../../profiles/preview/node_modules', manifest.name, entry));
+    const installed = await readFile(join(home, 'profiles/preview/node_modules', manifest.name, entry));
     if (!expected.equals(installed)) throw new Error(`Installed ${manifest.name} ${face} differs from the current build; refusing to report a successful preview update.`);
   }
 }
-console.log('Installed Skill, Expert, Connector, Office, Library, Projects and WorkDSH presentation as separate official Profile layers.');
+// Preserve authentic CLI-installed workbench archives for Host verification.
+const archiveDirectory = join(profile, 'workdsh-bootstrap-archives');
+await mkdir(archiveDirectory, { recursive: true });
+const archiveEntries = [];
+for (const [index, { manifest }] of packages.entries()) {
+  const descriptor = manifest.workdsh?.workbench;
+  if (!descriptor) continue;
+  const fileName = `${manifest.name}-${manifest.version}.tgz`;
+  const bytes = await readFile(tarballs[index]);
+  await copyFile(tarballs[index], join(archiveDirectory, fileName));
+  archiveEntries.push({ fileName, packageName: manifest.name, version: manifest.version, workbenchId: descriptor.id, sha256: createHash('sha256').update(bytes).digest('hex') });
+}
+await writeFile(join(archiveDirectory, 'index.json'), JSON.stringify({ version: 1, entries: archiveEntries }, null, 2) + '\n');
+console.log('Installed Skill, Expert, Connector, Office, Library, Projects, Workbenches, Quality Analysis and WorkDSH presentation as separate official Profile layers.');
 console.log('Start the stopped preview with: corepack pnpm preview');

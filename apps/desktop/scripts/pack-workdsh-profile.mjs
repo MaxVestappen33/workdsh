@@ -8,7 +8,7 @@ import { join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { DSH_VERSION } from './runtime-version.mjs'
 import { RELEASE_PACKAGES, PACKAGE_DIRECTORIES } from './workdsh-package-boundary.mjs'
-import { verifyBuiltPackageExports, verifyPackageDshReferences, verifyProfileRelease } from './verify-profile-release.mjs'
+import { requiredRuntimeDependencies, verifyBuiltPackageExports, verifyPackageDshReferences, verifyProfileRelease } from './verify-profile-release.mjs'
 const source = process.argv[2] && resolve(process.argv[2])
 const output = resolve(process.argv[3] ?? fileURLToPath(new URL('../build/workdsh-profile-release', import.meta.url)))
 if (!source) throw new Error('Usage: node scripts/pack-workdsh-profile.mjs <built-workdsh-source> [output]')
@@ -29,8 +29,7 @@ for (const name of RELEASE_PACKAGES) {
   if (pkg.name !== name) throw new Error('Unexpected source package: ' + directory)
   verifyPackageDshReferences(pkg, DSH_VERSION)
   verifyBuiltPackageExports(pkg, directory)
-  for (const [peer, range] of Object.entries(pkg.peerDependencies ?? {})) {
-    if (pkg.peerDependenciesMeta?.[peer]?.optional) continue
+  for (const [peer, range] of Object.entries(requiredRuntimeDependencies(pkg))) {
     if (peer.startsWith('workdsh-')) {
       if (!RELEASE_PACKAGES.includes(peer)) throw new Error('Missing owned runtime dependency: ' + name + ' requires ' + peer)
       continue

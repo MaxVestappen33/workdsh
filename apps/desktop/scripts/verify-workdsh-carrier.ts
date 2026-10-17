@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { extractFile, listPackage } from '@electron/asar'
-import { DSH_VERSION } from './runtime-version.mjs'
+import { DSH_VERSION, OFFICIAL_PNPM_VERSION } from './runtime-version.mjs'
 import { ENTERPRISE_PACKAGES, PRODUCT_PACKAGES, RELEASE_PACKAGES } from './workdsh-package-boundary.mjs'
 import { verifyDefaultComposition, verifyDefaultProfile, verifyInstalledDshVersions, verifyOfficialWebPackages, verifyProfileRelease, verifyReleaseArchives } from './verify-profile-release.mjs'
 import { parseDeploymentConfig } from '../src/deployment-config.ts'
@@ -135,7 +135,7 @@ export async function afterPack(context: PackContext): Promise<void> {
   if (native.error || native.status !== 0) throw new Error('Packaged Node cannot load the official native plugin dependency: ' + String(native.error ?? native.stderr))
   process.stdout.write(native.stdout)
   const pnpm = join(runtime, 'primary-runtime', 'dependencies', 'pnpm', 'bin', 'pnpm.cjs')
-  if (primary.pnpm !== '11.7.0' || !existsSync(pnpm)) throw new Error('Packaged official pnpm CLI is missing or has another version')
+  if (primary.pnpm !== OFFICIAL_PNPM_VERSION || !existsSync(pnpm)) throw new Error('Packaged official pnpm CLI is missing or has another version')
   const packageManager = spawnSync(node, [pnpm, '--version'], { encoding: 'utf8', timeout: 30_000 })
   if (packageManager.error || packageManager.status !== 0 || packageManager.stdout.trim() !== primary.pnpm) {
     throw new Error('Packaged official pnpm JavaScript CLI cannot run with its bundled Node')

@@ -20,10 +20,11 @@ import { LibraryPanel } from './client/LibraryPanel.js';
 import { LibraryPicker } from './client/LibraryPicker.js';
 import { LibraryReferencePage } from './client/LibraryReferencePage.js';
 import { createLibraryPreviewRegistry } from './client/preview-registry.js';
+import {returnToLibraryPanel} from './client/original-panel.js';
 import type { LibraryOriginalPreviewRegistry, LibraryComposerReference } from 'workdsh-contracts/library';
 
 declare module '@deepseek-ai/cordis' { interface Context { workdshLibraryPreview: LibraryOriginalPreviewRegistry; } }
-declare module '@deepseek-ai/dsh-client-ui-sidebar-right/client' { interface SidebarRightTabParamsMap { 'workdsh-library-preview': { assetId: string; revisionId: string; name: string; kind: string }; } }
+declare module '@deepseek-ai/dsh-client-ui-sidebar-right/client' { interface SidebarRightTabParamsMap { 'workdsh-library-preview': { assetId: string; revisionId: string; name: string; kind: string; returnPanelId?:string;returnLabel?:string;saveOriginal?:boolean }; } }
 
 export const name = 'workdsh-library-client';
 export const inject = ['slots', 'layout', 'connection', 'sessions', 'workspaces', 'conversation', 'inputTriggers', 'sidebarRightTabs', 'sidebarRight', 'uiWorkspace'];
@@ -154,11 +155,24 @@ export function apply(ctx: Context): void {
     document.addEventListener('click', openTranscriptReference, true);
     return () => document.removeEventListener('click', openTranscriptReference, true);
   }, 'workdsh.library.transcriptReferences');
-  ctx.effect(() => ctx.sidebarRightTabs.register({ id: 'workdsh-library-preview', kind: 'workdsh-library-preview', title: () => '资料预览' }));
-  ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({ name: 'sidebar.right.pane.tab', key: 'workdsh-library-preview', inject: () => ({ management, previewRegistry }) }, LibraryReferencePage));
+  const closeGuards=new Map<string,()=>void>();
+  const registerCloseGuard=(tabId:string,guard:()=>void)=>{closeGuards.set(tabId,guard);return()=>{if(closeGuards.get(tabId)===guard)closeGuards.delete(tabId);};};
+  ctx.effect(()=>ctx.sidebarRight.registerCloseHandler('workdsh-library-preview',(_sessionId,tab)=>closeGuards.get(String(tab.id))?.()));
+  ctx.effect(() => ctx.sidebarRightTabs.register({ id: 'workdsh-library-preview', kind: 'workdsh-library-preview', title: () => '资料预览',keepMounted:true,multiple:true }));
+  ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({ name: 'sidebar.right.pane.tab', key: 'workdsh-library-preview', inject: () => ({ management, previewRegistry,registerCloseGuard,returnToPanel:(id:string)=>returnToLibraryPanel(ctx,id) }) }, LibraryReferencePage));
   ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'workdsh-library', inject: () => ({ management, previewRegistry, toggleNavigation: () => ctx.layout.toggleSidebar(), startConversation }) }, LibraryPanel));
   ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
     name: 'conversation.input.left', id: 'workdsh-library-picker', order: 35,
     inject: () => ({ management, openLibrary: () => ctx.layout.selectPanel('workdsh-library' as Parameters<typeof ctx.layout.selectPanel>[0]), addReference: (sessionId: string, entry: import('workdsh-contracts/library').LibraryTreeEntry) => entry.asset && entry.revision ? insertReference(sessionId, { assetId: entry.asset.id, revisionId: entry.revision.id, nodeId: entry.id, name: entry.name, kind: entry.asset.kind }) : false }),
   }, LibraryPicker));
 }
+
+// Public selection UI reuses the library owner and does not require a conversation.
+export { LibraryAssetPicker } from './client/LibraryPicker.js';
+export type { LibraryAssetPickerProps } from './client/LibraryPicker.js';
+export { createLibraryClient } from './client/management.js';
+export type { LibraryClient } from './client/management.js';
+export {createLibraryOriginalPanelClient,createLibraryNativeFileClient} from './client/original-panel.js';
+export type {LibraryOriginalPanelClient,LibraryOriginalPanelInput} from 'workdsh-contracts/library';
+export {LibraryOriginalSurface} from './client/LibraryOriginalSurface.js';
+export type {LibraryOriginalSurfaceProps} from './client/LibraryOriginalSurface.js';

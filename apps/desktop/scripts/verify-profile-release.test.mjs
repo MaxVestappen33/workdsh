@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import { strict as assert } from 'node:assert'
-import { verifyBuiltPackageExports, verifyDefaultComposition, verifyDefaultProfile, verifyInstalledDshVersions, verifyPackageDshReferences, verifyProfileRelease, verifyReleaseArchives } from './verify-profile-release.mjs'
+import { requiredRuntimeDependencies, composeProfilePatches, verifyBuiltPackageExports, verifyDefaultComposition, verifyDefaultProfile, verifyInstalledDshVersions, verifyPackageDshReferences, verifyProfileRelease, verifyReleaseArchives } from './verify-profile-release.mjs'
 import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -146,3 +146,28 @@ test('cross-architecture macOS runtime installs target native dependencies as we
  assert.deepEqual(runtimeArchitecture({},'win32','x64').cpus,['x64']);
  assert.throws(()=>runtimeArchitecture({WORKDSH_MAC_ARCH:'invalid'},'darwin','arm64'),/Unsupported/);
 });
+
+test('composes populated and empty owned overlays into one valid patch document', () => {
+  const result = composeProfilePatches(['- insert:\n    - id: first\n      name: fixture-first\n', '# client-only provider\n[]\n', '', '- insert:\n    - id: last\n      name: fixture-last\n'])
+  assert.match(result, /id: first/)
+  assert.match(result, /id: last/)
+  assert.doesNotMatch(result, /^\[\]$/m)
+  assert.equal(composeProfilePatches(['[]', '# empty']), '[]\n')
+  assert.throws(() => composeProfilePatches(['insert: {}']), /must be an array/)
+})
+
+test('preserves official executable-expression tags without executing them while composing', () => {
+  const expression = 'process.env.DSH_ELECTRON_EXECUTABLE'
+  const result = composeProfilePatches(['[]', '- insert:\n    - id: browser\n      disabled: !!js "' + expression + '"\n'])
+  assert.match(result, /(?:!!js|!<tag:yaml.org,2002:js>)/)
+  assert.match(result, /process\.env\.DSH_ELECTRON_EXECUTABLE/)
+  assert.equal(composeProfilePatches([result]), result)
+})
+
+test('includes packages loaded from owned patches even when declared as dependencies', () => {
+ const result = requiredRuntimeDependencies({dependencies:{'@deepseek-ai/dsh-computer-use':DSH_VERSION},peerDependencies:{'@deepseek-ai/cordis':'4.0.5',optional:'1.0.0'},peerDependenciesMeta:{optional:{optional:true}},devDependencies:{buildOnly:'1.0.0'}})
+ assert.equal(result['@deepseek-ai/dsh-computer-use'],DSH_VERSION)
+ assert.equal(result['@deepseek-ai/cordis'],'4.0.5')
+ assert.equal(result.optional,undefined)
+ assert.equal(result.buildOnly,undefined)
+})

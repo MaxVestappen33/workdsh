@@ -66,7 +66,7 @@ alpha.14 整包包含 **12 个可安装模块**，包括项目、资料库和受
 
 ## 快速开始
 
-环境要求：Node.js `^22.19.0 || >=24.0.0`、Corepack/pnpm，以及官方 **0.2.0-rc.2** 版本的 `dsh` CLI。
+环境要求：Node.js `^22.19.0 || >=24.0.0`、Corepack/pnpm，以及与所下载发行包 `release-manifest.json` 的 `harness` 字段完全一致的官方 `dsh` CLI。不要使用源码目标版本替代已发布包的版本。
 
 1. 从 [alpha.14 Release](https://github.com/techflag/workdsh/releases/tag/v0.1.0-alpha.14) 下载全部 12 个 `.tgz`、`release-manifest.json`、`SHA256SUMS` 和 `install-workdsh.mjs`，放入同一目录。
 2. 升级已有 Profile 时，先停止运行，并保留配置和数据的可恢复备份。
@@ -93,6 +93,8 @@ corepack pnpm build
 corepack pnpm preview:install
 corepack pnpm preview
 ```
+
+预览启动将工作区锁定的 pnpm 同时用于原生插件管理和本地安装。PATH 调整仅作用于预览进程；工作区依赖缺失或版本不符时拒绝启动，不修改全局 pnpm 配置，也不迁移 Profile 的依赖存储。
 
 ## 架构与开发
 
@@ -130,3 +132,12 @@ corepack pnpm check:versions
 WorkDSH 明确以 **WorkBuddy / CodeBuddy** 作为产品体验参考：真实任务应展示工作过程，并以可编辑成果结束；技能市场组织、工具栏分组和 PPT 设计指导也吸收了相关经验。WorkDSH 是面向 DeepSeek Harness 的独立开源实现，不复用 WorkBuddy 品牌，也不代表官方合作、背书或集成了腾讯 PPT 引擎。
 
 第三方技能和素材分别遵循其提供方的许可与使用条件。构建产物保留实际打包依赖的版权和许可文本，见 [Office 第三方声明](../../packages/plugins/office/THIRD-PARTY-NOTICES.md)。
+
+
+### 自托管数据与执行权限
+
+当前仓库不提供旧版 `deploy/docker` 配方。自行容器化时，持久化整个 `DSH_HOME`，并设置 `DSH_AGENTS_HOME` 为同一持久卷内的 `agents` 目录；持久化 Profile 不等于持久化另一个用户目录。当前专家服务未显式设置 `DSH_AGENTS_HOME` 时也会默认使用 `$DSH_HOME/agents`。
+
+出现 `SANDBOX_UNAVAILABLE` 表示主机没有可用的隔离执行后端，应先检查容器与宿主的隔离能力。需要不受限制的执行时，由用户在原生权限设置中显式选择；WorkDSH 不会因隔离不可用自动降级。旧配方提到的环境变量不能替代对当前官方运行时设置的核查。
+
+个人 Web 是单用户本机运行方式；共享访问同一个 Profile 不提供用户数据隔离。企业功能不等于多租户 Web Host。

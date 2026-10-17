@@ -98,7 +98,7 @@ try {
   const config = await cli('--profile', 'skills', '--dump-config');
   assert.equal(config.split('id: workdsh-skills').length - 1, 1);
   assert.ok(!config.includes('workdsh-bundle'));
-  const installedRoot = join(home, '../../profiles/skills/node_modules/workdsh-plugin-skills');
+  const installedRoot = join(home, 'profiles/skills/node_modules/workdsh-plugin-skills');
   const installed = JSON.parse(await readFile(join(installedRoot, 'package.json'), 'utf8'));
   assert.equal(installed.version, manifest.version);
   assert.ok(installed.dsh.bundle && installed.dsh.client);

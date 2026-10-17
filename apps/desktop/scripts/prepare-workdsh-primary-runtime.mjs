@@ -4,7 +4,7 @@ import { cpSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { prepareOfficialRelease } from './official-desktop-release.mjs'
-import { DSH_VERSION } from './runtime-version.mjs'
+import { DSH_VERSION, OFFICIAL_PNPM_VERSION } from './runtime-version.mjs'
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const target = process.platform === 'win32' ? 'win-x64'
@@ -31,7 +31,7 @@ if (manifest.desktopVersion !== DSH_VERSION || manifest.platform !== process.pla
   throw new Error(`Official primary runtime metadata does not match ${target} / ${DSH_VERSION}`)
 }
 const runtimePnpm = join(output, 'primary-runtime', 'dependencies', 'pnpm', 'bin', 'pnpm.cjs')
-if (manifest.pnpm !== '11.7.0' || !existsSync(runtimePnpm)) throw new Error('Official primary runtime must carry its pinned pnpm 11.7.0 JavaScript CLI')
+if (manifest.pnpm !== OFFICIAL_PNPM_VERSION || !existsSync(runtimePnpm)) throw new Error('Official primary runtime must carry the locked official pnpm JavaScript CLI')
 const packagePath = join(profile, 'package.json')
 if (!existsSync(packagePath)) throw new Error('WorkDSH release profile must be prepared first')
 const profilePackage = JSON.parse(readFileSync(packagePath, 'utf8'))

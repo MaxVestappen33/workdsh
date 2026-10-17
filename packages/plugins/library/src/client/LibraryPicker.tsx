@@ -24,7 +24,22 @@ const css = `
 .wd-library-status{padding:12px;color:var(--dsw-alias-label-secondary)}
 @media(max-width:560px){.wd-library-popover{position:fixed;left:12px;right:12px;bottom:86px;width:auto}}
 `;
+export interface LibraryAssetPickerProps {
+  management: Pick<LibraryClient, 'list'>;
+  openLibrary: () => void;
+  onSelect: (entry: LibraryTreeEntry) => boolean;
+  triggerLabel?: string;
+}
+export function LibraryAssetPicker(props: LibraryAssetPickerProps) {
+  return <AssetPicker {...props} />;
+}
 export function LibraryPicker({ sessionId, management, openLibrary, addReference }: Props) {
+  return <AssetPicker management={management} openLibrary={openLibrary}
+    onSelect={entry => addReference(String(sessionId), entry)}
+    triggerLabel="从资料库添加到对话" conversationRequests />;
+}
+function AssetPicker({ management, openLibrary, onSelect, triggerLabel = '从资料库选择资料', conversationRequests = false }:
+  LibraryAssetPickerProps & { conversationRequests?: boolean }) {
   const root = React.useRef<HTMLDivElement>(null);
   const trigger = React.useRef<HTMLButtonElement>(null);
   const [open, setOpen] = React.useState(false);
@@ -34,10 +49,11 @@ export function LibraryPicker({ sessionId, management, openLibrary, addReference
   const [error, setError] = React.useState('');
   const parentId = path.at(-1)?.id;
   React.useEffect(() => {
+    if (!conversationRequests) return;
     const show = () => { setPath([]); setOpen(true); };
     window.addEventListener(libraryPickerRequestedEvent, show);
     return () => window.removeEventListener(libraryPickerRequestedEvent, show);
-  }, []);
+  }, [conversationRequests]);
   React.useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -56,11 +72,11 @@ export function LibraryPicker({ sessionId, management, openLibrary, addReference
   }, [open]);
   const pick = (row: LibraryTreeEntry) => {
     if (row.kind === 'folder') { setPath(current => [...current, row]); return; }
-    if (addReference(String(sessionId), row)) setOpen(false);
-    else setError('无法添加引用，请等待输入框就绪后重试。');
+    if (onSelect(row)) setOpen(false);
+    else setError('无法选择该资料，请确认当前页面已就绪后重试。');
   };
   return <><style>{css}</style><div className="wd-library-picker" ref={root}>
-    <button ref={trigger} type="button" className="wd-library-picker-trigger" aria-label="从资料库添加到对话" aria-haspopup="dialog" aria-expanded={open} title="从资料库添加到对话" onClick={() => { setPath([]); setOpen(value => !value); }}><Icon name="library" size={22} /></button>
+    <button ref={trigger} type="button" className="wd-library-picker-trigger" aria-label={triggerLabel} aria-haspopup="dialog" aria-expanded={open} title={triggerLabel} onClick={() => { setPath([]); setOpen(value => !value); }}><Icon name="library" size={22} /></button>
     {open && <div className="wd-library-popover" role="dialog" aria-label="资料库">
       {parentId && <button className="wd-library-back" type="button" onClick={() => setPath(current => current.slice(0, -1))}>← 返回 · {path.at(-1)?.name}</button>}
       {loading && <div className="wd-library-status" role="status">正在加载资料…</div>}

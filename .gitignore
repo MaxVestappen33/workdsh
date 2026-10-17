@@ -38,3 +38,11 @@ apps/desktop/build/official-release-cache/
 /.test-runtime/
 /scripts/__pycache__/
 **/.playwright-mcp/
+
+# Generated runtime extraction and local upstream reference material.
+/build/
+/examples/**/dist/
+/docs/0.2.1-alpha.2/
+
+# Local package archives are build outputs.
+/packages/plugins/*/*.tgz

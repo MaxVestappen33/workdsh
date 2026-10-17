@@ -7,6 +7,7 @@ const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const readJson = path => JSON.parse(readFileSync(join(root, path), 'utf8'))
 const upstream = readJson('upstream.json')
 const problems = []
+if (upstream.desktopArtifactVersion && upstream.desktopArtifactVersion !== upstream.version) problems.push(`Desktop artifacts remain ${upstream.desktopArtifactVersion}; npm development target is ${upstream.version}. Desktop packaging and release are not validated.`)
 if (upstream.version !== DSH_VERSION || upstream.distribution !== 'published-packages-and-desktop-release') problems.push('Desktop must consume the locked official release version')
 for (const target of ['mac-arm64', 'mac-x64', 'win-x64']) {
   const artifact = upstream.desktopArtifacts?.[target]

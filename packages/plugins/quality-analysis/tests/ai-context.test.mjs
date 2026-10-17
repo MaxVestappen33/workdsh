@@ -1,0 +1,31 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+import {fileURLToPath} from 'node:url';
+const require=createRequire(new URL('../../../../apps/web/package.json',import.meta.url));
+const {build}=require('esbuild');
+const built=await build({entryPoints:[fileURLToPath(new URL('../src/client/ai-context.ts',import.meta.url))],bundle:true,platform:'node',format:'esm',write:false});
+const {parseQualityAiContext:parse,qualityAiUpdateMatchesSelection:matches}=await import(`data:text/javascript;base64,${Buffer.from(built.outputFiles[0].text).toString('base64')}`);
+const context={recordId:'record',sessionId:'session',originRunId:'old',originContentHash:'a'.repeat(64),runId:'new',contentHash:'b'.repeat(64),revision:1};
+test('Host pointers reject a wrong identity, malformed hash and extra model fields',()=>{
+ assert.equal(parse(context,'record','session').runId,'new');
+ assert.throws(()=>parse(context,'other','session'));
+ assert.throws(()=>parse(context,'record','other'));
+ assert.throws(()=>parse({...context,contentHash:'incomplete'},'record','session'));
+ assert.throws(()=>parse({...context,modelSummary:'claim'},'record','session'));
+ assert.deepEqual(parse({...context,selectedReport:{reportId:'report',revisionId:'version'}},'record','session').selectedReport,{reportId:'report',revisionId:'version'});
+ assert.throws(()=>parse({...context,selectedReport:{reportId:'report',revisionId:''}},'record','session'));
+ assert.throws(()=>parse({...context,selectedReport:{reportId:'report',revisionId:'v',actorId:'foreign'}},'record','session'));
+ assert.deepEqual(parse({...context,selectedFocus:{kind:'inspection',inspectionId:'QC-008'}},'record','session').selectedFocus,{kind:'inspection',inspectionId:'QC-008'});
+ assert.throws(()=>parse({...context,selectedFocus:{kind:'period',date:'2026-02-30'}},'record','session'));
+ assert.throws(()=>parse({...context,selectedFocus:{kind:'inspection',inspectionId:'QC-008',sessionId:'other'}},'record','session'));
+});
+test('a continuing AI run updates its current basis but does not replace intentionally selected history',()=>{
+ const original={runId:'old',contentHash:context.originContentHash},next={runId:'new',contentHash:context.contentHash};
+ assert.equal(matches(context,'record',original),true);
+ assert.equal(matches(context,'record',next),true);
+ assert.equal(matches({...context,runId:'newer',contentHash:'c'.repeat(64)},'record',next,next),true);
+ assert.equal(matches(context,'record',{runId:'history',contentHash:'d'.repeat(64)},next),false);
+ assert.equal(matches(context,'another',original),false);
+ assert.equal(matches(context,'record',undefined),false);
+});

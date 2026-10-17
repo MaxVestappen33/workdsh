@@ -1,0 +1,7 @@
+import type {QualityTabularSource} from './analysis-run.js';
+import {z} from 'zod';
+const cell=z.union([z.string(),z.number().finite(),z.boolean(),z.null()]);
+const table=z.object({complete:z.literal(true),byteLength:z.number().int().nonnegative().max(8*1024*1024),headers:z.array(z.string().min(1)).min(1).max(50),rows:z.array(z.array(cell).max(50)).max(10000),locations:z.array(z.object({record:z.number().int().positive(),line:z.number().int().positive()}).strict()).max(10000),encoding:z.literal('utf-8').optional(),ignoredBlankRecords:z.number().int().nonnegative().optional()}).strict().refine(value=>new Set(value.headers).size===value.headers.length&&value.headers.every(header=>!!header.trim())&&value.rows.length===value.locations.length&&value.rows.every(row=>row.length===value.headers.length));
+const source=z.object({imported:z.object({sha256:z.string().regex(/^[a-f0-9]{64}$/),table}).strict(),format:z.object({kind:z.literal('xlsx'),worksheet:z.string().min(1).max(256),headerRow:z.number().int().positive(),valuePolicy:z.string().min(1).max(256)}).strict().optional(),provenance:z.object({kind:z.literal('library'),assetId:z.string().min(1).max(256),revisionId:z.string().min(1).max(256)}).strict().optional()}).strict();
+export const qualitySourceSnapshotSchema=z.object({inspections:source,defects:source.optional()}).strict();
+export type QualitySourceSnapshot={readonly inspections:Omit<QualityTabularSource,'mapping'|'decisions'>;readonly defects?:Omit<QualityTabularSource,'mapping'|'decisions'>};

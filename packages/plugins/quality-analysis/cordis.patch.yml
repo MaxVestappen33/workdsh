@@ -1,0 +1,3 @@
+- insert:
+    - id: workdsh-quality-analysis
+      name: workdsh-plugin-quality-analysis

@@ -8,3 +8,6 @@ if (typeof upstream.version !== 'string' || !upstream.version) {
 }
 
 export const DSH_VERSION = upstream.version
+
+if (!/^\d+\.\d+\.\d+$/.test(upstream.primaryRuntime?.pnpm ?? '')) throw new Error('upstream.json must lock official runtime pnpm')
+export const OFFICIAL_PNPM_VERSION = upstream.primaryRuntime.pnpm

@@ -147,6 +147,21 @@ jobs:
       - name: Library import, search and task reference tests
         working-directory: apps/web
         run: node --test ../../packages/plugins/library/tests/*.test.mjs
+      - name: Office original save channel tests
+        working-directory: apps/web
+        run: pnpm test:office:save
+      - name: Workbench management, development and source recovery tests
+        working-directory: apps/web
+        run: pnpm test:workbenches
+      - name: Quality analysis input, statistics, reports and expert integration tests
+        working-directory: apps/web
+        run: pnpm test:quality-analysis
+      - name: Shared tabular parser unit tests
+        working-directory: apps/web
+        run: pnpm test:tabular
+      - name: Offline execution adapter unit tests
+        working-directory: apps/web
+        run: pnpm test:runtime-isolated
       - name: Enterprise desktop identity and collaboration tests
         working-directory: apps/web
         run: node --test ../../packages/providers/identity-enterprise/tests/*.test.mjs ../../packages/plugins/enterprise-collaboration/tests/*.test.mjs

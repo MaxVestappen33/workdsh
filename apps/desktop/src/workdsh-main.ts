@@ -18,6 +18,7 @@ import { parseDeploymentConfig } from './deployment-config.ts'
 import { EnterpriseLogin, startEnterpriseAuthority, type Authority } from './enterprise-auth.ts'
 import { desktopEnterprisePatch, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher } from './local-runtime.ts'
 import { manageCommand } from './command-management.ts'
+import { createRuntimeOutputRedactor, redactRuntimeOutput, runtimeFailureDetail } from './runtime-diagnostics.ts'
 import { cleanOwnedProcessTree, stopOwnedProcess } from './owned-process.ts'
 
 const PROFILE_NAME = 'workdsh'
@@ -179,6 +180,7 @@ function runtimeEnvironment(home: string): NodeJS.ProcessEnv {
     DSH_AGENTS_HOME: enterprise ? join(enterprise.root, 'agents') : join(home, 'agents'),
     DSH_BUNDLED_PRIMARY_RUNTIME: bundledPrimaryRuntime(),
     DSH_ELECTRON_EXECUTABLE: process.execPath,
+    WORKDSH_ELECTRON_APP: app.isPackaged ? undefined : app.getAppPath(),
     ELECTRON_RUN_AS_NODE: undefined,
   }
 }
@@ -243,9 +245,16 @@ function startRuntime(home: string, connection: DesktopConnection, patches: stri
   runtimeStarting = true
   let ready = false
   let output = ''
+  let diagnosticOutput = ''
+  const recordOutput = (safe: string): void => {
+    diagnosticOutput = `${diagnosticOutput}${safe}`.slice(-16_384)
+    process.stderr.write(safe)
+  }
+  const stdoutRedactor = createRuntimeOutputRedactor(recordOutput)
+  const stderrRedactor = createRuntimeOutputRedactor(recordOutput)
   const consume = (chunk: Buffer): void => {
     const text = chunk.toString('utf8')
-    process.stderr.write(text.replace(/\?token=[^\s]+/gu, '?token=[redacted]'))
+    stdoutRedactor.push(chunk)
     if (ready || switching || runtime !== child) return
     output = `${output}${text}`.slice(-16_384)
     const match = READY_PATTERN.exec(output)
@@ -255,20 +264,35 @@ function startRuntime(home: string, connection: DesktopConnection, patches: stri
       openWindow(match[1], connection)
     }
   }
+  const failureDetail = (code: number | null, cleanupFailed = false): string => {
+    const detail = runtimeFailureDetail(ready, code, diagnosticOutput, cleanupFailed)
+    try {
+      const directory = join(app.getPath('userData'), 'logs')
+      mkdirSync(directory, { recursive: true })
+      const path = join(directory, 'runtime-failure.log')
+      writeFileSync(path, `${new Date().toISOString()}\n${detail}\n`, { mode: 0o600 })
+      return `${detail}\n\n错误记录：${path}`
+    } catch { return detail }
+  }
   child.stdout.on('data', consume)
-  child.stderr.on('data', chunk => process.stderr.write(chunk.toString().replace(/\?token=[^\s]+/gu, '?token=[redacted]')))
+  child.stdout.once('end', () => stdoutRedactor.end())
+  child.stderr.on('data', chunk => stderrRedactor.push(chunk))
+  child.stderr.once('end', () => stderrRedactor.end())
   child.once('error', cause => {
-    if (!quitting && runtime === child) { dialog.showErrorBox('启动失败', cause.message); void returnToEntry() }
+    if (!quitting && runtime === child) { dialog.showErrorBox('启动失败', redactRuntimeOutput(cause.message)); void returnToEntry() }
   })
   child.once('exit', code => {
     if (runtime !== child) return
     void cleanOwnedProcessTree(child).then(() => {
       if (runtime === child) { runtime = undefined; runtimeStarting = false }
       if (!quitting && !switching) {
-        dialog.showErrorBox('本机运行已停止', ready ? `官方 DSH 进程已退出 (${code})` : '官方 DSH 未能完成启动，请检查插件版本和 Profile 配置')
+        dialog.showErrorBox('本机运行已停止', failureDetail(code))
         void returnToEntry()
       }
-    }).catch(() => dialog.showErrorBox('进程清理失败', '本机工具进程停止尚未确认，请退出后检查。'))
+    }).catch(() => {
+      runtimeStarting = false
+      dialog.showErrorBox('本机运行失败，进程清理未确认', failureDetail(code, true))
+    })
   })
   const readyTimeout = setTimeout(() => { if (!ready && runtime === child) { dialog.showErrorBox('启动超时', '官方 DSH 尚未就绪，已停止本机进程'); void returnToEntry() } }, 90_000)
   child.once('exit', () => clearTimeout(readyTimeout))

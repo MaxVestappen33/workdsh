@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 const lock = readFileSync(new URL('../pnpm-lock.yaml', import.meta.url), 'utf8');
-const expected = '0.2.0-rc.2';
+const expected = JSON.parse(readFileSync(new URL('../../../upstream.json', import.meta.url), 'utf8')).version;
+const cordisExpected = pkg.pnpm.overrides['@deepseek-ai/cordis'];
 const entries = [...lock.matchAll(/^  '?(@deepseek-ai\/dsh[^@\s']*)@([^\s:'(]+)(?:[^\n]*):$/gm)];
 assert.ok(entries.length > 0, 'DSH lockfile entries must exist');
 for (const [, name, version] of entries) {
@@ -11,5 +12,5 @@ for (const [, name, version] of entries) {
 }
 const cordis = [...lock.matchAll(/^  '?@deepseek-ai\/cordis@([^\s:'(]+)(?:[^\n]*):$/gm)];
 assert.ok(cordis.length > 0);
-assert.deepEqual([...new Set(cordis.map(m => m[1]))], ['4.0.4']);
-console.log(`PASS: ${entries.length} DSH lock entries pinned to ${expected}; Cordis 4.0.4 only`);
+assert.deepEqual([...new Set(cordis.map(m => m[1]))], [cordisExpected]);
+console.log(`PASS: ${entries.length} DSH lock entries pinned to ${expected}; Cordis ${cordisExpected} only`);

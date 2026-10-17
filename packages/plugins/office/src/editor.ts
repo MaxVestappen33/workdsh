@@ -13,6 +13,7 @@ let kind: string;
 let textParts: Awaited<ReturnType<typeof openTextParts>>;
 let excel: ReturnType<typeof createUniver> | undefined;
 const edits = new Map<string, string>();
+let saveToOwner=false;let saveSequence=0;let pendingSave:{id:string;resolve:()=>void;reject:(error:Error)=>void}|undefined;
 function fitPages() {
   if (kind === 'docx') {
     for (const page of preview.querySelectorAll<HTMLElement>('section.docx')) {
@@ -88,14 +89,32 @@ async function open(bytes: Uint8Array, extension: string) {
 }
 update.onclick = async () => { try { await renderText(await bytesForExport()); status.textContent = '预览已更新。'; } catch (error) { status.textContent = String(error); } };
 save.onclick = async () => {
+  if(pendingSave||save.disabled)return;
+  const previousDisabled=save.disabled;save.disabled=true;
   try {
-    const bytes = await bytesForExport(); const url = URL.createObjectURL(new Blob([bytes]));
-    const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'edited.' + kind; anchor.click();
-    setTimeout(() => URL.revokeObjectURL(url), 3000); status.textContent = '已导出副本，原件未覆盖。';
+    const bytes = await bytesForExport();
+    if(saveToOwner){
+      if(bytes.byteLength>10*1024*1024)throw new Error('保存文件超过 10 MB 限制。');
+      await new Promise<void>((resolve,reject)=>{const id='save-'+(++saveSequence);const timer=setTimeout(()=>reject(new Error('保存回执超时，请先核对资料库版本再重试。')),35000);pendingSave={id,resolve:()=>{clearTimeout(timer);resolve();},reject:error=>{clearTimeout(timer);reject(error);}};parent.postMessage({type:'workdsh-office-save',requestId:id,bytes},'*');});
+      status.textContent='已保存新版本，历史原件保持不变。';
+    }else{
+      const url = URL.createObjectURL(new Blob([bytes]));
+      const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'edited.' + kind; anchor.click();
+      setTimeout(() => URL.revokeObjectURL(url), 3000); status.textContent = '已导出副本，原件未覆盖。';
+    }
   } catch (error) { status.textContent = String(error); }
+  finally{pendingSave=undefined;save.disabled=previousDisabled;}
 };
 window.addEventListener('message', event => {
-  if (event.source !== parent || event.data?.type !== 'workdsh-office-open') return;
+  if (event.source !== parent) return;
+  if(event.data?.type==='workdsh-office-save-result'&&pendingSave&&event.data.requestId===pendingSave.id){
+    if(event.data.ok===true)pendingSave.resolve();else pendingSave.reject(new Error('保存未确认，请保留编辑内容并核对资料库版本。'));
+    return;
+  }
+  if(event.data?.type!=='workdsh-office-open')return;
+  if(pendingSave)return;
+  saveToOwner=event.data.saveToOwner===true&&event.data.extension==='xlsx';
+  save.textContent=saveToOwner?'保存到资料库':'导出副本';
   open(event.data.bytes, event.data.extension).catch(error => { status.textContent = String(error); save.disabled = true; });
 });
 parent.postMessage({ type: 'workdsh-office-ready' }, '*');

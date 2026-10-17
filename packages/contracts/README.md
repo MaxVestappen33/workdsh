@@ -17,4 +17,6 @@
 
 ## 验收与下一步
 
+新增受信 Host 契约 `ManagedComputeService`：锁定计算包与隔离环境引用、固定操作、任务修订、取消信号和作业结果。当前仅有类型定义与类型检查；尚无环境准备或作业执行提供方，不能据此声明桌面专业计算已接通。实现须复用宿主授权与官方执行边界，不能接受模型传入任意命令或运行时路径。
+
 本地 identity、access 和 audit 已消费本包接口，并完成受控 Session Host 入口和官方工具流水线的首个治理接入；下一步生成受控 Session Remote，再接文件和其他 Remote。完成对应 PLAN 任务及 [验收矩阵](../../apps/web/docs/ACCEPTANCE.md) 场景后才完成 P0-04/P0-05。企业 Skill 架构见 [ADR 0015](../../apps/web/docs/CONTRACTS.md)。

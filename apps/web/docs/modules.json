@@ -27,6 +27,18 @@
     ]
   },
   {
+    "path": "../../packages/tabular",
+    "title": "共享表格解析",
+    "status": "in_progress",
+    "directories": [
+      "src",
+      "tests"
+    ],
+    "requirements": [
+      "R15"
+    ]
+  },
+  {
     "path": "../../packages/bundle",
     "title": "默认组合包",
     "status": "in_progress",
@@ -468,15 +480,9 @@
   {
     "path": "../../packages/providers/runtime-isolated",
     "title": "隔离执行提供方",
-    "status": "planned",
+    "status": "in_progress",
     "directories": [
-      "src/domain",
-      "src/services",
-      "src/storage",
-      "src/tools",
-      "src/remote",
-      "src/client/components",
-      "src/harness",
+      "src",
       "tests"
     ],
     "requirements": [
@@ -564,6 +570,34 @@
     "moduleVersion": "0.1",
     "requirements": [
       "R12"
+    ]
+  },
+  {
+    "path": "../../packages/plugins/workbenches",
+    "title": "工作台插件平台（3.0）",
+    "status": "in_progress",
+    "directories": [
+      "src/runtime",
+      "tests"
+    ],
+    "moduleVersion": "3.0",
+    "requirements": [
+      "R15"
+    ]
+  },
+  {
+    "path": "../../packages/plugins/quality-analysis",
+    "title": "质量分析工作台（3.0）",
+    "status": "in_progress",
+    "directories": [
+      "src/domain",
+      "tests",
+      "src/runtime",
+      "src/client"
+    ],
+    "moduleVersion": "3.0",
+    "requirements": [
+      "R15"
     ]
   }
 ]

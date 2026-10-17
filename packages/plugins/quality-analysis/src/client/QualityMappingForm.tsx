@@ -1,0 +1,30 @@
+import React,{useEffect,useRef,useState} from 'react';
+import {qualityMappingFields,type QualityTableKind} from '../domain/mapping.js';
+import {defineQualityAnalysisConfiguration,type QualityAnalysisConfiguration} from '../domain/configuration.js';
+const labels:Record<string,string>={inspectionId:'检验编号',inspectionDate:'检验日期',inspectedQuantity:'检验数量',nonconformingQuantity:'不合格数量',quantityUnit:'数量单位',inspectionType:'检验类型',productId:'产品编号',batchId:'批次',lineId:'产线',defectId:'缺陷编号',defectCode:'缺陷代码',defectLabel:'缺陷名称',occurrences:'缺陷次数'};
+export interface QualityMappingFormProps {readonly identityScopeKey:string;readonly sourceKey:string;readonly inputRevisionKey?:string;readonly inspectionHeaders:readonly string[];readonly defectHeaders?:readonly string[];readonly initial?:QualityAnalysisConfiguration;readonly onApply:(configuration:QualityAnalysisConfiguration,signal:AbortSignal)=>Promise<void>;}
+export function QualityMappingForm(props:QualityMappingFormProps){return <MappingBody key={`${props.identityScopeKey}/${props.sourceKey}`} {...props}/>;}
+function MappingBody(props:QualityMappingFormProps){
+ const [inspection,setInspection]=useState<Record<string,string>>({...props.initial?.inspectionsMapping}),[defects,setDefects]=useState<Record<string,string>>({...props.initial?.defectsMapping}),[zone,setZone]=useState(props.initial?.rules.timeZone??''),[dateFormat,setDateFormat]=useState<string>(props.initial?.rules.dateFormat??''),[initial,setInitial]=useState(Object.entries(props.initial?.rules.inspectionTypes??{}).filter(([,type])=>type==='initial').map(([value])=>value).join('\n')),[retest,setRetest]=useState(Object.entries(props.initial?.rules.inspectionTypes??{}).filter(([,type])=>type==='retest').map(([value])=>value).join('\n')),[policy,setPolicy]=useState<string>(props.initial?.filter.retestPolicy??''),[granularity,setGranularity]=useState<string>(props.initial?.filter.trendGranularity??'day'),[busy,setBusy]=useState(false),[error,setError]=useState<string>();
+ const pending=useRef<AbortController|undefined>(undefined);useEffect(()=>()=>pending.current?.abort(),[]);
+ useEffect(()=>{pending.current?.abort();pending.current=undefined;setBusy(false);setError(undefined);},[props.inputRevisionKey]);
+ function controls(kind:QualityTableKind,headers:readonly string[],values:Record<string,string>,change:(value:Record<string,string>)=>void){return <fieldset disabled={busy}><legend>{kind==='inspections'?'检验表列对应':'缺陷表列对应'}</legend>{qualityMappingFields[kind].map((field,index)=><label key={field}>{labels[field]}{kind==='defects'||index<6?' *':'（可选）'}<select aria-label={`${kind==='inspections'?'检验':'缺陷'}${labels[field]}`} value={values[field]??''} onChange={event=>{const next={...values};if(event.target.value)next[field]=event.target.value;else delete next[field];change(next);}}><option value="">选择表中的列</option>{headers.map(header=><option key={header} value={header}>{header}</option>)}</select></label>)}</fieldset>;}
+ async function apply(){if(pending.current)return;setError(undefined);let configuration:QualityAnalysisConfiguration;
+  try{
+   const types:Record<string,'initial'|'retest'>=Object.create(null);for(const [text,type] of [[initial,'initial'],[retest,'retest']] as const)for(const value of text.split('\n').filter(value=>!!value.trim())){if(Object.hasOwn(types,value))throw new Error('检验类型对应重复，请核对。');types[value]=type;}
+   configuration=defineQualityAnalysisConfiguration(props.inspectionHeaders,props.defectHeaders,{inspectionsMapping:inspection,...(props.defectHeaders?{defectsMapping:defects}:{}),rules:{timeZone:zone.trim(),dateFormat:dateFormat as QualityAnalysisConfiguration['rules']['dateFormat'],inspectionTypes:types},filter:{...props.initial?.filter,retestPolicy:undefined,trendGranularity:granularity as 'day'|'week'|'month',...(policy?{retestPolicy:policy as 'include-separately'|'exclude'}:{})}});
+  }catch{setError('请完整选择必填数据列、日期格式和统计规则。每一列只能对应一个用途。');return;}
+  const controller=new AbortController();pending.current=controller;setBusy(true);
+  try{await props.onApply(configuration,controller.signal);}catch{if(!controller.signal.aborted)setError('配置保存失败，请保留选择并重试。');}finally{if(!controller.signal.aborted){pending.current=undefined;setBusy(false);}}
+ }
+ return <form aria-label="质量字段映射" onSubmit={event=>{event.preventDefault();void apply();}}>
+  <p>告诉系统哪些列是日期、检验数量和不合格数量。带 * 的项目为必填。</p>{controls('inspections',props.inspectionHeaders,inspection,setInspection)}{props.defectHeaders&&controls('defects',props.defectHeaders,defects,setDefects)}
+  <fieldset disabled={busy}><legend>分析规则</legend>
+   <label>日期使用的时区<select aria-label="日期使用的时区" value={zone} onChange={event=>setZone(event.target.value)}><option value="">请选择</option><option value="Asia/Shanghai">北京时间</option><option value="UTC">世界标准时间（UTC）</option>{zone&&!['Asia/Shanghai','UTC'].includes(zone)&&<option value={zone}>{zone}</option>}</select></label>
+   <label>原表日期格式<select value={dateFormat} onChange={event=>setDateFormat(event.target.value)}><option value="">请选择</option><option value="yyyy-mm-dd">2026-10-10</option><option value="yyyy/mm/dd">2026/10/10</option><option value="iso-offset">带时区偏移的 ISO 时间</option></select></label>
+   <label>表中哪些值表示初检<textarea value={initial} placeholder="例如：初检；多个值每行填写一个" onChange={event=>setInitial(event.target.value)}/></label><label>表中哪些值表示复检（可留空）<textarea value={retest} placeholder="例如：复检" onChange={event=>setRetest(event.target.value)}/></label>
+   <label>如何统计复检<select value={policy} onChange={event=>setPolicy(event.target.value)}><option value="">发现复检时再确认</option><option value="include-separately">单独统计复检</option><option value="exclude">只统计初检</option></select></label>
+   <label>趋势按什么周期显示<select value={granularity} onChange={event=>setGranularity(event.target.value)}><option value="day">每天</option><option value="week">每周（周一开始）</option><option value="month">每月</option></select></label>
+  </fieldset>{error&&<p role="alert">{error}</p>}<button className="wd-quality-primary" disabled={busy}>{busy?'正在保存…':'确认数据列'}</button>
+ </form>;
+}

@@ -26,6 +26,8 @@
     "typecheck": "yarn workspace dsh-plugin-desktop typecheck",
     "test": "yarn workspace dsh-plugin-desktop test",
     "test:bilingual-docs": "node --test scripts/bilingual-docs.test.mjs",
+    "test:upgrade-preflight": "node --test scripts/preflight-dsh-upgrade.test.mjs",
+    "check:dsh-upgrade": "node scripts/preflight-dsh-upgrade.mjs",
     "check:bilingual-docs": "yarn test:bilingual-docs && node scripts/verify-bilingual-docs.mjs",
     "check:desktop-dsh-alignment": "node scripts/verify-desktop-dsh-alignment.mjs",
     "check:web-dsh-alignment": "node scripts/verify-web-desktop-dsh-alignment.mjs",

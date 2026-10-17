@@ -72,7 +72,7 @@ body:
     attributes:
       label: WorkDSH version / WorkDSH 版本
       description: Use the installed version when the app cannot start / 无法启动时填写已安装版本
-      placeholder: "For example: 2.0.6-alpha.5; or Unknown / 不知道"
+      placeholder: "For example: 3.0.0-alpha.1; or Unknown / 不知道"
     validations:
       required: true
 
