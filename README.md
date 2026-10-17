@@ -8,6 +8,16 @@
 
 [![GitHub Actions](https://github.com/techflag/workdsh/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/techflag/workdsh/actions/workflows/ci.yml) [![Gitee stars](https://gitee.com/techflag/workdsh/badge/star.svg?theme=dark)](https://gitee.com/techflag/workdsh/stargazers) [![Gitee forks](https://gitee.com/techflag/workdsh/badge/fork.svg?theme=dark)](https://gitee.com/techflag/workdsh/members)
 
+## Everyone can tailor their own AI service
+
+Describe what you need, confirm the scope, and let the native AI build a workbench you can keep using. This travel example manages multiple trips, each with its own itinerary, budget and checklist.
+
+[![Watch the WorkDSH personal AI service demo](assets/promotion/workdsh-personal-ai-service-cover.png)](assets/promotion/workdsh-personal-ai-service-landscape.mp4)
+
+**[▶ Watch the horizontal demo · 101 seconds · Chinese narration and subtitles](assets/promotion/workdsh-personal-ai-service-landscape.mp4)**
+
+<sub>Actual screen recording, edited and accelerated. The video duration is not the application creation time.</sub>
+
 ## Feature requests and bug reports
 
 **Help shape WorkDSH: tell us what you need, what feels awkward, or what is broken. No coding experience is required.**
