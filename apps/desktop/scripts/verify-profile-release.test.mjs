@@ -2,11 +2,58 @@ import { test } from 'node:test'
 import { strict as assert } from 'node:assert'
 import { requiredRuntimeDependencies, composeProfilePatches, verifyBuiltPackageExports, verifyDefaultComposition, verifyDefaultProfile, verifyInstalledDshVersions, verifyPackageDshReferences, verifyProfileRelease, verifyReleaseArchives } from './verify-profile-release.mjs'
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, delimiter, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { DSH_VERSION } from './runtime-version.mjs'
 import { ENTERPRISE_PACKAGES, PRODUCT_PACKAGES, RELEASE_PACKAGES } from './workdsh-package-boundary.mjs'
+
+test('release bootstrap installs dependencies before loading package validators', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'workdsh clean release '))
+  const root = fileURLToPath(new URL('../../..', import.meta.url))
+  try {
+    for (const relative of [
+      'scripts/package-desktop-release.mjs',
+      'apps/desktop/scripts/runtime-version.mjs',
+      'apps/desktop/scripts/workdsh-package-boundary.mjs',
+      'apps/desktop/scripts/verify-profile-release.mjs',
+      'upstream.json',
+    ]) {
+      const destination = join(directory, relative)
+      mkdirSync(dirname(destination), { recursive: true })
+      cpSync(join(root, relative), destination)
+    }
+    const shimDirectory = join(directory, 'bin')
+    mkdirSync(shimDirectory)
+    const marker = join(directory, 'install-args.json')
+    const worker = join(directory, 'corepack-worker.mjs')
+    writeFileSync(worker, "import { writeFileSync } from 'node:fs'; writeFileSync(process.env.WORKDSH_TEST_MARKER, JSON.stringify(process.argv.slice(2))); process.exit(42)\n")
+    const shim = join(shimDirectory, process.platform === 'win32' ? 'corepack.cmd' : 'corepack')
+    writeFileSync(shim, process.platform === 'win32'
+      ? '@"%WORKDSH_TEST_NODE%" "%WORKDSH_TEST_COREPACK%" %*\r\n'
+      : '#!/bin/sh\nexec "$WORKDSH_TEST_NODE" "$WORKDSH_TEST_COREPACK" "$@"\n')
+    if (process.platform !== 'win32') chmodSync(shim, 0o755)
+    const preload = join(directory, 'test-platform.mjs')
+    writeFileSync(preload, "if (process.platform === 'linux') Object.defineProperty(process, 'platform', { value: 'darwin' })\n")
+    const result = spawnSync(process.execPath, ['--import', preload, join(directory, 'scripts/package-desktop-release.mjs'), '--source=local'], {
+      cwd: directory,
+      encoding: 'utf8',
+      timeout: 10_000,
+      env: {
+        ...process.env,
+        PATH: `${shimDirectory}${delimiter}${process.env.PATH ?? ''}`,
+        WORKDSH_TEST_NODE: process.execPath,
+        WORKDSH_TEST_COREPACK: worker,
+        WORKDSH_TEST_MARKER: marker,
+      },
+    })
+    assert.ifError(result.error)
+    assert.match(result.stderr, /Install Desktop dependencies failed with exit code 42/)
+    assert.deepEqual(JSON.parse(readFileSync(marker, 'utf8')), ['yarn', 'install', '--immutable'])
+  } finally { rmSync(directory, { recursive: true, force: true }) }
+})
 
 test('accepts a WorkDSH release aligned with the pinned DSH runtime', () => {
   assert.doesNotThrow(() => verifyProfileRelease({
