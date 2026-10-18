@@ -26,3 +26,14 @@ test('change during checkpoint creation rejects publication and cleans staging',
  }),/source-changed/);assert.equal(changed,true);assert.deepEqual(await readdir(backups),[]);
  }finally{await rm(root,{recursive:true,force:true});}
 });
+
+test('package manager caches do not enter source snapshots or change their identity',async()=>{
+ const root=await realpath(await mkdtemp(join(tmpdir(),'source-checkpoint-cache-'))),source=join(root,'source'),backups=join(root,'backups');await mkdir(source);
+ try{
+  await writeFile(join(source,'index.js'),'source');
+  for(const cache of ['.workdsh-npm-cache','.workdsh-pnpm-store']){await mkdir(join(source,cache));await writeFile(join(source,cache,'entry'),'old cache');}
+  const before=await save(source,backups,()=>{});assert.equal(before.fileCount,1);assert.equal(before.byteLength,6);
+  for(const cache of ['.workdsh-npm-cache','.workdsh-pnpm-store'])await writeFile(join(source,cache,'entry'),'new generated cache');
+  const after=await save(source,backups,()=>{});assert.equal(after.sha256,before.sha256);assert.deepEqual((await readdir(before.directory)).sort(),['.workdsh-checkpoint.json','index.js']);
+ }finally{await rm(root,{recursive:true,force:true});}
+});

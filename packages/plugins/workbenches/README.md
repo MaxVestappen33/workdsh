@@ -45,7 +45,7 @@ TypeScript 页面参数从公开 Client 入口导入 `WorkbenchPageProps`；其�
 
 类型声明中的 `from './something.js'` 是 TypeScript 的标准 ESM 引用，同目录的 `something.d.ts` 提供类型；它不保证有同名运行时 JS。此包 Host/Client 实现已合并打包，不读取 `dist/client/*.js`、反编译 `client.browser.js` 或枚举平台私有类来推断用法。确需新能力时只核对该项官方公开契约。普通本地页面不要为未要求的业务引入存储域、跨进程通信或 Agent 工具；企业或跨账号数据另行采用已授权 Host 服务。
 
-构建沿用骨架 `build.mjs`，Client SDK 保持 external。先 `npm install`、`npm run build`、`npm pack`，再读取开发上下文核对候选。完整启动和真实页面验收仍须完成。
+构建沿用骨架 `build.mjs`，Client SDK 保持 external。先用官方工作区依赖工具提供的 Node 与 pnpm JavaScript 入口安装开发工具，再执行 `node deliver.mjs`，读取开发上下文核对候选。完整启动和真实页面验收仍须完成。
 
 ## 已接入的产品代码
 
@@ -103,11 +103,11 @@ Host 从包根 `import type {HostWorkbenchRegistration, WorkbenchDescriptor} fro
 
 这是开发源码恢复点，不是业务数据备份。目前尚无用户恢复入口、更新前自动恢复协议或源树整体写锁，不能据此宣布迁移/回滚完成。
 
-## 完整原生会话与预览外框
+## 完整原生会话与工作台外框
 
-本机 preview 根据用户 2026-10-17 的明确授权，使用精确锁定官方 `0.2.1-rc.1` 文件版本及 SHA256 的两处外框补丁。补丁只把官方已构造的完整 Conversation 节点交给 WorkDSH 外框；页头、对话/轨迹、消息、工具、输入框、模型、权限与文件侧栏仍由官方实现。业务区居中，完整原生会话在最右侧，不添加自制会话标签栏。
+本机 preview 根据用户 2026-10-17 的明确授权，使用精确锁定官方 `0.2.1-rc.1` 文件版本及 SHA256 的两处外框补丁；用户于 2026-10-18 明确允许同一补丁用于 Desktop，验证后发布。补丁只把官方已构造的完整 Conversation 节点交给 WorkDSH 外框；页头、对话/轨迹、消息、工具、输入框、模型、权限与文件侧栏仍由官方实现。业务区居中，完整原生会话在最右侧，不添加自制会话标签栏。
 
-这是修改官方发布文件的本机预览适配，不是未修改宿主的公共接口。未知版本或字节拒绝应用，支持精确回滚；本轮授权不扩展到 Desktop 发布制品。启动前由 `native-workbench-frame-patch` 核对，不能把底座升级仅视为版本号变更。
+这是修改官方发布文件的适配，不是未修改宿主的公共接口。Web 与 Desktop 共用 `scripts/native-workbench-frame-patch` 的同一版本和输入、输出 SHA256；未知版本或字节拒绝应用，原子替换仅改变本 Profile 的文件项，不修改其他安装的 pnpm 硬链接，并支持精确回滚。Desktop 准备阶段应用补丁，`afterPack` 再读取安装包 Resources 中的实际文件并核对输出指纹；构建检查通过仍需真实安装包的启动与页面验收，不能把底座升级仅视为版本号变更。
 
 外框只管理自有业务页面和自有容器。原生 Conversation 节点保持一个固定 Portal 位置，收起与展开不创建第二份聊天或搬动官方 DOM。需求、安装进度与原生会话同屏；打开记录不自动发送，明确开始开发才调用既有原生提交事务。
 
@@ -137,12 +137,12 @@ WorkDSH 注册服务是本平台扩展，不属于官方预生成的 Service 接
 
 ## 新建业务包的固定构建边界
 
-平台生成的骨架使用项目内 `.workdsh-npm-cache`，避免继承全局 npm 缓存的旧权限。构建时将 React、React DOM 与 `workdsh-plugin-workbenches/client` 留给宿主提供，不把平台重复打入业务包。使用 `npm pack` 产生候选；npm 缓存失败时指定项目缓存，不能用 macOS 系统 tar 临时拼包。安装前读取开发上下文，确认同一最终 tgz 的版本、SHA256 与兼容检查通过。检查失败保留具体错误，不能把被拒归档笼统称为候选不存在。
+平台生成的骨架使用项目内 `.workdsh-pnpm-store`，避免继承全局缓存的旧权限；源码恢复点同时排除该目录与旧版 `.workdsh-npm-cache`。构建时将 React、React DOM 与 `workdsh-plugin-workbenches/client` 留给宿主提供，不把平台重复打入业务包。通过统一交付入口执行构建、启动检查与 pnpm 打包，不能用 macOS 系统 tar 临时拼包。安装前读取开发上下文，确认同一最终 tgz 的版本、SHA256 与兼容检查通过。检查失败保留具体错误，不能把被拒归档笼统称为候选不存在。
 
 
 ### 共用安装前启动检查
 
-公开入口 `workdsh-plugin-workbenches/startup-check` 提供 `checkWorkbenchStartup(sourceDirectory)`。仅在用户已授权的官方开发工具沙箱中执行；不要在 Host 包预览 RPC 中 import 候选代码。新工程的 `npm pack` 默认先 build，再运行 `check:startup`，失败会退出并阻止打包。已有工程也可执行 `node <SDK目录>/scripts/check-startup.mjs <工程目录>`，不用由 Agent 每次重写 Cordis 启动脚本。
+公开入口 `workdsh-plugin-workbenches/startup-check` 提供 `checkWorkbenchStartup(sourceDirectory)`。仅在用户已授权的官方开发工具沙箱中执行；不要在 Host 包预览 RPC 中 import 候选代码。新工程优先执行 `node deliver.mjs`，先 build，再检查启动，失败即阻止打包；独立执行 prepack 时同样保留检查。已有工程也可执行 `node <SDK目录>/scripts/check-startup.mjs <工程目录>`，不用由 Agent 每次重写 Cordis 启动脚本。
 
 检查在子进程中加载真实 Host 构建产物、解析声明运行依赖，使用官方 `ctx.plugin`，等待全部当前子组件生命周期，并检查依赖挂起和清理错误。15 秒超时会停止检查。子进程清空模型密钥等继承环境，使用临时 Home；临时目录与子进程不等于 OS 沙箱，执行权限仍由官方工具沙箱控制。
 
@@ -155,7 +155,7 @@ WorkDSH 注册服务是本平台扩展，不属于官方预生成的 Service 接
 
 ### 共用交付入口与耗时
 
-新骨架执行 `npm run deliver`；已有工程在官方开发工具的当前权限、沙箱内执行 `node <sdk.delivery.runner> <source.directory>`。公开入口 `workdsh-plugin-workbenches/delivery` 统一执行 build → 隔离 Host 启动检查 → pack，失败立即停止；打包关闭重复生命周期脚本，避免再次构建。候选不覆盖同名归档。报告保存于独立临时目录，逐阶段写入真实起止时间和耗时，不把日志、凭据或报告混入业务源码与归档。未完成的 running 记录视为中断、结果未确认。
+新骨架执行 `node deliver.mjs`；已有工程在官方开发工具的当前权限、沙箱内执行 `<sdk.delivery.command> <sdk.delivery.runner> <source.directory>`。交付入口用 Node 运行已安装或内置的 pnpm JavaScript 文件，不依赖系统 npm、全局 pnpm 或 Windows .cmd 启动器；内置版本不匹配时明确停止。公开入口 `workdsh-plugin-workbenches/delivery` 统一执行 build → 隔离 Host 启动检查 → pack，失败立即停止；打包关闭重复生命周期脚本，避免再次构建。候选不覆盖同名归档。报告保存于独立临时目录，逐阶段写入真实起止时间和耗时，不把日志、凭据或报告混入业务源码与归档。未完成的 running 记录视为中断、结果未确认。
 
 开发上下文内联当前已安装版本 README 的最短接入示例、文档指纹及公共交付入口。先用示例与骨架，需要额外能力或出现实际接口错误时再查对应公开类型。这不执行 SDK，也不枚举私有实现。报告只是开发诊断；该入口的阶段报告覆盖构建、启动检查、打包；安装后状态与真实页面验收仍独立核对。
 

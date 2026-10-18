@@ -4,7 +4,7 @@ test('generated starter builds actual Host and Client artifacts with stable pack
  const dir=await mkdtemp(join(tmpdir(),'workdsh-starter-'));
  try{
  const descriptor={id:'probe.starter',title:'骨架验证',description:'',protocolVersion:'1.0',layout:'full-page',hostCompatibility:{sdk:'^1.0.0',harness:'0.2.1-rc.1'},capabilities:[]};
- const starter=createWorkbenchStarter('workdsh-probe-starter',descriptor);assert.match(starter.files['.npmrc'],/legacy-peer-deps=true/);assert.match(starter.files['.npmrc'],/cache=\.workdsh-npm-cache/);assert.match(starter.manifest.peerDependencies['workdsh-plugin-workbenches'],/^\^3\.0\.0-alpha\./);await writeFile(join(dir,'package.json'),JSON.stringify(starter.manifest));for(const [name,content] of Object.entries(starter.files))await writeFile(join(dir,name),content);
+ const starter=createWorkbenchStarter('workdsh-probe-starter',descriptor);assert.match(starter.files['.npmrc'],/auto-install-peers=false/);assert.match(starter.files['.npmrc'],/store-dir=\.workdsh-pnpm-store/);assert.match(starter.manifest.peerDependencies['workdsh-plugin-workbenches'],/^\^3\.0\.0-alpha\./);await writeFile(join(dir,'package.json'),JSON.stringify(starter.manifest));for(const [name,content] of Object.entries(starter.files))await writeFile(join(dir,name),content);
  await symlink(fileURLToPath(new URL('../../../../apps/web/node_modules',import.meta.url)),join(dir,'node_modules'),'dir');
  const result=spawnSync(process.execPath,['build.mjs'],{cwd:dir,encoding:'utf8'});assert.equal(result.status,0,result.stderr);
  // Public SDK imports must stay external, even with no locally resolvable SDK.

@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { copyOfficialRuntime, prepareOfficialRelease } from './official-desktop-release.mjs'
 import { DSH_VERSION, OFFICIAL_PNPM_VERSION } from './runtime-version.mjs'
+import { ensureNativeWorkbenchFrame, verifyNativeWorkbenchFrame } from '../../../scripts/native-workbench-frame-patch.mjs'
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const target = process.platform === 'win32' ? 'win-x64'
@@ -19,6 +20,10 @@ const profileMarker = join(profile, '.workdsh-desktop-release.json')
 if (!existsSync(profileMarker) || JSON.parse(readFileSync(profileMarker, 'utf8')).harness !== DSH_VERSION) {
   throw new Error('Prepare and verify the target WorkDSH Profile before its primary runtime')
 }
+// The only authorized official-file adaptation: the exact two outer-frame
+// seams. Replace the Profile's directory entry, never a shared pnpm hardlink.
+await ensureNativeWorkbenchFrame(profile)
+await verifyNativeWorkbenchFrame(profile)
 const released = await prepareOfficialRelease(desktopRoot, target)
 for (const name of ['primary-runtime', 'office-skills']) copyOfficialRuntime(join(released, 'runtime', name), join(output, name))
 const manifestPath = join(output, 'primary-runtime', 'runtime.json')

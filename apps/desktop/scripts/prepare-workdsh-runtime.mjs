@@ -20,7 +20,7 @@ if (!existsSync(manifestFile)) throw new Error('Pack built current WorkDSH sourc
 const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'))
 verifyProfileRelease(manifest, DSH_VERSION, RELEASE_PACKAGES)
 verifyReleaseArchives(manifest, release)
-const marker = JSON.stringify({ harness: DSH_VERSION, pnpm: OFFICIAL_PNPM_VERSION, layout: 'five-feature-plugins-external-enterprise-v6', architecture, release: manifest })
+const marker = JSON.stringify({ harness: DSH_VERSION, pnpm: OFFICIAL_PNPM_VERSION, layout: 'workbench-platform-external-enterprise-v7', architecture, release: manifest })
 const markerPath = join(profile, '.workdsh-desktop-release.json')
 const readJson = path => JSON.parse(readFileSync(path, 'utf8'))
 function run(command, args, options = {}) {
@@ -72,10 +72,10 @@ function verifyInstalled() {
   for (const id of ['skillhub', 'dsh-market']) {
     if (!config.stdout.includes('id: ' + id)) throw new Error('Missing community catalog integration: ' + id)
   }
-  for (const id of ['workdsh-installation-probe', 'workdsh-identity-local', 'workdsh-access', 'workdsh-audit']) {
+  for (const id of ['workdsh-installation-probe', 'workdsh-identity-local', 'workdsh-access', 'workdsh-audit', 'workdsh-workbenches']) {
     if (!config.stdout.includes('id: ' + id)) throw new Error('Missing required infrastructure: ' + id)
   }
-  for (const name of ['workdsh-plugin-office', 'workdsh-plugin-activity']) {
+  for (const name of ['workdsh-plugin-office', 'workdsh-plugin-activity', 'workdsh-plugin-quality-analysis']) {
     if (existsSync(join(profile, 'node_modules', name)) || config.stdout.includes('name: ' + name)) throw new Error('External feature was bundled by default: ' + name)
   }
   run(process.execPath, [join(desktopRoot, 'scripts/verify-product-plugin-inventory.mjs'), output])
@@ -140,4 +140,4 @@ if (!prepared) {
   }
 }
 cpSync(join(profile, 'package.json'), join(output, 'profile-package.json'))
-console.log(`Prepared official DSH ${DSH_VERSION} with five default features and no preinstalled enterprise plugins at ${output}; enterprise plugins require explicit installation`)
+console.log(`Prepared official DSH ${DSH_VERSION} with ${PRODUCT_PACKAGES.length} default features and no preinstalled enterprise plugins at ${output}; enterprise plugins require explicit installation`)

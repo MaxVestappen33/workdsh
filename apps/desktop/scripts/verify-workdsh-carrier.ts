@@ -8,6 +8,7 @@ import { DSH_VERSION, OFFICIAL_PNPM_VERSION } from './runtime-version.mjs'
 import { ENTERPRISE_PACKAGES, PRODUCT_PACKAGES, RELEASE_PACKAGES } from './workdsh-package-boundary.mjs'
 import { verifyDefaultComposition, verifyDefaultProfile, verifyInstalledDshVersions, verifyOfficialWebPackages, verifyProfileRelease, verifyReleaseArchives } from './verify-profile-release.mjs'
 import { parseDeploymentConfig } from '../src/deployment-config.ts'
+import { verifyNativeWorkbenchFrame } from '../../../scripts/native-workbench-frame-patch.mjs'
 
 interface PackContext {
   appOutDir: string
@@ -60,6 +61,9 @@ export async function afterPack(context: PackContext): Promise<void> {
     throw new Error(`Bundled primary runtime is ${String(primary.desktopVersion)}, expected ${DSH_VERSION}`)
   }
   const profile = join(runtime, 'profiles', 'workdsh')
+  // Inspect copied Resources bytes: a preparation log or receipt cannot prove
+  // that the official Conversation frame actually reached this installer.
+  await verifyNativeWorkbenchFrame(profile)
   const cache = join(runtime, 'package-cache')
   const release = JSON.parse(readFileSync(join(cache, 'release-manifest.json'), 'utf8')) as {
     packages: Array<{ name: string; version: string; filename: string; sha256: string }>
@@ -86,10 +90,10 @@ export async function afterPack(context: PackContext): Promise<void> {
   const selectedWorkdsh = selected.filter(name => name.startsWith('workdsh-'))
   const directWorkdsh = Object.keys(profileManifest.dependencies ?? {}).filter(name => name.startsWith('workdsh-'))
   if (selectedWorkdsh.length !== productPackages.size || selectedWorkdsh.some(name => !productPackages.has(name))) {
-    throw new Error(`Desktop must select exactly five WorkDSH product bundles, found ${selectedWorkdsh.join(', ')}`)
+    throw new Error(`Desktop must select exactly ${productPackages.size} WorkDSH product bundles, found ${selectedWorkdsh.join(', ')}`)
   }
   if (directWorkdsh.length !== productPackages.size || directWorkdsh.some(name => !productPackages.has(name))) {
-    throw new Error(`Desktop must directly install exactly five WorkDSH product bundles, found ${directWorkdsh.join(', ')}`)
+    throw new Error(`Desktop must directly install exactly ${productPackages.size} WorkDSH product bundles, found ${directWorkdsh.join(', ')}`)
   }
   const lockfile = readFileSync(join(profile, 'pnpm-lock.yaml'), 'utf8')
   for (const item of release.packages) {

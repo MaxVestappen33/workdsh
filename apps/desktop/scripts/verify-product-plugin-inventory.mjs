@@ -51,7 +51,7 @@ try {
       throw new Error(`Community catalog integration is inactive or invalid: ${name}: ${JSON.stringify(bundle)}`)
     }
   }
-  console.log(`Verified plugin manager exposes exactly five ${installedInProfile ? 'installed' : 'installation-provided'} WorkDSH product bundles: ${names.join(', ')}`)
+  console.log(`Verified plugin manager exposes exactly ${expected.length} ${installedInProfile ? 'installed' : 'installation-provided'} WorkDSH product bundles: ${names.join(', ')}`)
 } finally {
   try {
     await ctx?.fiber.dispose()

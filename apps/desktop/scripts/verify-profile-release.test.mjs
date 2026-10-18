@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import { dirname, delimiter, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { DSH_VERSION } from './runtime-version.mjs'
-import { ENTERPRISE_PACKAGES, PRODUCT_PACKAGES, RELEASE_PACKAGES } from './workdsh-package-boundary.mjs'
+import { ENTERPRISE_PACKAGES, PACKAGE_DIRECTORIES, PRODUCT_PACKAGES, RELEASE_PACKAGES } from './workdsh-package-boundary.mjs'
 
 test('release bootstrap installs dependencies before loading package validators', () => {
   const directory = mkdtempSync(join(tmpdir(), 'workdsh clean release '))
@@ -100,16 +100,32 @@ function defaultProfile() {
   }
 }
 
-test('Desktop ships five default features, reviewed infrastructure and no preinstalled enterprise package', () => {
-  assert.equal(PRODUCT_PACKAGES.length, 5)
+test('Desktop ships the workbench platform with its default features and keeps business and enterprise plugins external', () => {
+  assert.deepEqual(PRODUCT_PACKAGES, ['workdsh-plugin-connectors', 'workdsh-plugin-experts', 'workdsh-plugin-library', 'workdsh-plugin-projects', 'workdsh-plugin-skills', 'workdsh-plugin-workbenches'])
   assert.deepEqual(ENTERPRISE_PACKAGES, ['workdsh-provider-identity-enterprise', 'workdsh-plugin-enterprise-collaboration', 'workdsh-enterprise-connection'])
-  assert.equal(RELEASE_PACKAGES.length, 12)
+  assert.equal(RELEASE_PACKAGES.length, 13)
   assert.doesNotThrow(() => verifyDefaultProfile(defaultProfile()))
-  for (const name of ['workdsh-plugin-office', 'workdsh-plugin-notifications']) {
+  for (const name of ['workdsh-plugin-office', 'workdsh-plugin-notifications', 'workdsh-plugin-quality-analysis', ...ENTERPRISE_PACKAGES]) {
     const profile = defaultProfile()
     profile.optionalDependencies[name] = 'file:../external.tgz'
     assert.throws(() => verifyDefaultProfile(profile), /owned dependency closure changed/)
   }
+})
+
+test('Desktop archives close every declared owned runtime dependency and include workbench delivery entry points', () => {
+  const desktop = fileURLToPath(new URL('..', import.meta.url))
+  for (const name of RELEASE_PACKAGES) {
+    const manifest = JSON.parse(readFileSync(join(desktop, PACKAGE_DIRECTORIES[name], 'package.json'), 'utf8'))
+    assert.equal(manifest.name, name)
+    for (const dependency of Object.keys(requiredRuntimeDependencies(manifest)).filter(name => name.startsWith('workdsh-'))) {
+      assert.ok(RELEASE_PACKAGES.includes(dependency), `${name} requires an unshipped owned package: ${dependency}`)
+    }
+  }
+  const sdk = JSON.parse(readFileSync(join(desktop, PACKAGE_DIRECTORIES['workdsh-plugin-workbenches'], 'package.json'), 'utf8'))
+  assert.equal(sdk.exports['./delivery'], './scripts/run-delivery.mjs')
+  assert.equal(sdk.exports['./startup-check'], './scripts/check-startup.mjs')
+  assert.ok(sdk.files.includes('scripts/run-delivery.mjs'))
+  assert.ok(sdk.files.includes('scripts/check-startup.mjs'))
 })
 
 test('enterprise delivery cannot activate or expose enterprise identity in the default personal composition', () => {
