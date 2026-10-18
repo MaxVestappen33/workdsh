@@ -6,6 +6,7 @@ import {join,dirname} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {readdir} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
+import {createRequire} from 'node:module';
 import {checkWorkbenchStartup} from '../scripts/check-startup.mjs';
 const modules=fileURLToPath(new URL('../../../../apps/web/node_modules',import.meta.url));
 async function candidate(body,change={}){
@@ -63,4 +64,40 @@ test('unsupported dependency specifications never echo embedded credentials',asy
 test('an absent explicitly optional peer does not fail an otherwise complete Host lifecycle',async()=>{
  const f=await candidate(`export const inject=['workdshWorkbenchRegistration'];export async function apply(ctx){${register}}`,{peerDependencies:{'@deepseek-ai/cordis':'4.0.5','workdsh-absent-optional-probe':'^1.0.0'},peerDependenciesMeta:{'workdsh-absent-optional-probe':{optional:true}}});
  try{assert.equal((await checkWorkbenchStartup(f.directory)).status,'passed');}finally{await f.close();}
+});
+
+async function anchoredCandidate(body,change={}){
+ const fixture=await candidate(body,{peerDependencies:{'@deepseek-ai/cordis':'4.0.5','workdsh-plugin-workbenches':'^3.0.0-alpha.7'},...change});
+ const installation=await mkdtemp(join(tmpdir(),'workdsh-startup-installation-'));
+ await rm(join(fixture.directory,'node_modules'));
+ const sdk=fileURLToPath(new URL('..',import.meta.url)),require=createRequire(join(sdk,'package.json'));
+ await writeFile(join(installation,'package.json'),'{}');
+ for(const name of ['workdsh-plugin-workbenches','@deepseek-ai/cordis','zod']){
+  const target=name==='workdsh-plugin-workbenches'?sdk:dirname(require.resolve(name+'/package.json'));
+  const link=join(installation,'node_modules',name);await mkdir(dirname(link),{recursive:true});await symlink(target,link,process.platform==='win32'?'junction':'dir');
+ }
+ await writeFile(join(fixture.directory,'.workdsh-runtime.json'),JSON.stringify({schemaVersion:1,installationAnchor:join(installation,'package.json')}));
+ return {...fixture,close:async()=>{await fixture.close();await rm(installation,{recursive:true,force:true});}};
+}
+test('a Desktop source without node_modules verifies declared host peers through its explicit installation anchor',async()=>{
+ const fixture=await anchoredCandidate(`export const inject=['workdshWorkbenchRegistration'];export async function apply(ctx){${register}}`);
+ try{const result=await checkWorkbenchStartup(fixture.directory);assert.equal(result.status,'passed',JSON.stringify(result));assert.equal((await readdir(fixture.directory)).includes('node_modules'),false);}finally{await fixture.close();}
+});
+test('the installation anchor cannot hide missing business dependencies, even when installed in the Host',async()=>{
+ const fixture=await anchoredCandidate('export function apply(){}',{dependencies:{zod:'4.4.3'}});
+ try{const result=await checkWorkbenchStartup(fixture.directory);assert.equal(result.errorCode,'workbench/startup-missing-dependencies');assert.deepEqual(result.missingDependencies,['zod']);}finally{await fixture.close();}
+ const direct=await anchoredCandidate('export function apply(){}',{dependencies:{'@deepseek-ai/cordis':'4.0.5'}});
+ try{const result=await checkWorkbenchStartup(direct.directory);assert.deepEqual(result.missingDependencies,['@deepseek-ai/cordis']);}finally{await direct.close();}
+});
+test('anchored host peers must satisfy the candidate declaration',async()=>{
+ const fixture=await anchoredCandidate('export function apply(){}',{peerDependencies:{'@deepseek-ai/cordis':'^99.0.0'}});
+ try{const result=await checkWorkbenchStartup(fixture.directory);assert.equal(result.errorCode,'workbench/startup-dependency-version-mismatch');assert.equal(result.dependencyMismatches[0].actual,'4.0.5');}finally{await fixture.close();}
+});
+test('real candidate bare imports still fail under native Node rather than using a manufactured module loader',async()=>{
+ const fixture=await anchoredCandidate(`import {Context} from '@deepseek-ai/cordis';export const inject=['workdshWorkbenchRegistration'];export async function apply(ctx){${register}if(!Context)throw Error();}`);
+ try{const result=await checkWorkbenchStartup(fixture.directory);assert.equal(result.status,'failed');assert.equal(result.stage,'lifecycle');assert.equal(result.errorCode,'workbench/startup-module-not-found');}finally{await fixture.close();}
+});
+test('a malformed platform runtime record is an explicit failure',async()=>{
+ const fixture=await anchoredCandidate('export function apply(){}');
+ try{await writeFile(join(fixture.directory,'.workdsh-runtime.json'),JSON.stringify({schemaVersion:1,installationAnchor:'./not-an-installation'}));const result=await checkWorkbenchStartup(fixture.directory);assert.equal(result.errorCode,'workbench/startup-invalid-runtime-anchor');}finally{await fixture.close();}
 });

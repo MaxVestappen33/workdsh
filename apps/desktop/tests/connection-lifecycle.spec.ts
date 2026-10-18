@@ -12,7 +12,7 @@ vi.mock('../src/enterprise-auth.ts', () => ({
   startEnterpriseAuthority: async () => ({ url: 'http://127.0.0.1:19898', key: 'a'.repeat(64), close: state.closed }),
 }))
 vi.mock('../src/enterprise-plugins.ts',()=>({installedEnterprisePlugins:vi.fn(()=>['workdsh-provider-identity-enterprise','workdsh-plugin-enterprise-collaboration']),composeInstalledEnterprisePlugins:vi.fn(async()=>['workdsh-provider-identity-enterprise','workdsh-plugin-enterprise-collaboration'])}))
-vi.mock('../src/owned-process.ts', () => ({ stopOwnedProcess: state.stop, cleanOwnedProcessTree: vi.fn(async () => {}) }))
+vi.mock('../src/owned-process.ts', () => ({ trackOwnedProcess: vi.fn(), stopOwnedProcess: state.stop, cleanOwnedProcessTree: vi.fn(async () => {}) }))
 vi.mock('node:child_process', () => ({ spawn: vi.fn() }))
 vi.mock('electron', async () => {
   const { EventEmitter } = await import('node:events')
@@ -51,8 +51,10 @@ it('enforces the packaged backend, uses explicitly installed enterprise identity
   writeFileSync(join(source, 'node_modules/@deepseek-ai/dsh/lib/profile-boot.js'), '')
   writeFileSync(join(source, 'node_modules/@deepseek-ai/dsh-app-boot/lib/index.js'), '')
   writeFileSync(join(source, 'node_modules/pnpm/bin/pnpm.cjs'), '')
+  writeFileSync(join(source, 'node_modules/pnpm/package.json'), JSON.stringify({ name: 'pnpm', version: '11.28.5' }))
   mkdirSync(join(root, 'dependencies/pnpm/bin'), { recursive: true })
   writeFileSync(join(root, 'dependencies/pnpm/bin/pnpm.cjs'), '')
+  writeFileSync(join(root, 'dependencies/pnpm/package.json'), JSON.stringify({ name: 'pnpm', version: '11.28.5' }))
   writeFileSync(join(source, 'package.json'), JSON.stringify({ dependencies: {}, dsh: { profile: { bundles: ['@deepseek-ai/dsh-base'] } } }))
   writeFileSync(join(source, 'profile-installation.json'), readFileSync(join(source, 'package.json')))
   mkdirSync(home); writeFileSync(join(home, 'retained'), 'personal data')

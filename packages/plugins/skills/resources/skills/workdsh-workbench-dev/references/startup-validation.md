@@ -17,7 +17,7 @@ content: { type: 'string', required: true }
 
 ## 优先运行平台共用检查
 
-新工程优先执行 `npm run deliver`，平台统一构建、启动检查和打包，输出每个阶段的起止时间、耗时及失败原因；任一步失败即停止。上下文提供 `sdk.delivery.runner` 时，旧工程也可直接运行该平台入口，不必修改业务包。报告中的 running 阶段没有完成回执时视为中断、结果未确认，不当成通过。该报告是诊断信息，不能代替平台独立核验。兼容旧工程的 `check:startup` 与 `npm pack` prepack 仍保留。已有工程通过开发上下文 SDK 目录执行 `node <SDK目录>/scripts/check-startup.mjs <source.directory>`；必须在官方开发工具当前授权和沙箱中运行。不要为每个应用重新摸索 Cordis 生命周期或复制平台内部检查实现。
+新工程优先执行 `node deliver.mjs`，平台统一构建、启动检查和打包，输出每个阶段的起止时间、耗时及失败原因；任一步失败即停止。上下文提供 `sdk.delivery.runner` 时，旧工程也可直接运行该平台入口，不必修改业务包。报告中的 running 阶段没有完成回执时视为中断、结果未确认，不当成通过。该报告是诊断信息，不能代替平台独立核验。兼容旧工程的 `check:startup` 与打包 prepack 仍保留；新骨架 prepack 直接调用 Node，不要求 npm。已有工程通过开发上下文 SDK 目录执行 `node <SDK目录>/scripts/check-startup.mjs <source.directory>`；必须在官方开发工具当前授权和沙箱中运行。不要为每个应用重新摸索 Cordis 生命周期或复制平台内部检查实现。
 
 回执失败时按 `stage` 和 `errorCode` 修复。缺少服务时，用应用自己的 `workdsh.startupFixture` 测试夹具提供公开实际依赖、临时 Storage 与合成身份；默认只有显式标记的注册测试适配器。不得为得到通过而忽略挂起的子组件。子进程和临时 Home 不是安全沙箱，仍需官方工具约束。通过只代表当前 Host 产物的隔离生命周期，不代表安装、实际注册、页面或业务验收通过。
 
@@ -30,6 +30,10 @@ content: { type: 'string', required: true }
 ## 安装后的真实检查
 
 安装字节核验、启用设置、Host 组件 active、对应版本工作台登记、Client 页面打开，是独立的检查。用户授权启用后核对所有状态，并实际完成本轮业务样例与重新打开后的数据保留检查。工具调用发生错误时保留具体错误与失败阶段，修复后重新构建新版本，不能用刷新、重启或聊天中的“已完成”替代修复。
+
+原生安装核验回执的 `activationVerified:false` 表示工具范围之外，不能推断启用失败或重新安装。已有启用/试用授权时按回执以 `list_bundles` 核对实际包名，再 `set_bundle`，从 application 和 nextStep 判断结果；没有授权则留在工作台列表。`set_plugin` 的 entryId 只能来自真实 list_plugins，不能拿包名或猜测 include: ID 代替 bundle 选择。
+
+页面验收使用当前已认证的宿主应用：Desktop 为正在运行的 WebView，Web 为当前已登录应用页面。独立任务浏览器不自动共享宿主登录态，401 只说明该浏览器未获访问权限；停止此路径，返回已认证宿主页面或明确记录页面未验收。不得探查/读取/复制 token、cookie、凭据文件，或附加认证请求头绕过。实际宿主入口不可用时，报告入口、错误与未验收项，静态源码检查不补作页面验收。
 
 隔离启动检查不能代替真实页面和业务验收，也不能保证 AI 永不生成错误；它负责尽早发现可复现的启动错误。
 

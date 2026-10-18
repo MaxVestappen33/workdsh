@@ -8,6 +8,8 @@
 
 按官方 Skill 检查当前公开 API 和工具权限，在原源码上调整并验证受影响流程。安装更新遵循用户本轮授权和官方工具链，不另造安装器或手改 Profile。重新读取开发上下文核对需求基线和实际候选；候选存在不证明构建来源与当前源码一致。以实际 tgz 绝对路径为 target、`enabled:false` 调用原生 `plugin_manager install_bundle`，保留真实 `application`、`warnings`，随后以候选 version、sha256 调用 `workbench_verify_native_installation` 核对实际安装并登记。校验不再次安装、不启用或重启；旧候选不能覆盖新版本，同版本不同内容必须更正版本。已有版本更新可能需要重启，分别记录已安装、已登记、活动版本和已打开状态，不把安装成功称为页面已更新，也不自行重启无关任务。
 
+`activationVerified:false` 仅表示该工具不核验启用，不表示启用失败，不能据此重复安装。用户已授权启用或试用时，先 `plugin_manager list_bundles`（沿 nextOffset 分页）按实际包名核对版本、error，再 `set_bundle`（target 为该包名、enabled:true），读取 application 和 nextStep。不猜 entryId、include: 前缀或以 set_plugin 代替；未获启用授权则留在工作台列表由用户操作。页面验收在当前已认证的宿主应用完成：Desktop 用运行中的 WebView，Web 用当前已登录应用页面；独立任务浏览器不自动共享宿主登录态，401 时停止该路径，不能探查/读取/复制 token、cookie、凭据或认证请求头绕过。无法操作宿主页面时保留具体“页面未验收”事实，不能以源码检查替代。
+
 涉及数据结构时先验证迁移和恢复。恢复旧备份可能丢失新版本新增记录，不能自动覆盖；无法无损回退时保留新写入并采用向前修复。失败或结果未知时保留源码、需求及操作记录，先核对事实再恢复。
 
 ## 继续开发指令需要携带的上下文

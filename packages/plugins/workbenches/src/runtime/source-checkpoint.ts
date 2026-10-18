@@ -1,6 +1,7 @@
 import {createHash,randomUUID} from 'node:crypto';
 import {mkdir,readdir,realpath,lstat,open,writeFile,rename,rm,readFile} from 'node:fs/promises';
 import {constants} from 'node:fs';import {join,relative,isAbsolute,sep} from 'node:path';
+const excludedDirectories=['node_modules','.git','dist','.workdsh-npm-cache','.workdsh-pnpm-store'];
 /** Source files only; not a live business database backup. */
 export async function checkpointWorkbenchSource(source:string,destination:string,authorize:()=>void,signal?:AbortSignal){
  const check=()=>{signal?.throwIfAborted();authorize();signal?.throwIfAborted();};check();
@@ -13,7 +14,7 @@ export async function checkpointWorkbenchSource(source:string,destination:string
   if(++directories>2000||relative.split('/').length>32)throw Error('workbench/source-checkpoint-limit');
   check();const directory=join(root,relative);if(await realpath(directory)!==directory)throw Error('workbench/source-directory-outside');
   for(const entry of (await readdir(directory,{withFileTypes:true})).sort((a,b)=>a.name<b.name?-1:a.name>b.name?1:0)){
-   if(['node_modules','.git','dist','.workdsh-npm-cache'].includes(entry.name))continue;
+   if(excludedDirectories.includes(entry.name))continue;
    if(entry.name==='.workdsh-checkpoint.json')throw Error('workbench/source-reserved-name');
    check();const name=relative?relative+'/'+entry.name:entry.name,path=join(root,name);
    if(entry.isSymbolicLink())throw Error('workbench/source-link-unsupported');
@@ -31,7 +32,7 @@ export async function checkpointWorkbenchSource(source:string,destination:string
    check();if(++visited>2000||relative.split('/').length>32)throw Error('workbench/source-checkpoint-limit');
    const directory=join(root,relative);if(await realpath(directory)!==directory)throw Error('workbench/source-changed');
    for(const item of await readdir(directory,{withFileTypes:true})){
-    if(['node_modules','.git','dist','.workdsh-npm-cache'].includes(item.name))continue;
+    if(excludedDirectories.includes(item.name))continue;
     const name=relative?relative+'/'+item.name:item.name;
     if(item.isDirectory()){await scan(name);continue;}
     const entry=expected.get(name);if(!entry||!item.isFile())throw Error('workbench/source-changed');
@@ -47,7 +48,7 @@ export async function checkpointWorkbenchSource(source:string,destination:string
   await scan('');if(seen!==entries.length)throw Error('workbench/source-changed');check();
  }
  try{
-  await walk('');check();await verifySource();const manifest={schemaVersion:1,excludes:['node_modules','.git','dist','.workdsh-npm-cache'],files:entries};
+  await walk('');check();await verifySource();const manifest={schemaVersion:1,excludes:excludedDirectories,files:entries};
   const hash=createHash('sha256').update(JSON.stringify(manifest)).digest('hex');
   await writeFile(join(staging,'.workdsh-checkpoint.json'),JSON.stringify(manifest),{flag:'wx',mode:0o600});check();const directory=join(destination,hash);
   try{await rename(staging,directory);}catch(cause){

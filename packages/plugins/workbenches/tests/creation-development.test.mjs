@@ -1,0 +1,43 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+import {fileURLToPath,pathToFileURL} from 'node:url';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+const web=createRequire(new URL('../../../../apps/web/package.json',import.meta.url));
+const runtime=createRequire(new URL('../../projects/package.json',import.meta.url));
+const built=await web('esbuild').build({stdin:{contents:"export {confirmCreationDevelopment} from './creation-development.ts';export {WorkbenchCreationService} from './creation-service.ts';export {WorkbenchRequirementsService} from './requirements-service.ts';export {WorkbenchDevelopmentService} from './development-service.ts';export {restoreCreationReview} from '../client/creation-review.ts';",resolveDir:fileURLToPath(new URL('../src/runtime',import.meta.url))},bundle:true,platform:'node',format:'esm',write:false,alias:{'workdsh-contracts':fileURLToPath(new URL('../../../contracts/src/index.ts',import.meta.url))},plugins:[{name:'official',setup(builder){builder.onResolve({filter:/^(?:@deepseek-ai\/dsh-storage-domain|zod)$/},args=>({path:pathToFileURL(runtime.resolve(args.path)).href,external:true}));}}]});
+const {confirmCreationDevelopment,WorkbenchCreationService,WorkbenchRequirementsService,WorkbenchDevelopmentService,restoreCreationReview}=await import(`data:text/javascript;base64,${Buffer.from(built.outputFiles[0].text).toString('base64')}`);
+const load=name=>import(pathToFileURL(runtime.resolve(name)).href);
+const {Context}=await load('@deepseek-ai/cordis');const {default:Storage}=await load('@deepseek-ai/dsh-storage');const Json=await load('@deepseek-ai/dsh-storage-json');const Domain=await load('@deepseek-ai/dsh-storage-domain');
+test('confirmation resumes after saved requirements and project preparation failure without duplicate records or Session',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'workdsh-confirm-resume-')),ctx=new Context();
+ await ctx.plugin(Storage);await ctx.plugin(Json,{root});await ctx.plugin(Domain,{backend:'json'});
+ const actor={principalId:'local-user',organizationId:'local-personal',requestId:'test',resolvedBy:'trusted-fixture'};
+ const identity={resolve:async()=>actor,profile:()=>({principalId:actor.principalId,organization:{id:actor.organizationId},resolvedBy:actor.resolvedBy}),membership:()=>({state:'active'})};
+ const target={hostId:'host',installationId:'installation',profileId:'workdsh',harnessVersion:'0.2.1-rc.1'};
+ const requirements=new WorkbenchRequirementsService(ctx.storageDomain,identity);
+ const development=new WorkbenchDevelopmentService(ctx.storageDomain,identity,requirements,async()=>target);
+ let sdkAvailable=false,sourceChecks=0,sessionChecks=0,sessionsCreated=0;
+ const ports={requirements,development,source:async()=>{sourceChecks++;if(!sdkAvailable)throw Error('workbench/sdk-package-unavailable');return {hostId:'host',directory:'/synthetic/owned/source',revision:'source-sha256:'+('a'.repeat(64))};},session:async()=>{sessionChecks++;return {hostId:'host',sessionId:'native-original-session'};}};
+ const service=new WorkbenchCreationService(ctx.storageDomain,identity,{target:async()=>target,authorizeSession:async(_actor,id)=>assert.equal(id,'native-original-session'),session:async(_actor,row)=>{if(!row.sessionId)sessionsCreated++;return 'native-original-session';},confirm:async(_actor,row,draft,check,signal)=>confirmCreationDevelopment(row,draft,ports,check,signal)});
+ const id='d22cc68e-4b3d-4c97-825d-2db6f3769bbe';
+ const draft={title:'旅行管家·实测',scenario:'管理多次旅行',users:'个人',dataSources:'手动录入',workflow:'旅行列表、行程、费用、待办',firstIteration:'新增和独立管理多次旅行',acceptance:'关闭重开数据保留'};
+ try{
+  const creation=await service.open(id,'长期管理多次旅行');
+  const proposed=await service.propose(creation.sessionId,creation.revision,{...draft,title:'AI建议标题'});
+  await assert.rejects(service.confirm(id,proposed.revision,draft),error=>error.message==='workbench/sdk-package-unavailable'&&error.requirementsSaved===true&&error.preparationStage==='source');
+  assert.equal((await requirements.history(id)).length,1);
+  const partial=(await development.list())[0];assert.equal(partial.title,'旅行管家·实测');assert.equal(partial.development.source,undefined);assert.equal(partial.development.session,undefined);
+  const reopened=(await service.list())[0];assert.equal(reopened.phase,'discussing');assert.equal(reopened.proposal.title,'AI建议标题');
+  const recovered=restoreCreationReview(reopened,await requirements.history(id));assert.equal(recovered.draft.title,'旅行管家·实测');assert.equal(recovered.revision,proposed.revision);
+  sdkAvailable=true;
+  await assert.rejects(service.confirm(id,proposed.revision,{...draft,title:'AI建议标题'}),/workbench\/creation-conflict/);
+  const completed=await service.confirm(id,recovered.revision,recovered.draft);
+  assert.equal(completed.creation.phase,'confirmed');assert.equal(completed.development.development.session.sessionId,'native-original-session');
+  const retried=await service.confirm(id,recovered.revision,recovered.draft);
+  assert.deepEqual(retried,completed);assert.equal((await requirements.history(id)).length,1);assert.equal((await development.list()).length,1);
+  assert.equal(sessionsCreated,1);assert.equal(sourceChecks,2);assert.equal(sessionChecks,1);
+ }finally{await service.close();await development.close();await requirements.close();await ctx.fiber.dispose();await rm(root,{recursive:true,force:true});}
+});

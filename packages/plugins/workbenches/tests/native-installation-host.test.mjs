@@ -161,6 +161,16 @@ test('native installation reconciles actual bytes under bound development owners
       assert.deepEqual(result.package, f.artifact.receipt);
       assert.equal(result.installedVerified, true);
       assert.equal(result.activationVerified, false);
+      assert.equal(result.activation.status,'not-checked');assert.equal(result.activation.reason,'verification-only');
+      assert.match(result.activation.explanation,/不表示.*启用失败/);
+      assert.deepEqual(result.nextStep.ifActivationAuthorized.inspect,{tool:'plugin_manager',arguments:{action:'list_bundles',offset:0,limit:100}});
+      assert.deepEqual(result.nextStep.ifActivationAuthorized.enable,{tool:'plugin_manager',arguments:{action:'set_bundle',target:f.packageName,enabled:true}});
+      assert.equal(result.nextStep.ifActivationAuthorized.matchPackageName,f.packageName);
+      assert.match(result.nextStep.ifActivationNotAuthorized,/用户在工作台列表/);
+      assert.equal(result.clientPage.status,'not-checked');assert.equal(result.clientPage.requiredSurface,'authenticated-host-application');
+      assert.match(result.nextStep.pageAcceptance,/Desktop.*WebView.*Web.*当前已登录/);
+      assert.match(result.nextStep.authenticationBoundary,/401/);assert.match(result.nextStep.authenticationBoundary,/不得探查、复制/);
+      assert.deepEqual(result,JSON.parse(JSON.stringify(result)),'extended receipt remains lossless official Tool JSON');
       assert.equal(f.flags.sideEffects, 0);
       assert.equal(await readFile(join(f.directory, 'package.json'), 'utf8'), beforeProfile);
     });

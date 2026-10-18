@@ -73,6 +73,12 @@ export function materializeRuntimeProfile(source: string, home: string): { profi
   } else if (previous?.digest !== digest) {
     if (!previous) throw new Error('已有 Profile 缺少 Desktop 版本记录；请在官方插件管理中核对后使用独立空间')
     const current = json(manifest)
+    // Only the unchanged recorded default remains product-owned. A user may
+    // pin another manager/version or remove the declaration altogether.
+    if (current.packageManager === previous.base.packageManager) {
+      if (base.packageManager === undefined) delete current.packageManager
+      else current.packageManager = base.packageManager
+    }
     for (const section of ['dependencies', 'optionalDependencies'] as const) {
       const owned = previous.base[section] ?? {}
       const next = base[section] ?? {}

@@ -50,6 +50,24 @@ test('official registry returns actual Host facts using only Agent Session and f
   assert.equal(presentation.content[0].text.includes('restart-required'),false,'native labels use business language while canonical output retains actual facts');
 });
 
+test('official verification tool distinguishes unchecked activation and authenticated host acceptance without granting management access',async t=>{
+ const f=await fixture(t),tool=f.tool('workbench_verify_native_installation');
+ const handoff=await build({entryPoints:[fileURLToPath(new URL('../src/runtime/native-installation-handoff.ts',import.meta.url))],bundle:true,platform:'node',format:'esm',write:false});
+ const {nativeWorkbenchInstallationHandoff}=await import(`data:text/javascript;base64,${Buffer.from(handoff.outputFiles[0].text).toString('base64')}`);
+ f.values.installation={installedVerified:true,activationVerified:false,...nativeWorkbenchInstallationHandoff('actual-owned-package')};
+ const value=await f.call('workbench_verify_native_installation',{version:'1.0.0',sha256:'a'.repeat(64)});
+ assert.deepEqual(value,f.values.installation);
+ assert.equal(value.activation.status,'not-checked');assert.equal(value.clientPage.status,'not-checked');
+ assert.equal(value.clientPage.requiredSurface,'authenticated-host-application');
+ assert.match(value.nextStep.pageAcceptance,/Desktop.*WebView.*Web.*当前已登录/);
+ assert.equal(value.nextStep.ifActivationAuthorized.enable.arguments.target,'actual-owned-package');
+ assert.equal(value.nextStep.ifActivationAuthorized.enable.arguments.action,'set_bundle');
+ assert.match(value.nextStep.ifActivationAuthorized.instruction,/仅在用户已授权/);
+ assert.match(tool.description,/activationVerified:false.*并非停用或失败/);
+ assert.match(tool.description,/不得探查或复制凭据/);
+ assert.deepEqual(f.calls.map(row=>row[0]),['verify'],'receipt guidance never dispatches an installation or activation');
+});
+
 test('missing Agent and model-chosen identity/path arguments cannot invoke Host APIs',async t=>{
   const f=await fixture(t),valid={version:'1.0.0',sha256:'a'.repeat(64)};
   await assert.rejects(f.call('workbench_read_development_context',{},f.exec(null)),/session-required/);

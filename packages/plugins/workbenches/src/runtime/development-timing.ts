@@ -19,7 +19,7 @@ export function timingCategory(name:string,args:unknown,scope:TimingScope):Timin
  if(['write','edit','apply_patch'].includes(name)&&path&&inside(scope.source,resolve(scope.source,path)))return 'coding';
  if(name==='plugin_manager'&&a.action==='install_bundle')return 'installation';
  if(name==='workbench_verify_native_installation')return 'installation';
- if(name==='bash'&&typeof a.command==='string'&&(a.command.includes('/scripts/run-delivery.mjs')||/\bnpm\s+run\s+deliver\b/.test(a.command)))return 'delivery';
+ if(name==='bash'&&typeof a.command==='string'&&(a.command.includes('/scripts/run-delivery.mjs')||/\b(?:npm|pnpm)\s+run\s+deliver\b|\bnode(?:\.exe)?\s+(?:[^\s]*[/\\])?deliver\.mjs(?:\s|$)/.test(a.command)))return 'delivery';
  if(name==='workbench_read_development_context'||name==='read')return 'preparation';
  return undefined;
 }

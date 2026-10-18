@@ -60,7 +60,7 @@ for(const name of ['workdsh-plugin-workbenches','workdsh-plugin-skills','workdsh
 await step('workbenches-tests',['test:workbenches']);
 await step('native-layout-api',['exec','node',join(source,'apps/web/scripts/probe-native-conversation-layout.mjs'),join(root,'packages/plugins/workbenches'),join(root,'native-layout-api-report.json')]);
 try{report.nativeLayout=JSON.parse(await readFile(join(root,'native-layout-api-report.json'),'utf8'));}catch{report.nativeLayout={verified:false};}
-const frame=JSON.parse(await readFile(join(source,'apps/web/scripts/native-workbench-frame-patch.json'),'utf8'));
+const frame=JSON.parse(await readFile(join(source,'scripts/native-workbench-frame-patch.json'),'utf8'));
 const require=createRequire(join(root,'packages/plugins/workbenches/package.json'));
 const actual=JSON.parse(await readFile(require.resolve(frame.package+'/package.json'),'utf8'));
 report.nativeFrame={adapterVersion:frame.version,runtimeVersion:actual.version,compatible:frame.version===actual.version,

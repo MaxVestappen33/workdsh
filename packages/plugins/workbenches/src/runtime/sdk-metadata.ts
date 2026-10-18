@@ -23,7 +23,7 @@ export async function readWorkbenchSdkMetadata(installAnchor:string){
   const delivery=pkg.exports?.['./delivery']==='./scripts/run-delivery.mjs'?await publicFile(pkg.exports['./delivery']):undefined;
   return {status:'available' as const,packageName:pkg.name as string,version:pkg.version as string,packageDirectory,readme,publicTypes:{host:hostTypes,client:clientTypes},
    quickstart,documentationSha256:createHash('sha256').update(documentation).digest('hex'),
-   ...(delivery?{delivery:{runner:delivery,arguments:['<source.directory>'],execution:'official-development-tool-sandbox',stages:['build','startup-check','pack'],report:'diagnostic-only; not installation or page acceptance',usage:'Execute this shared runner in the official development sandbox. Do not read or copy its implementation unless the command reports a real error.'}}:{}),
+   ...(delivery?{delivery:{command:process.execPath,runner:delivery,arguments:['<source.directory>'],execution:'official-development-tool-sandbox',stages:['build','startup-check','pack'],report:'diagnostic-only; not installation or page acceptance',usage:'Execute command + runner + arguments in the official development sandbox. The runner uses installed or bundled pnpm JavaScript through Node; system npm is not required. Do not read or copy its implementation unless the command reports a real error.'}}:{}),
    lookupPolicy:'Use the supplied quickstart and existing scaffold first. Read only public declarations needed by this iteration; recheck on version/fingerprint changes or actual interface errors. Never inspect private bundles.'};
  }catch{
   // An unavailable metadata lookup is not a claim that the running service is absent.

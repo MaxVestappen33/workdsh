@@ -1,5 +1,6 @@
 import type {WorkbenchCreationService} from './creation-service.js';
 import {readWorkbenchRequestBody} from './request-body.js';
+import {WorkbenchCreationPreparationError} from './creation-development.js';
 
 export async function handleWorkbenchCreationRequest(request:Request,service:Pick<WorkbenchCreationService,'list'|'open'|'confirm'>){
   try{
@@ -16,6 +17,8 @@ export async function handleWorkbenchCreationRequest(request:Request,service:Pic
     const message=cause instanceof Error?cause.message:'';
     const code=/^workbench\/[a-z0-9-]+$/.test(message)?message:'workbench/creation-failed';
     const status=request.signal.aborted?408:code==='workbench/creation-access-denied'?403:code==='workbench/creation-not-found'?404:code==='workbench/creation-conflict'?409:code.includes('invalid-')?400:503;
-    return Response.json({ok:false,error:{code,message:status===409?'内容已变化，请重新读取后继续。':'本次操作未完成，请保留当前内容重试。'}},{status});
+    const saved=cause instanceof WorkbenchCreationPreparationError;
+    return Response.json({ok:false,error:{code,message:saved?'需求已保存，但开发准备尚未完成。请保留当前内容，修复后重试。':status===409?'内容已变化，请重新读取后继续。':'本次操作未完成，请保留当前内容重试。',
+      ...(saved?{requirementsSaved:true,preparationStage:cause.preparationStage}:{})}},{status});
   }
 }
