@@ -1,6 +1,6 @@
 import { assetBytes, validateResources, type PackageAssets } from '../authoring/package-resources.js';
 import { mkdir, readFile, writeFile, readdir, lstat, chmod, mkdtemp, rename, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { Context } from '@deepseek-ai/cordis';
 import type { PresetDefinition } from '@deepseek-ai/dsh-agent-preset-registry';
 import type {} from '@deepseek-ai/cordis-plugin-loader';
@@ -74,13 +74,19 @@ export function presetIdFor(input: CompileInput): string {
   return `wd-exp-${kebab(input.expertId)}-${digest}`;
 }
 
+/** Explicit directory, then DSH_AGENTS_HOME, then $DSH_HOME/agents, then ~/.agents. */
+export function resolveAgentsHome(explicit?: string): string {
+  const selected = explicit ?? process.env.DSH_AGENTS_HOME ?? (process.env.DSH_HOME ? join(process.env.DSH_HOME, 'agents') : join(homedir(), '.agents'));
+  return resolve(selected);
+}
+
 /**
  * Compile (or reuse) the immutable preset directory for one expert revision.
  * Idempotent: an existing directory whose composition digest matches is reused.
  */
 export function expertPresetDir(presetId: string, agentsHome?: string): string {
   if (!/^wd-exp-[a-z0-9-]+$/.test(presetId)) throw new Error('experts/invalid-preset-id');
-  return join(agentsHome ?? process.env.DSH_AGENTS_HOME ?? join(homedir(), '.agents'), '.workdsh-state', 'experts', 'presets', presetId);
+  return join(resolveAgentsHome(agentsHome), '.workdsh-state', 'experts', 'presets', presetId);
 }
 
 const registrations = new WeakMap<Context, Map<string, Promise<void>>>();
