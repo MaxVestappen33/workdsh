@@ -14,9 +14,9 @@ Describe what you need, confirm the scope, and let the native AI build a workben
 
 [![Watch the WorkDSH personal AI service demo](assets/promotion/workdsh-personal-ai-service-cover.png)](assets/promotion/workdsh-personal-ai-service-landscape.mp4)
 
-**[▶ Watch the full-system demo · 101 seconds · Chinese narration and subtitles](assets/promotion/workdsh-personal-ai-service-landscape.mp4)**
+**[▶ Watch the full-system demo · 102 seconds · Chinese narration and subtitles](assets/promotion/workdsh-personal-ai-service-landscape.mp4)**
 
-<sub>Full application screen recording, including the native sidebar, workbench and AI conversation; edited and accelerated. The video duration is not the application creation time.</sub>
+<sub>Full application screen recording, including the native sidebar, workbench and AI conversation, with a cover and open-source project link at the end; edited and accelerated. The video duration is not the application creation time.</sub>
 
 ## Feature requests and bug reports
 
