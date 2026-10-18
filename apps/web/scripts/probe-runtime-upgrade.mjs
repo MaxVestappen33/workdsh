@@ -1,5 +1,7 @@
-/** Isolated published-runtime compatibility probe. Never edits a live Profile,
- * upstream.json, official bundles, or the source checkout's dependency graph. */
+/** Historical rc.1-only compatibility probe with a reviewed vendor baseline.
+ * This is not the current rc.2 upgrade gate; it intentionally rejects rc.2 and
+ * later targets instead of claiming their compatibility. Never edits a live
+ * Profile, upstream.json, official bundles, or the source dependency graph. */
 import {mkdtemp,cp,mkdir,readFile,writeFile,readdir} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve,basename} from 'node:path';
@@ -9,7 +11,7 @@ import {createRequire} from 'node:module';
 const source=fileURLToPath(new URL('../../../',import.meta.url));
 const target=process.argv[2];
 if(!/^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/.test(target??''))throw Error('Usage: node probe-runtime-upgrade.mjs <published-version>');
-if(target!=='0.2.1-rc.1')throw Error('This probe currently pins the reviewed rc.1 vendor baseline only.');
+if(target!=='0.2.1-rc.1')throw Error('Historical probe: only the reviewed rc.1 vendor baseline is supported; do not use it to validate rc.2 or later upgrades.');
 const root=await mkdtemp(join(tmpdir(),'workdsh-runtime-upgrade-'));
 const web=join(root,'apps/web');await mkdir(web,{recursive:true});
 const ignored=new Set(['node_modules','.git','.artifacts','dist','coverage','.cache']);

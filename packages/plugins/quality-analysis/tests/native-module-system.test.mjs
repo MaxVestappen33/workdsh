@@ -12,6 +12,8 @@ const quality=JSON.parse(await readFile(new URL('../package.json',import.meta.ur
 const platform=JSON.parse(await readFile(new URL('../../workbenches/package.json',import.meta.url),'utf8'));
 test('published native module system resolves actual quality/library bundles in declared dependency order',async()=>{
  assert.equal(platform.dsh.client.platform,'web');assert.ok(quality.dsh.client.external.includes('workdsh-plugin-library/client'));
+ assert.equal(quality.workdsh.workbench.hostCompatibility.harness,upstream.version);
+ assert.deepEqual((await import(new URL('../dist/index.js',import.meta.url))).descriptor,quality.workdsh.workbench,'the built Host declaration must match its installation manifest');
  let api;runInNewContext(kernel,{window:{__ModuleLoader__:{load:entry=>api=entry.factory(()=>{throw new Error('unexpected kernel dependency');})}}});
  const facade={mode:'queue',pendingQueue:[]};const arrivals=[];
  const context={window:{__ModuleLoader__:facade},document:{querySelectorAll:()=>[]},fetch:()=>{throw new Error('unexpected network');}};

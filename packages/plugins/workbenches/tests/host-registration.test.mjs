@@ -67,3 +67,48 @@ test('Client authority rechecks loaded Host caller and exact retained installati
  await assert.rejects(service.clientAuthority('quality'), /installation-changed/);
  release(); await assert.rejects(service.clientAuthority('quality'), /unregistered-package/);
 });
+
+test('managed incompatible installations remain repairable without registering live business entries', async () => {
+ let installed={package:receipt,compatible:false,descriptor};
+ const {caller,service,entry}=fixture(async()=>installed);
+ const managed={...caller,effect:body=>body()};
+ await assert.rejects(service.register(caller,descriptor,'page'),/incompatible-host/,'unmanaged registration remains strict');
+ const first=await service.registerManaged(managed,descriptor,'page');
+ assert.deepEqual(service.list(),[]);
+ assert.deepEqual(await service.clientAuthority('quality'),{descriptor,package:receipt,enabled:true,compatible:false});
+ await assert.rejects(service.registerManaged(managed,descriptor,'page'),/registration-conflict/);
+ entry.disabled=true;await assert.rejects(service.clientAuthority('quality'),/package-disabled/);entry.disabled=false;
+ installed={...installed,package:{...receipt,sha256:'b'.repeat(64)}};
+ await assert.rejects(service.clientAuthority('quality'),/installation-changed/);
+ installed={package:receipt,compatible:false,descriptor};first();
+ await assert.rejects(service.clientAuthority('quality'),/unregistered-package/);
+ installed={package:receipt,compatible:true,descriptor};
+ const updated=await service.registerManaged(managed,descriptor,'updated-page');
+ first();assert.equal(service.list()[0].page,'updated-page','a stale blocked disposer cannot remove an updated activation');
+ updated();service.close();
+});
+
+test('managed incompatibility never suppresses forged declarations, invalid receipts or verifier failures',async()=>{
+ for(const [installation,declaration,code] of [
+  [{package:receipt,compatible:false,descriptor},{...descriptor,title:'forged'},'declaration-mismatch'],
+  [{package:{...receipt,sha256:'bad'},compatible:false,descriptor},descriptor,'invalid-package-receipt'],
+  [{package:{...receipt,version:'2'},compatible:false,descriptor},descriptor,'installation-changed'],
+  [{package:receipt,compatible:false,descriptor:{...descriptor,title:'other'}},descriptor,'installation-declaration-changed'],
+ ]){
+  const {caller,service}=fixture(async()=>installation);
+  await assert.rejects(service.registerManaged({...caller,effect:body=>body()},declaration,'page'),new RegExp(code));
+  await assert.rejects(service.clientAuthority('quality'),/unregistered-package/);assert.deepEqual(service.list(),[]);service.close();
+ }
+ const {caller,service}=fixture(async()=>{throw Error('workbench/incompatible-host');});
+ await assert.rejects(service.registerManaged({...caller,effect:body=>body()},descriptor,'page'),/incompatible-host/,'a matching string is not a verified blocked result');
+ await assert.rejects(service.clientAuthority('quality'),/unregistered-package/);service.close();
+});
+
+test('managed blocked lifecycle attachment and shutdown release retained authority',async()=>{
+ const {caller,service}=fixture(async()=>({package:receipt,compatible:false,descriptor}));
+ await assert.rejects(service.registerManaged({...caller,effect(){throw Error('disposed');}},descriptor,'page'),/disposed/);
+ await assert.rejects(service.clientAuthority('quality'),/unregistered-package/);
+ const release=await service.registerManaged({...caller,effect:body=>body()},descriptor,'page');
+ service.close();release();service.close();
+ await assert.rejects(service.clientAuthority('quality'),/registration-service-closed/);
+});

@@ -11,10 +11,10 @@ export function createWorkbenchRegistrationClient(transport: typeof fetch = fetc
     const result = await response.json(); lifetime.throwIfAborted();
     if (!response.ok || result?.ok !== true) throw new Error('workbench/installation-unconfirmed');
     const value = result.value;
-    if (!value || value.package?.packageName !== packageName || value.enabled !== true || value.compatible !== true)
+    if (!value || value.package?.packageName !== packageName || value.enabled !== true || typeof value.compatible !== 'boolean')
       throw new Error('workbench/invalid-response');
     const receipt = Object.freeze({ packageName, version: value.package.version, sha256: value.package.sha256 });
-    workbenchActivationState({ installed: receipt, enabled: true, compatible: true });
-    return Object.freeze({ descriptor: parseWorkbenchDescriptor(value.descriptor), package: receipt, enabled: true, compatible: true });
+    workbenchActivationState({ installed: receipt, enabled: true, compatible: value.compatible });
+    return Object.freeze({ descriptor: parseWorkbenchDescriptor(value.descriptor), package: receipt, enabled: true, compatible: value.compatible });
   };
 }

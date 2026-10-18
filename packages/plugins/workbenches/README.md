@@ -93,6 +93,8 @@ WorkDSH 开发技能要求先明确一件工作的业务对象、状态、用户
 
 Host 从包根 `import type {HostWorkbenchRegistration, WorkbenchDescriptor} from "workdsh-plugin-workbenches"`；Client 从公开入口 `import type {ClientWorkbenchRegistration} from "workdsh-plugin-workbenches/client"`。业务插件分别取 `workdshWorkbenchRegistration` 与 `workdshWorkbenchClientRegistration`，使用 `registerManaged(ctx, descriptor, page)`。Host page 为页面标识，Client page 为页面组件，声明必须与安装包 manifest 一致。类型导出不提供安装权限，也不代替实际宿主授权检查。质量插件已采用公开 Client 注册类型，可作为当前集成参考。
 
+宿主升级后，托管注册遇到已核验安装内容但内核兼容声明不匹配的旧包，会保留可释放的拒绝记录，让原生插件图继续加载；不会注册 Host 业务入口或挂载 Client 页面，也不会更改用户的插件启用选择。管理页显示“版本不兼容”，可沿原有开发记录修复后安装兼容版本。`registerManaged` 返回不代表应用已可用，仍需分别核对兼容性、实时注册和实际页面。未托管的 `register` 继续抛出兼容错误；伪造声明、安装字节变更、调用者失效及其他错误同样拒绝，不被此恢复逻辑吞掉。
+
 ## 开发源码检查点
 
 首次源码准备生成可构建骨架，后续保持开发者文件。绑定源码前保存本机内容检查点，开发记录的 source.revision 使用 source-sha256 内容指纹。检查点存放在同一 Profile 的 workdsh-workbench-source-checkpoints/归属目录/指纹目录；不接受页面传入目的目录。保留源码和包声明，排除 node_modules、.git、dist；单文件 16MiB、总量 64MiB、最多 2000 文件，超限或包含链接时拒绝准备并保留原源码。

@@ -56,7 +56,7 @@ Agent 工具定义严格 schema、规范 JSON、模型内容和独立 UI present
 
 工作台保留业务记录、筛选、分析与报告位置；原生 Session 拥有对话、输入、轨迹和授权，原生文件面板拥有文件标签、查看器和关闭行为。业务插件只提交资源引用和会话绑定，不复制对话框、Office 查看器或原生面板状态机。
 
-当前锁定的 DSH `0.2.1-rc.1` 没有公开的工作台外框插槽。经用户授权，本机 Web 预览采用严格版本和 SHA-256 校验的最小装配补丁：在原有 `ConversationPanel` 外增加 `workdsh.workbench.frame`，传入完整原生 `main.conversation` 树；无工作台注册时回退原生界面。未知版本或文件内容拒绝应用，脚本支持恢复原始字节。此例外只适用于本机 Web 预览，不授权 Desktop 打包或发布。
+当前锁定的 DSH `0.2.1-rc.2` 没有公开的工作台外框插槽。经用户明确授权，Web 预览与 Desktop 共用严格版本和 SHA-256 校验的两处外框适配：在原有 `ConversationPanel` 外增加 `workdsh.workbench.frame`，传入完整原生 `main.conversation` 树；无工作台注册时回退原生界面。未知版本或文件内容拒绝应用，脚本支持恢复原始字节。此例外不扩展到其他官方文件；Desktop 发布仍须核对实际安装包 Resources 并完成运行时与界面验收。
 
 工作台仅拥有业务布局及其创建的 Portal 容器。完整原生会话保留标题、对话、轨迹、输入框和授权控件；原生文件由 `uiWorkspace.openSession`、`sidebarRight.openResource` 打开。主区维持 Conversation 的真实选择，使原生右侧工作空间继续归属于同一个 Session。工作台导航入口由自有适配器转入外框，不复制原生组件、不移动原生 DOM、不引入第二个运行时。收起对话只改变可见性；文件开启及关闭保留业务页实例与原生会话实例。
 
