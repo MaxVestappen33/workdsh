@@ -14,9 +14,9 @@
 
 [![观看 WorkDSH 定制个人 AI 服务演示](assets/promotion/workdsh-personal-ai-service-cover.png)](assets/promotion/workdsh-personal-ai-service-landscape.mp4)
 
-**[▶ 观看全系统演示 · 101 秒 · 中文配音与字幕](assets/promotion/workdsh-personal-ai-service-landscape.mp4)**
+**[▶ 观看全系统演示 · 102 秒 · 中文配音与字幕](assets/promotion/workdsh-personal-ai-service-landscape.mp4)**
 
-<sub>完整应用界面实录，保留原生侧栏、工作台与 AI 对话，经过剪辑与加速；视频时长不代表应用制作耗时。</sub>
+<sub>完整应用界面实录，保留原生侧栏、工作台与 AI 对话，含封面及片尾开源地址，经过剪辑与加速；视频时长不代表应用制作耗时。</sub>
 
 ## 功能建议与 Bug 反馈
 
