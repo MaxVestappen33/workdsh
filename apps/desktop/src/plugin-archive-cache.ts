@@ -1,8 +1,17 @@
-import { join } from 'node:path'
-import { writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { readFileSync, writeFileSync } from 'node:fs'
 
 /** Delegate to the bundled pnpm after retaining local archives in this account's Home. */
 export function cachedPackageManager(home: string, pnpm: string): string {
+  const manifest = JSON.parse(readFileSync(join(dirname(pnpm), '..', 'package.json'), 'utf8')) as { name?: unknown, version?: unknown }
+  if (manifest.name !== 'pnpm' || typeof manifest.version !== 'string' || !/^\d+\.\d+\.\d+(?:-[\w.-]+)?$/u.test(manifest.version)) {
+    throw new Error('内置插件安装工具清单无效')
+  }
+  // The application supplies this executable. A Profile's packageManager pin
+  // must not make pnpm fetch or run another engine before the official command.
+  const fixedManager = Number(manifest.version.split('.')[0]) >= 11
+    ? ['--pm-on-fail=ignore', '--config.verify-deps-before-run=false']
+    : ['--config.manage-package-manager-versions=false', '--config.package-manager-strict=false']
   const runner = join(home, '.workdsh-package-manager.mjs')
   writeFileSync(runner, String.raw`import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync, statSync } from 'node:fs';
@@ -27,7 +36,7 @@ if (args.includes('add')) {
     args[i] = destination;
   }
 }
-const child = spawn(process.execPath, [${JSON.stringify(pnpm)}, ...args], { stdio: 'inherit', windowsHide: true });
+const child = spawn(process.execPath, [${JSON.stringify(pnpm)}, ...${JSON.stringify(fixedManager)}, ...args], { stdio: 'inherit', windowsHide: true });
 for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => child.kill(signal));
 child.on('error', error => { console.error(error.message); process.exitCode = 1; });
 child.on('exit', (code, signal) => { process.exitCode = code ?? (signal ? 1 : 0); });

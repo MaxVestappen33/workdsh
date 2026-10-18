@@ -21,6 +21,7 @@ import { manageCommand } from './command-management.ts'
 import { createRuntimeOutputRedactor, redactRuntimeOutput, runtimeFailureDetail, runtimeFailureLog } from './runtime-diagnostics.ts'
 import { cleanOwnedProcessTree, stopOwnedProcess } from './owned-process.ts'
 import { prepareRuntimePort, runtimePortConflict } from './runtime-port.ts'
+import { runOfficialCommand } from './official-command.ts'
 
 const PROFILE_NAME = 'workdsh'
 const READY_PATTERN = /dsh web:\s+(http:\/\/127\.0\.0\.1:\d+\/?\?token=[^\s]+)/u
@@ -189,21 +190,9 @@ function runtimeEnvironment(home: string): NodeJS.ProcessEnv {
 async function officialCommand(home: string, args: string[], timeoutMs = 240_000): Promise<void> {
   const executable = bundledNodeExecutable()
   const launcher = officialLauncher(bundledProfileDirectory(), home, executable, join(bundledPrimaryRuntime(), 'dependencies', 'pnpm', 'bin', 'pnpm.cjs'))
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(executable, [launcher, ...args], { env: runtimeEnvironment(home), cwd: home, detached: process.platform !== 'win32', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
-    installer = child
-    let settled = false
-    const timer = setTimeout(() => { void stopOwnedProcess(child).then(() => finish(new Error('官方插件安装超时，请检查网络后重试')), finish) }, timeoutMs)
-    function finish(error?: Error): void {
-      if (settled) return
-      settled = true; clearTimeout(timer)
-      if (installer === child) installer = undefined
-      void cleanOwnedProcessTree(child).then(() => error ? reject(error) : resolve(), reject)
-    }
-    child.stdout.on('data', () => {})
-    child.stderr.on('data', () => {})
-    child.once('error', () => finish(new Error('无法启动官方插件安装工具')))
-    child.once('exit', code => finish(quitRequested ? new Error('插件安装已取消') : code === 0 ? undefined : new Error(`官方插件操作失败 (${code})；请核对插件版本和网络`)))
+  await runOfficialCommand({ executable, launcher, args, home, env: runtimeEnvironment(home), timeoutMs,
+    logDirectory: join(app.getPath('userData'), 'logs'), cancelled: () => quitRequested,
+    onProcess: child => { installer = child },
   })
 }
 

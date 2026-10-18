@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { extractFile, listPackage } from '@electron/asar'
 import { DSH_VERSION, OFFICIAL_PNPM_VERSION } from './runtime-version.mjs'
 import { ENTERPRISE_PACKAGES, PRODUCT_PACKAGES, RELEASE_PACKAGES } from './workdsh-package-boundary.mjs'
-import { verifyDefaultComposition, verifyDefaultProfile, verifyInstalledDshVersions, verifyOfficialWebPackages, verifyProfileRelease, verifyReleaseArchives } from './verify-profile-release.mjs'
+import { verifyBuiltPackageExports, verifyDefaultComposition, verifyDefaultProfile, verifyInstalledDshVersions, verifyOfficialWebPackages, verifyProfileRelease, verifyReleaseArchives } from './verify-profile-release.mjs'
 import { parseDeploymentConfig } from '../src/deployment-config.ts'
 import { verifyNativeWorkbenchFrame } from '../../../scripts/native-workbench-frame-patch.mjs'
 
@@ -18,6 +18,17 @@ interface PackContext {
 
 export function normalizeAsarEntry(entry: string): string {
   return entry.replaceAll('\\', '/').replace(/^\//u, '')
+}
+
+/** Read final copied package entries, including public SDK declarations. A
+ * valid source archive cannot prove that extraResources retained its exports. */
+export function verifyPackagedOwnedExports(profile: string, names: readonly string[] = RELEASE_PACKAGES): void {
+  for (const name of names) {
+    const directory = join(profile, 'node_modules', name)
+    const manifest = JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8')) as { name?: string; exports?: unknown }
+    if (manifest.name !== name) throw new Error('Packaged export inventory names another package: ' + name)
+    verifyBuiltPackageExports(manifest, directory)
+  }
 }
 
 export async function afterPack(context: PackContext): Promise<void> {
@@ -69,6 +80,7 @@ export async function afterPack(context: PackContext): Promise<void> {
     packages: Array<{ name: string; version: string; filename: string; sha256: string }>
   }
   verifyProfileRelease(release, DSH_VERSION, RELEASE_PACKAGES)
+  verifyPackagedOwnedExports(profile, release.packages.map(item => item.name))
   verifyReleaseArchives(release, cache)
   verifyOfficialWebPackages(release, profile)
   const profileManifest = JSON.parse(readFileSync(join(profile, 'package.json'), 'utf8')) as {

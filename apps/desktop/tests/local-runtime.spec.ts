@@ -17,7 +17,8 @@ function fixture() {
   mkdirSync(join(source, 'node_modules/@deepseek-ai/dsh-app-boot/lib'), { recursive: true })
   writeFileSync(join(source, 'node_modules/@deepseek-ai/dsh-app-boot/lib/index.js'), '')
   writeFileSync(join(source, 'node_modules/pnpm/bin/pnpm.cjs'), '')
-  const base = { dependencies: { '@deepseek-ai/dsh': '0.2.0-rc.2', 'workdsh-plugin-skills': '1.0.0' }, dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', 'workdsh-plugin-skills'] } } }
+  writeFileSync(join(source, 'node_modules/pnpm/package.json'), JSON.stringify({ name: 'pnpm', version: '11.7.0' }))
+  const base = { packageManager: 'pnpm@11.7.0', dependencies: { '@deepseek-ai/dsh': '0.2.0-rc.2', 'workdsh-plugin-skills': '1.0.0' }, dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', 'workdsh-plugin-skills'] } } }
   writeFileSync(join(source, 'package.json'), JSON.stringify(base))
   writeFileSync(join(source, 'profile-installation.json'), JSON.stringify(base))
   return { root, source, home, base }
@@ -97,4 +98,46 @@ it('retries a failed version-policy installation after restart until official in
   expect(materializeRuntimeProfile(source, home).changed).toBe(true)
   markProfileUpdated(source, profile)
   expect(materializeRuntimeProfile(source, home).changed).toBe(false)
+})
+
+it('migrates an unchanged platform package manager and retains a pending install until success', () => {
+  const { source, home, base } = fixture()
+  const { profile } = materializeRuntimeProfile(source, home)
+  const manifest = join(profile, 'package.json'), state = join(profile, '.workdsh-desktop-base.json')
+  const user = JSON.parse(readFileSync(manifest, 'utf8'))
+  user.dependencies['user-plugin'] = 'file:custom.tgz'
+  writeFileSync(manifest, JSON.stringify(user))
+  writeFileSync(join(profile, 'pnpm-lock.yaml'), 'user lock remains owned')
+  const previous = JSON.parse(readFileSync(state, 'utf8'))
+  previous.pendingInstallation = true
+  writeFileSync(state, JSON.stringify(previous))
+  base.packageManager = 'pnpm@11.28.5'
+  writeFileSync(join(source, 'package.json'), JSON.stringify(base))
+  for (let attempt = 0; attempt < 2; attempt++) {
+    expect(materializeRuntimeProfile(source, home).changed).toBe(true)
+    const migrated = JSON.parse(readFileSync(manifest, 'utf8'))
+    expect(migrated.packageManager).toBe('pnpm@11.28.5')
+    expect(migrated.dependencies).toEqual({ 'user-plugin': 'file:custom.tgz' })
+    expect(readFileSync(join(profile, 'pnpm-lock.yaml'), 'utf8')).toBe('user lock remains owned')
+    expect(JSON.parse(readFileSync(state, 'utf8')).pendingInstallation).toBe(true)
+  }
+  markProfileUpdated(source, profile)
+  expect(materializeRuntimeProfile(source, home).changed).toBe(false)
+  expect(JSON.parse(readFileSync(state, 'utf8')).base.packageManager).toBe('pnpm@11.28.5')
+})
+
+it.each(['pnpm@10.34.5', 'yarn@4.18.0', undefined])('keeps a user-owned package manager declaration or removal (%s)', custom => {
+  const { source, home, base } = fixture()
+  const { profile } = materializeRuntimeProfile(source, home)
+  const manifest = join(profile, 'package.json')
+  const user = JSON.parse(readFileSync(manifest, 'utf8'))
+  if (custom === undefined) delete user.packageManager
+  else user.packageManager = custom
+  writeFileSync(manifest, JSON.stringify(user))
+  base.packageManager = 'pnpm@11.28.5'
+  writeFileSync(join(source, 'package.json'), JSON.stringify(base))
+  expect(materializeRuntimeProfile(source, home).changed).toBe(false)
+  expect(JSON.parse(readFileSync(manifest, 'utf8')).packageManager).toBe(custom)
+  expect(materializeRuntimeProfile(source, home).changed).toBe(false)
+  expect(JSON.parse(readFileSync(manifest, 'utf8')).packageManager).toBe(custom)
 })

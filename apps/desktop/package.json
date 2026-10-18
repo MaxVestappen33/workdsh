@@ -192,9 +192,6 @@
           "node/**",
           "primary-runtime/**",
           "office-skills/**",
-          "!profiles/workdsh/node_modules/**/*.d.ts",
-          "!profiles/workdsh/node_modules/**/*.d.mts",
-          "!profiles/workdsh/node_modules/**/*.d.cts",
           "!profiles/workdsh/node_modules/**/*.pdb"
         ]
       }

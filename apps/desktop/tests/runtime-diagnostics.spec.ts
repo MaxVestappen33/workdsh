@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { createRuntimeOutputRedactor, redactRuntimeOutput, runtimeFailureDetail, runtimeFailureLog } from '../src/runtime-diagnostics.ts'
+import { createRuntimeOutputRedactor, redactRuntimeOutput, runtimeFailureDetail, runtimeFailureLog, officialCommandFailureDetail } from '../src/runtime-diagnostics.ts'
 
 it('keeps startup cause when descendant cleanup also fails', () => {
   const detail = runtimeFailureDetail(false, 1, 'stderr: missing plugin entry', true)
@@ -45,4 +45,12 @@ it('summarizes simultaneous startup causes while retaining the redacted trace in
   expect(log).toContain('stack.js');
   expect(log).not.toContain('sensitive-test-value');
   expect(log).toContain('[redacted]');
+})
+
+it('explains an official compatibility rejection without suggesting a network failure or version bypass', () => {
+  const detail = officialCommandFailureDetail(1, 'dsh: installation rejected: Plugin sigmapad-plugin@0.1.0-alpha.180 is incompatible with dsh 0.2.1-rc.1: requirements {"sdk":"0.2.0-rc.2"}. To accept this risk use allow-version\ndsh: restored package.json, pnpm-lock.yaml, and node_modules.\ndsh: plugin command failed; diagnostics: /local/log')
+  expect(detail).toContain('sigmapad-plugin@0.1.0-alpha.180')
+  expect(detail).toContain('DSH 0.2.1-rc.1 不兼容')
+  expect(detail).toContain('已恢复')
+  expect(detail).not.toMatch(/网络|allow-version/)
 })

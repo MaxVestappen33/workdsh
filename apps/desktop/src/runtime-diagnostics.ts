@@ -64,3 +64,15 @@ export function runtimeFailureDetail(ready: boolean, code: number | null, output
 export function runtimeFailureLog(ready: boolean, code: number | null, output: string, cleanupFailed = false): string {
   return `${new Date().toISOString()}\n${runtimeFailureDetail(ready, code, output, cleanupFailed)}\n\n最近的运行输出：\n${redactRuntimeOutput(output).trim().slice(-16_384)}\n`;
 }
+
+export function officialCommandFailureDetail(code: number | null, output: string, cause?: string): string {
+  const incompatible = /Plugin (\S+) is incompatible with dsh ([\w.+-]+)/u.exec(output);
+  if (incompatible && !cause) {
+    return `插件 ${incompatible[1]} 与当前 DSH ${incompatible[2]} 不兼容。\n\n请安装适配当前底座的插件版本。${/restored package\.json, pnpm-lock\.yaml, and node_modules/u.test(output) ? '原有插件清单和依赖已恢复。' : '本次插件更新未完成。'}`;
+  }
+  const lines = redactRuntimeOutput(output).replace(/\u001b\[[0-9;]*m/gu, '').split('\n')
+    .map(line => line.trim()).filter(line => line && !/^(?:at\s|file:\/\/)/u.test(line));
+  const errors = lines.filter(line => /(?:ERR_|\bError\b|\bfailed\b|EACCES|EPERM|ENOENT|ENOTFOUND|EAI_AGAIN)/iu.test(line));
+  const reasons = (errors.length ? errors : lines).slice(-3).map(line => line.slice(0, 240));
+  return [cause ?? `插件依赖更新失败 (${code})`, reasons.length ? reasons.join('\n') : '未取得工具输出，请查看本机错误记录后重试。'].join('\n\n');
+}
