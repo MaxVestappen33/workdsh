@@ -4,7 +4,7 @@
 
 ## 工具参数
 
-使用当前已安装版本的 `@deepseek-ai/dsh-tools` 实际执行每一个 `defineTool` 定义。当前 0.2.1-rc.1 的可选参数省略 `required`，必填参数使用 `required: true`；`required: false` 会在注册阶段抛错，使应用启动失败。不要照搬其他 JSON Schema 接口的写法；版本变化后重新核对官方声明与实际编译结果。
+使用当前已安装版本的 `@deepseek-ai/dsh-tools` 实际执行每一个 `defineTool` 定义。当前 0.2.1-rc.2 的可选参数省略 `required`，必填参数使用 `required: true`；`required: false` 会在注册阶段抛错，使应用启动失败。不要照搬其他 JSON Schema 接口的写法；版本变化后重新核对官方声明与实际编译结果。
 
 ```js
 // 可选：省略 required

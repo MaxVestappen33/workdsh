@@ -1,26 +1,28 @@
 {
   "repository": "https://github.com/deepseek-ai/deepseek-harness.git",
-  "version": "0.2.1-rc.1",
+  "version": "0.2.1-rc.2",
   "releasePolicy": "user-authorized-latest-release-after-isolated-compatibility-validation",
   "distribution": "published-packages-and-desktop-release",
   "desktopArtifacts": {
     "mac-arm64": {
-      "url": "https://download.deepseek.com/dsh-desk/bin/mac-arm64/deepseek-harness-0.2.1-rc.1-mac-arm64.zip",
-      "size": 347752406,
-      "sha512": "H9FVzhHL57XTYbpcxb4dpNLqaf/kMiz9OM5aDR3CQTXHuAFmSwNrxkhR35iOxHUgUm2tkZc8xtzfLkvqPWwAig=="
+      "version": "0.2.1-rc.2",
+      "url": "https://download.deepseek.com/dsh-desk/bin/mac-arm64/deepseek-harness-0.2.1-rc.2-mac-arm64.zip",
+      "size": 347777642,
+      "sha512": "vgGV720lZGEd2MnjVFOvhLVafwQH3iUDindQwwSjQ7AJaeZuu6UvjR2Msae2dkGS1SeMxxYCBu5Ks13n+K9Ydw=="
     },
     "mac-x64": {
+      "version": "0.2.1-rc.1",
       "url": "https://download.deepseek.com/dsh-desk/bin/mac-x64/deepseek-harness-0.2.1-rc.1-mac-x64.zip",
       "size": 362402720,
       "sha512": "4SViINh3tDLRvvR80w4OJW/zj+j7Rp5ApjO41XeYtCpvhV9cS10Vibx90jnt90GLaE4HTGvXMp0ot4evs57JzA=="
     },
     "win-x64": {
-      "url": "https://download.deepseek.com/dsh-desk/bin/win-x64/deepseek-harness-0.2.1-rc.1-win-x64.exe",
-      "size": 289382752,
-      "sha512": "Yt1SsYXgAQAcgvyE/aKBQ2JjGD9shaaB9HYLDdrySWi3e6A8XpUeSQaATRER1C5h8jZbHZRRAGWv/eDOXQg1yQ=="
+      "version": "0.2.1-rc.2",
+      "url": "https://download.deepseek.com/dsh-desk/bin/win-x64/deepseek-harness-0.2.1-rc.2-win-x64.exe",
+      "size": 289385456,
+      "sha512": "39POl5osl9PKMqrPXQA52dh/bCV0Z02vOV9cTjOJDHE6gsJwp5bv7lfgB3mVWAKspX7a/w1iTi+8Listdhq45g=="
     }
   },
-  "desktopArtifactVersion": "0.2.1-rc.1",
   "primaryRuntime": {
     "node": "24.21.0",
     "pnpm": "11.28.5",

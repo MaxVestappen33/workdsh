@@ -1,4 +1,3 @@
-import { OFFICIAL_PNPM_VERSION } from './runtime-version.mjs'
 /** Consume fixed official binary releases; never fetch a source checkout. */
 import { createHash } from 'node:crypto'
 import { createReadStream, createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, renameSync, cpSync, writeFileSync } from 'node:fs'
@@ -6,11 +5,12 @@ import { pipeline } from 'node:stream/promises'
 import { Readable } from 'node:stream'
 import { execFileSync } from 'node:child_process'
 import { join, resolve } from 'node:path'
-export const lock = JSON.parse(readFileSync(new URL('../../../upstream.json', import.meta.url), 'utf8'))
+import {officialRuntimeLock,officialDesktopArtifact,assertOfficialPrimaryRuntime,writeOfficialRuntimeProvenance,verifyOfficialRuntimeProvenance} from './official-runtime-provenance.mjs'
+export const lock = officialRuntimeLock
 // Older copies rewrote relative links to extraction-directory absolute paths.
-const COPY_FORMAT = 2
+const COPY_FORMAT = 3
 function cacheIdentity(target, artifact) {
-  return JSON.stringify({ copyFormat: COPY_FORMAT, version: lock.version, target, artifact })
+  return JSON.stringify({ copyFormat: COPY_FORMAT, npmDshVersion: lock.version, target, artifact })
 }
 export function copyOfficialRuntime(source, destination) {
   // Replace an earlier prepared payload rather than retaining stale links/files.
@@ -18,14 +18,12 @@ export function copyOfficialRuntime(source, destination) {
   cpSync(source, destination, { recursive: true, force: true, dereference: false, verbatimSymlinks: true })
 }
 export function isOfficialReleaseCacheValid(destination, target) {
-  const artifact = lock.desktopArtifacts?.[target]
-  if (!artifact) return false
   try {
+    const artifact = officialDesktopArtifact(target)
     if (readFileSync(join(destination, 'receipt.json'), 'utf8') !== cacheIdentity(target, artifact)) return false
     const runtime = join(destination, 'runtime/primary-runtime')
-    const metadata = JSON.parse(readFileSync(join(runtime, 'runtime.json'), 'utf8'))
-    const [platform, arch] = target.split('-')
-    if (metadata.desktopVersion !== lock.version || metadata.platform !== (platform === 'mac' ? 'darwin' : 'win32') || metadata.arch !== arch || metadata.pnpm !== OFFICIAL_PNPM_VERSION) return false
+    const [platform] = target.split('-')
+    verifyOfficialRuntimeProvenance(runtime,target)
     return [
       join(runtime, 'dependencies/python', platform === 'mac' ? 'bin/python3' : 'python.exe'),
       join(runtime, 'dependencies/node/bin', platform === 'mac' ? 'node' : 'node.exe'),
@@ -58,10 +56,9 @@ function nestedArchive(directory, depth = 0) {
   }
 }
 export async function prepareOfficialRelease(desktopRoot, target) {
-  const artifact = lock.desktopArtifacts?.[target]
-  if (!artifact || lock.distribution !== 'published-packages-and-desktop-release') throw new Error('Official release target is not locked: ' + target)
+  const artifact = officialDesktopArtifact(target)
   const cache = join(desktopRoot, 'build/official-release-cache'); mkdirSync(cache, { recursive: true })
-  const destination = join(cache, target + '-' + lock.version)
+  const destination = join(cache, target + '-' + artifact.version)
   const receipt = join(destination, 'receipt.json')
   const identity = cacheIdentity(target, artifact)
   if (isOfficialReleaseCacheValid(destination, target)) return destination
@@ -86,11 +83,11 @@ export async function prepareOfficialRelease(desktopRoot, target) {
     const resources = findResources(temporary)
     if (!resources) throw new Error('Official release has no reusable runtime resources')
     const metadata = JSON.parse(readFileSync(join(resources, 'runtime/primary-runtime/runtime.json'), 'utf8'))
-    const [platform, arch] = target.split('-')
-    if (metadata.desktopVersion !== lock.version || metadata.platform !== (platform === 'mac' ? 'darwin' : 'win32') || metadata.arch !== arch || metadata.pnpm !== OFFICIAL_PNPM_VERSION) throw new Error('Official release runtime version/platform mismatch')
+    assertOfficialPrimaryRuntime(metadata,target)
     if (!existsSync(join(resources, 'runtime/cli/command-manager.js')) || !existsSync(join(resources, 'runtime/office-skills'))) throw new Error('Official release is missing command/Office resources')
     rmSync(destination, { recursive: true, force: true }); mkdirSync(destination)
     for (const name of ['primary-runtime', 'office-skills', 'cli']) copyOfficialRuntime(join(resources, 'runtime', name), join(destination, 'runtime', name))
+    writeOfficialRuntimeProvenance(join(destination,'runtime/primary-runtime'),target)
     writeFileSync(receipt, identity)
     if (!isOfficialReleaseCacheValid(destination, target)) throw new Error('Copied official runtime is incomplete or has broken executable links')
     return destination

@@ -47,7 +47,7 @@
       "layout": "full-page",
       "hostCompatibility": {
         "sdk": "^1.0.0",
-        "harness": "0.2.1-rc.1"
+        "harness": "0.2.1-rc.2"
       },
       "capabilities": []
     }
@@ -63,32 +63,32 @@
     "saxes": "5.0.1"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-tools": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.2",
     "@deepseek-ai/cordis": "4.0.5",
-    "@deepseek-ai/dsh-storage-domain": "0.2.1-rc.1",
-    "@deepseek-ai/dsh-client-connection": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-storage-domain": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-client-connection": "0.2.1-rc.2",
     "workdsh-plugin-library": "0.1.0-alpha.8",
     "workdsh-plugin-workbenches": "3.0.0-alpha.49",
-    "@deepseek-ai/dsh-client-ui-layout": "0.2.1-rc.1",
-    "@deepseek-ai/dsh-api-session-controller": "0.2.1-rc.1",
-    "@deepseek-ai/dsh-client-ui-conversation": "0.2.1-rc.1",
-    "@deepseek-ai/dsh-client-ui-workspace": "0.2.1-rc.1"
+    "@deepseek-ai/dsh-client-ui-layout": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-api-session-controller": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-client-ui-conversation": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-client-ui-workspace": "0.2.1-rc.2"
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-tools": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.2",
     "@deepseek-ai/cordis": "4.0.5",
-    "@deepseek-ai/dsh-storage-domain": "0.2.1-rc.1",
-    "@deepseek-ai/dsh-client-connection": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-storage-domain": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-client-connection": "0.2.1-rc.2",
     "@types/node": "22.19.0",
     "@types/react": "19.2.14",
     "react": "19.2.4",
     "workdsh-contracts": "workspace:*",
     "workdsh-plugin-library": "workspace:*",
-    "@deepseek-ai/dsh-client-ui-layout": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-layout": "0.2.1-rc.2",
     "workdsh-tabular": "workspace:*",
     "workdsh-plugin-workbenches": "workspace:*",
-    "@deepseek-ai/dsh-api-session-controller": "0.2.1-rc.1",
-    "@deepseek-ai/dsh-client-ui-conversation": "0.2.1-rc.1",
-    "@deepseek-ai/dsh-client-ui-workspace": "0.2.1-rc.1"
+    "@deepseek-ai/dsh-api-session-controller": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-client-ui-conversation": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-client-ui-workspace": "0.2.1-rc.2"
   }
 }

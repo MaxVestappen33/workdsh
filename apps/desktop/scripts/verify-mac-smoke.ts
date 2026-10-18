@@ -1,11 +1,11 @@
 /** Verify the unsigned application structure sealed inside one macOS smoke DMG. */
 
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmdirSync, statSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, rmdirSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { DSH_VERSION } from './runtime-version.mjs'
+import {verifyOfficialRuntimeProvenance} from './official-runtime-provenance.mjs'
 
 /** Injectable filesystem and command boundaries for smoke verification. */
 export interface MacSmokeVerificationOptions {
@@ -133,17 +133,7 @@ export function verifyMacSmoke(
     }
 
     const runtimeRoot = join(appPath, 'Contents', 'Resources', 'workdsh-runtime', 'primary-runtime')
-    const runtime = JSON.parse(readFileSync(join(runtimeRoot, 'runtime.json'), 'utf8')) as {
-      desktopVersion?: unknown
-      platform?: unknown
-      arch?: unknown
-      python?: unknown
-      node?: unknown
-    }
-    if (runtime.desktopVersion !== DSH_VERSION || runtime.platform !== 'darwin'
-      || runtime.arch !== options.targetArch || runtime.python !== '3.12.14' || runtime.node !== '24.21.0') {
-      throw new Error(`macOS DMG has mismatched bundled primary runtime: ${JSON.stringify(runtime)}`)
-    }
+    verifyOfficialRuntimeProvenance(runtimeRoot,`mac-${options.targetArch}`)
     for (const [label, path] of [
       ['Python', join(runtimeRoot, 'dependencies', 'python', 'bin', 'python3')],
       ['Node', join(runtimeRoot, 'dependencies', 'node', 'bin', 'node')],

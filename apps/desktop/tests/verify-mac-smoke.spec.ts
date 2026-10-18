@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DSH_VERSION } from '../scripts/runtime-version.mjs'
+import {officialRuntimeLock,writeOfficialRuntimeProvenance,OFFICIAL_PROVENANCE_FILE} from '../scripts/official-runtime-provenance.mjs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   verifyMacSmoke,
@@ -18,7 +18,7 @@ interface AppFixture {
   readonly modeOverrides: Map<string, number>
 }
 
-function fixture(): AppFixture {
+function fixture(arch:'arm64'|'x64'='arm64'): AppFixture {
   const root = mkdtempSync(join(tmpdir(), 'dsh-mac-smoke-'))
   temporaryRoots.push(root)
   const contents = join(root, 'WorkDSH.app', 'Contents')
@@ -38,7 +38,8 @@ function fixture(): AppFixture {
   const runtime = join(resources, 'workdsh-runtime', 'primary-runtime')
   mkdirSync(join(runtime, 'dependencies', 'python', 'bin'), { recursive: true })
   mkdirSync(join(runtime, 'dependencies', 'node', 'bin'), { recursive: true })
-  writeFileSync(join(runtime, 'runtime.json'), JSON.stringify({ desktopVersion: DSH_VERSION, platform: 'darwin', arch: 'arm64', python: '3.12.14', node: '24.21.0' }))
+  writeFileSync(join(runtime, 'runtime.json'), JSON.stringify({ desktopVersion: officialRuntimeLock.desktopArtifacts[`mac-${arch}`]!.version, platform: 'darwin', arch, ...officialRuntimeLock.primaryRuntime,payloadDigest:'a'.repeat(64) }))
+  writeOfficialRuntimeProvenance(runtime,`mac-${arch}`)
   for (const path of [join(runtime, 'dependencies', 'python', 'bin', 'python3'), join(runtime, 'dependencies', 'node', 'bin', 'node')]) {
     writeFileSync(path, 'binary')
     chmodSync(path, 0o755)
@@ -130,8 +131,7 @@ describe('macOS DMG smoke artifact verification', () => {
   })
 
   it('checks only the Intel executable and native modules for an x64 DMG', () => {
-    const value = fixture()
-    writeFileSync(join(value.root, 'WorkDSH.app', 'Contents', 'Resources', 'workdsh-runtime', 'primary-runtime', 'runtime.json'), JSON.stringify({ desktopVersion: DSH_VERSION, platform: 'darwin', arch: 'x64', python: '3.12.14', node: '24.21.0' }))
+    const value = fixture('x64')
     const harness = options({ targetArch: 'x64', makeMountPoint: () => value.root }, value.modeOverrides)
     verifyMacSmoke(harness.value)
     const lipoCalls = harness.calls.filter(call => call.command === 'lipo')
@@ -145,6 +145,15 @@ describe('macOS DMG smoke artifact verification', () => {
     expect(() => verifyMacSmoke(harness.value)).toThrow('requires exactly one DMG')
     expect(harness.calls).toEqual([])
     expect(harness.removeMountPoint).not.toHaveBeenCalled()
+  })
+
+  it('rejects a missing or falsified Intel source receipt rather than relabelling tool bytes as npm rc.2',()=>{
+    const value=fixture('x64'),primary=join(value.root,'WorkDSH.app','Contents','Resources','workdsh-runtime','primary-runtime')
+    const harness=options({targetArch:'x64',makeMountPoint:()=>value.root},value.modeOverrides)
+    writeFileSync(join(primary,OFFICIAL_PROVENANCE_FILE),JSON.stringify({schemaVersion:1,npmDshVersion:'0.2.1-rc.2',artifact:{version:'0.2.1-rc.2'}}))
+    expectSmokeFailure(harness,'provenance mismatch')
+    rmSync(join(primary,OFFICIAL_PROVENANCE_FILE))
+    expectSmokeFailure(harness,OFFICIAL_PROVENANCE_FILE)
   })
 
   it('rejects a missing Info.plist and still detaches', () => {

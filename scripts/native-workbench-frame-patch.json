@@ -1,6 +1,6 @@
 {
   "package": "@deepseek-ai/dsh-client-ui-conversation",
-  "version": "0.2.1-rc.1",
+  "version": "0.2.1-rc.2",
   "file": "lib/client.js",
   "originalSha256": "8554738cbeeb5218ad1bfa4773ef094363b066d052a1893d7a96797c5bc33a63",
   "patchedSha256": "aafebc0109b8d60eb1e1b5e1f3a686c72b86eaf7a3dae8fdd699e1756debc80f",
