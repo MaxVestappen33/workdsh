@@ -16,6 +16,7 @@ import type {mountProfileWorkbenchAuthoringHost} from './profile-authoring-host.
 import {handleWorkbenchCreationRequest} from './creation-rpc.js';
 import {defineTool,type ToolRunContext} from '@deepseek-ai/dsh-tools';
 import {confirmCreationDevelopment} from './creation-development.js';
+import {resumeWorkbenchCreationSession} from './resume-creation-session.js';
 
 export const workbenchCreationPath='/api/workdsh-workbench-creation';
 export async function mountWorkbenchCreationHost(ctx:Context,authoring:Awaited<ReturnType<typeof mountProfileWorkbenchAuthoringHost>>){
@@ -55,6 +56,13 @@ export async function mountWorkbenchCreationHost(ctx:Context,authoring:Awaited<R
       const id=`session-${createHash('sha256').update(JSON.stringify(['workdsh-creation',actor.organizationId,actor.principalId,row.target.installationId,row.id])).digest('hex').slice(0,32)}`;
       const owner=access.sessionOwner(id);
       if(owner&&(owner.ownerPrincipalId!==actor.principalId||owner.organizationId!==actor.organizationId))throw Error('workbench/creation-access-denied');
+      if(row.sessionId){
+        const inspector=protectedSessions??ctx.sessionController;
+        return resumeWorkbenchCreationSession(actor,row.sessionId,id,directory,{
+          authorize:sessionAuthority,inspect:(sessionId,signal)=>inspector.inspect(sessionId,signal),
+          projections:(request,signal)=>ctx.sessionController.projections(request,signal),
+        },check,signal);
+      }
       const {workspace,created}=await ctx.workspaceController.create({path:directory});check();
       if(created){await ctx.workspaceController.rename({workspaceId:workspace.workspaceId,title:`制作 · ${row.idea.replace(/\s+/g,' ').slice(0,32)}`});check();}
       const request:Parameters<Context['sessionController']['create']>[0]={sessionId:id as never,workspaceId:workspace.workspaceId,agentPreset:'cordis'};
