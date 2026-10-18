@@ -1,9 +1,13 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {readFile,readdir} from 'node:fs/promises';import {createRequire} from 'node:module';import {runInNewContext} from 'node:vm';
+import test from 'node:test';import assert from 'node:assert/strict';import {readFile} from 'node:fs/promises';import {createRequire} from 'node:module';import {runInNewContext} from 'node:vm';
 const require=createRequire(new URL('../package.json',import.meta.url));
 const platformRequire=createRequire(require.resolve('workdsh-plugin-workbenches/package.json'));
-const store=new URL('../../../../apps/web/node_modules/.pnpm/',import.meta.url);
-const directory=(await readdir(store)).find(name=>name.startsWith('@deepseek-ai+dsh-client-modules@0.2.1-rc.1_'));
-const kernel=await readFile(new URL(directory+'/node_modules/@deepseek-ai/dsh-client-modules/lib/client.js',store),'utf8');
+const webRequire=createRequire(new URL('../../../../apps/web/package.json',import.meta.url));
+const dshRequire=createRequire(webRequire.resolve('@deepseek-ai/dsh/package.json'));
+const webAppRequire=createRequire(dshRequire.resolve('@deepseek-ai/dsh-web-app/package.json'));
+const modules=JSON.parse(await readFile(webAppRequire.resolve('@deepseek-ai/dsh-client-modules/package.json'),'utf8'));
+const upstream=JSON.parse(await readFile(new URL('../../../../upstream.json',import.meta.url),'utf8'));
+assert.equal(modules.version,upstream.version,'the real module loader must match the locked DSH version');
+const kernel=await readFile(webAppRequire.resolve('@deepseek-ai/dsh-client-modules/client'),'utf8');
 const quality=JSON.parse(await readFile(new URL('../package.json',import.meta.url),'utf8'));
 const platform=JSON.parse(await readFile(new URL('../../workbenches/package.json',import.meta.url),'utf8'));
 test('published native module system resolves actual quality/library bundles in declared dependency order',async()=>{
