@@ -52,6 +52,7 @@
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.5",
     "@deepseek-ai/dsh-app-boot": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-atomic-write": "0.2.1-rc.1",
     "@deepseek-ai/dsh-client-connection": "0.2.1-rc.1",
     "@deepseek-ai/dsh-client-ui-conversation": "0.2.1-rc.1",
     "@deepseek-ai/dsh-client-ui-layout": "0.2.1-rc.1",
@@ -61,6 +62,7 @@
     "@deepseek-ai/dsh-client-ui-slots": "0.2.1-rc.1",
     "@deepseek-ai/dsh-client-ui-workspace": "0.2.1-rc.1",
     "@deepseek-ai/dsh-fs": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-plugin-manager": "0.2.1-rc.1",
     "@deepseek-ai/dsh-storage-domain": "0.2.1-rc.1",
     "@deepseek-ai/dsh-tools": "0.2.1-rc.1"
   },
@@ -69,6 +71,7 @@
     "@deepseek-ai/dsh-api-session-controller": "0.2.1-rc.1",
     "@deepseek-ai/dsh-api-workspace-controller": "0.2.1-rc.1",
     "@deepseek-ai/dsh-app-boot": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-atomic-write": "0.2.1-rc.1",
     "@deepseek-ai/dsh-client-connection": "0.2.1-rc.1",
     "@deepseek-ai/dsh-client-ui-conversation": "0.2.1-rc.1",
     "@deepseek-ai/dsh-client-ui-layout": "0.2.1-rc.1",
@@ -78,6 +81,7 @@
     "@deepseek-ai/dsh-client-ui-slots": "0.2.1-rc.1",
     "@deepseek-ai/dsh-client-ui-workspace": "0.2.1-rc.1",
     "@deepseek-ai/dsh-fs": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-plugin-manager": "0.2.1-rc.1",
     "@deepseek-ai/dsh-storage-domain": "0.2.1-rc.1",
     "@deepseek-ai/dsh-tools": "0.2.1-rc.1",
     "@types/node": "22.19.0",

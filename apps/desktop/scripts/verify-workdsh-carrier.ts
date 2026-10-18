@@ -153,6 +153,10 @@ export async function afterPack(context: PackContext): Promise<void> {
     throw new Error(`Packaged WorkDSH plugin inventory check failed: ${String(inventory.error ?? inventory.stderr)}`)
   }
   process.stdout.write(inventory.stdout)
+  const hostCheck = fileURLToPath(new URL('./verify-installation-anchor.mjs', import.meta.url))
+  const host = spawnSync(node, [hostCheck, runtime], { encoding: 'utf8', timeout: 150_000, maxBuffer: 1024 * 1024 })
+  if (host.error || host.status !== 0) throw new Error('Packaged full Host startup check failed: ' + String(host.error ?? host.stderr + host.stdout))
+  process.stdout.write(host.stdout)
   console.log(`Verified thin Electron carrier and ${names.length} root / ${instances} total Harness ${DSH_VERSION} package instances`)
 }
 
