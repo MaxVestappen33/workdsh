@@ -239,7 +239,7 @@ WorkDSH Admin — organization overview:
 
 ## Download Desktop
 
-Desktop **3.0.0-alpha.2** is available as an Alpha prerelease. The [GitHub Release](https://github.com/techflag/workdsh/releases/tag/desktop-v3.0.0-alpha.2) provides these complete installers:
+Desktop **3.0.0-alpha.2** is published as the Latest release (Alpha version). The [GitHub Release](https://github.com/techflag/workdsh/releases/tag/desktop-v3.0.0-alpha.2) provides these complete installers:
 
 | Platform | Download |
 | --- | --- |

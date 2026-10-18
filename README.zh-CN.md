@@ -247,7 +247,7 @@ WorkDSH Admin：组织概览。
 
 ## 下载桌面版
 
-桌面安装包 **3.0.0-alpha.2** 已作为 Alpha 预发布提供。[GitHub Release](https://github.com/techflag/workdsh/releases/tag/desktop-v3.0.0-alpha.2) 提供以下完整安装包：
+桌面安装包 **3.0.0-alpha.2** 已发布，并设为 Latest（Alpha 版本）。[GitHub Release](https://github.com/techflag/workdsh/releases/tag/desktop-v3.0.0-alpha.2) 提供以下完整安装包：
 
 | 平台 | 下载 |
 | --- | --- |
