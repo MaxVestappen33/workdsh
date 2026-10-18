@@ -1,10 +1,16 @@
 import type {CreationView,CreationProposal} from '../runtime/creation-service.js';
 import type {WorkbenchRequirementsDraft,WorkbenchDevelopmentIndexEntry} from 'workdsh-contracts';
+export class WorkbenchCreationRequestError extends Error {
+ constructor(readonly code:string,readonly requirementsSaved=false,readonly preparationStage?:'development'|'source'|'session'){
+  super(code);this.name='WorkbenchCreationRequestError';
+ }
+}
 export function createWorkbenchCreationClient(){
   async function call<T>(endpoint:string,payload:unknown,signal?:AbortSignal):Promise<T>{
     const response=await fetch('/api/workdsh-workbench-creation',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({endpoint,payload}),signal});
-    const result=await response.json() as {ok:boolean;value:T;error?:{code?:string}};signal?.throwIfAborted();
-    if(!response.ok||!result.ok)throw Error(result.error?.code??'workbench/creation-failed');return result.value;
+    const result=await response.json() as {ok:boolean;value:T;error?:{code?:string;requirementsSaved?:boolean;preparationStage?:string}};signal?.throwIfAborted();
+    if(!response.ok||!result.ok){const stage=result.error?.preparationStage;throw new WorkbenchCreationRequestError(result.error?.code??'workbench/creation-failed',result.error?.requirementsSaved===true,
+      stage==='development'||stage==='source'||stage==='session'?stage:undefined);}return result.value;
   }
   return {
     list:(signal?:AbortSignal)=>call<CreationView[]>('list',{},signal),

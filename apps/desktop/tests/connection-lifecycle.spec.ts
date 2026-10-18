@@ -12,7 +12,7 @@ vi.mock('../src/enterprise-auth.ts', () => ({
   startEnterpriseAuthority: async () => ({ url: 'http://127.0.0.1:19898', key: 'a'.repeat(64), close: state.closed }),
 }))
 vi.mock('../src/enterprise-plugins.ts',()=>({installedEnterprisePlugins:vi.fn(()=>['workdsh-provider-identity-enterprise','workdsh-plugin-enterprise-collaboration']),composeInstalledEnterprisePlugins:vi.fn(async()=>['workdsh-provider-identity-enterprise','workdsh-plugin-enterprise-collaboration'])}))
-vi.mock('../src/owned-process.ts', () => ({ stopOwnedProcess: state.stop, cleanOwnedProcessTree: vi.fn(async () => {}) }))
+vi.mock('../src/owned-process.ts', () => ({ trackOwnedProcess: vi.fn(), stopOwnedProcess: state.stop, cleanOwnedProcessTree: vi.fn(async () => {}) }))
 vi.mock('node:child_process', () => ({ spawn: vi.fn() }))
 vi.mock('electron', async () => {
   const { EventEmitter } = await import('node:events')

@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { cleanOwnedProcessTree, stopOwnedProcess } from './owned-process.ts'
+import { cleanOwnedProcessTree, stopOwnedProcess, trackOwnedProcess } from './owned-process.ts'
 import { createRuntimeOutputRedactor, officialCommandFailureDetail } from './runtime-diagnostics.ts'
 
 /** Preserve the actual CLI failure before returning control to the entry screen. */
@@ -11,10 +11,12 @@ export async function runOfficialCommand(options: {
   onProcess: (child: ChildProcess | undefined) => void,
 }): Promise<void> {
   await new Promise<void>((resolve, reject) => {
+    const startedAt = Date.now()
     const child = spawn(options.executable, [options.launcher, ...options.args], {
       env: options.env, cwd: options.home, detached: process.platform !== 'win32',
       windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
     })
+    trackOwnedProcess(child, startedAt)
     options.onProcess(child)
     let output = '', settled = false, cleanupConfirmed = false, cause: string | undefined
     let cleanup = Promise.resolve()

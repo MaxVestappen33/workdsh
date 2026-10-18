@@ -19,7 +19,7 @@ import { EnterpriseLogin, startEnterpriseAuthority, type Authority } from './ent
 import { desktopEnterprisePatch, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher } from './local-runtime.ts'
 import { manageCommand } from './command-management.ts'
 import { createRuntimeOutputRedactor, redactRuntimeOutput, runtimeFailureDetail, runtimeFailureLog } from './runtime-diagnostics.ts'
-import { cleanOwnedProcessTree, stopOwnedProcess } from './owned-process.ts'
+import { cleanOwnedProcessTree, stopOwnedProcess, trackOwnedProcess } from './owned-process.ts'
 import { prepareRuntimePort, runtimePortConflict } from './runtime-port.ts'
 import { runOfficialCommand } from './official-command.ts'
 
@@ -228,6 +228,7 @@ async function startRuntime(home: string, connection: DesktopConnection, patches
   if (quitRequested) throw new Error('启动已取消')
   const layers = [...(existsSync(basePatch) ? [basePatch] : []), ...patches, ...(port.managed ? [port.patch] : [])]
   const launcher = officialHostLauncher(bundledProfileDirectory(), home, executable, join(bundledPrimaryRuntime(), 'dependencies', 'pnpm', 'bin', 'pnpm.cjs'), layers)
+  const startedAt = Date.now()
   const child = spawn(executable, [launcher, '--no-open'], {
     env: runtimeEnvironment(home),
     cwd: enterprise ? join(enterprise.root, 'workspace') : home,
@@ -235,6 +236,7 @@ async function startRuntime(home: string, connection: DesktopConnection, patches
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   })
+  trackOwnedProcess(child, startedAt)
   runtime = child
   runtimeStarting = true
   let ready = false

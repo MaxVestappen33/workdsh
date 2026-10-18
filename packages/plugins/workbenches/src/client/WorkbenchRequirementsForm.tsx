@@ -1,6 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { WorkbenchSystemEditor } from './WorkbenchSystemEditor.js';
 import { parseWorkbenchRequirementsDraft, type WorkbenchRequirementsDraft } from 'workdsh-contracts';
+import {requirementsSaveFailureMessage} from './requirements-save-error.js';
 export interface WorkbenchRequirementsFormProps {
   readonly initial?: WorkbenchRequirementsDraft;
   /** Host persists the requirement revision before starting development or creating a session. */
@@ -42,7 +43,7 @@ export function WorkbenchRequirementsForm(props: WorkbenchRequirementsFormProps)
     catch { setError('请补齐需求、模块及页面名称，检查依赖和长度；尚不明确的数据和规则可注明“待验证”。'); return; }
     pending.current = true; setSaving(true); setError(undefined);
     try { await props.onSave(normalized); }
-    catch { setError('需求未保存成功，内容已保留，请核对后重试。'); }
+    catch(cause) { setError(requirementsSaveFailureMessage(cause)); }
     finally { pending.current = false; setSaving(false); }
   }
   return <form onSubmit={event => void submit(event)} aria-label="定义工作台需求" style={{ maxWidth: 800, margin: '0 auto', padding: 32 }}>

@@ -6,7 +6,27 @@ import {fileURLToPath} from 'node:url';
 import {createRequire} from 'node:module';
 import {createHash} from 'node:crypto';
 import {performance} from 'node:perf_hooks';
+import {gunzipSync} from 'node:zlib';
 import {checkWorkbenchStartup} from './check-startup.mjs';
+
+// A development anchor contains machine-local paths, not distributable app
+// data. Reject a legacy package without a files allowlist rather than editing
+// its manifest/ignore rules or publishing that private platform record.
+function verifyNoRuntimeRecord(bytes){
+ if(bytes.length>8*1024*1024)throw Error('workbench/delivery-archive-size-limit');
+ let tar;try{tar=gunzipSync(bytes,{maxOutputLength:64*1024*1024});}catch{throw Error('workbench/delivery-invalid-pack-result');}
+ for(let offset=0;offset+512<=tar.length;){
+  const header=tar.subarray(offset,offset+512);if(header.every(byte=>byte===0))return;
+  const field=(start,end)=>header.subarray(start,end).toString('utf8').split('\0')[0];
+  const name=[field(345,500),field(0,100)].filter(Boolean).join('/'),sizeText=field(124,136).trim();
+  if(!/^[0-7]+$/.test(sizeText))throw Error('workbench/delivery-invalid-pack-result');
+  const size=Number.parseInt(sizeText,8);if(!Number.isSafeInteger(size)||offset+512+size>tar.length)throw Error('workbench/delivery-invalid-pack-result');
+  const extended=['x','g','L'].includes(field(156,157))?tar.subarray(offset+512,offset+512+size).toString('utf8'):'';
+  if(name.split('/').includes('.workdsh-runtime.json')||/(?:^|[=/])\.workdsh-runtime\.json(?:\0|\n|$)/.test(extended))throw Error('workbench/delivery-runtime-record-in-archive');
+  offset+=512+Math.ceil(size/512)*512;
+ }
+ throw Error('workbench/delivery-invalid-pack-result');
+}
 
 /** Resolve installed pnpm JavaScript, never a system npm or a .cmd wrapper. */
 export async function resolveWorkbenchPackageManager(directory,{environment=process.env,nodeExecutable=process.execPath}={}){
@@ -91,6 +111,7 @@ export async function runWorkbenchDelivery(directory,{signal,commandTimeoutMs=12
    await command(['--config.ignore-scripts=true','--config.offline=true','pack','--pack-destination',packDirectory]);
    const packed=await readdir(packDirectory),filename=packed[0];if(packed.length!==1||typeof filename!=='string'||basename(filename)!==filename||!filename.endsWith('.tgz'))throw Error('workbench/delivery-invalid-pack-result');
    const bytes=await readFile(join(packDirectory,filename));
+   verifyNoRuntimeRecord(bytes);
    // Never silently replace an immutable version with different bytes.
    const destination=join(source,filename);try{await writeFile(destination,bytes,{flag:'wx',mode:0o600});}catch(error){if(error?.code==='EEXIST')throw Error('workbench/delivery-archive-already-exists');throw error;}
    report.candidate={filename,sha256:createHash('sha256').update(bytes).digest('hex'),bytes:bytes.length};

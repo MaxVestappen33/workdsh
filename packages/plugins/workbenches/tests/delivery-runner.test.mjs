@@ -83,3 +83,13 @@ test('a timed out build returns even when a detached grandchild holds stdout ope
   await cleanup(dir,result);
  }
 });
+
+test('legacy packages cannot publish the development-only runtime anchor in their candidate archive',async()=>{
+ const dir=await fixture();let result;
+ try{
+  const manifest=JSON.parse(await readFile(join(dir,'package.json'),'utf8'));delete manifest.files;
+  await writeFile(join(dir,'package.json'),JSON.stringify(manifest));
+  await writeFile(join(dir,'.workdsh-runtime.json'),JSON.stringify({schemaVersion:1,installationAnchor:fileURLToPath(new URL('../../../../apps/web/package.json',import.meta.url))}));
+  result=await runWorkbenchDelivery(dir);assert.equal(result.status,'failed');assert.equal(result.stages.at(-1).errorCode,'workbench/delivery-runtime-record-in-archive');assert.equal(result.candidate,undefined);assert.equal((await readdir(dir)).some(name=>name.endsWith('.tgz')),false);
+ }finally{await cleanup(dir,result);}
+});

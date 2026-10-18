@@ -7,6 +7,19 @@ import {fileURLToPath,pathToFileURL} from 'node:url';
 import {spawn} from 'node:child_process';
 import {isDeepStrictEqual} from 'node:util';
 
+// The platform writes this development-only record from its actual Profile
+// context. It supplies host peers, never missing business dependencies or a
+// replacement resolver for the candidate's executable JavaScript.
+async function hostPeerRequire(directory){
+ let text;try{text=await readFile(join(directory,'.workdsh-runtime.json'),'utf8');}
+ catch(error){if(error.code==='ENOENT')return undefined;throw Error('workbench/startup-invalid-runtime-anchor');}
+ try{
+  const record=JSON.parse(text);
+  if(record.schemaVersion!==1||typeof record.installationAnchor!=='string'||!isAbsolute(record.installationAnchor))throw Error();
+  return createRequire(await realpath(record.installationAnchor));
+ }catch{throw Error('workbench/startup-invalid-runtime-anchor');}
+}
+
 /** Run from the official development tool's sandbox, never from package preview
  * or the live Host. A temporary Home is data separation, not an OS sandbox.
  * Test providers are explicitly reported and cannot certify production startup. */
@@ -35,12 +48,20 @@ async function worker(directory,home){
  let ctx,stage='dependencies';const providers=['workdshWorkbenchRegistration (test adapter)'];
  try{
   const pkg=JSON.parse(await readFile(join(directory,'package.json'),'utf8')),require=createRequire(join(directory,'package.json'));
-  const missing=[],mismatches=[];
+  const hostRequire=await hostPeerRequire(directory),hostPeers=new Set(['@deepseek-ai/cordis','workdsh-plugin-workbenches']);
+  const missing=[],mismatches=[],resolvers=new Map();
   const semver=createRequire(import.meta.url)('semver');
   for(const [name,range] of Object.entries({...pkg.dependencies,...pkg.peerDependencies})){
-   let entry;try{entry=require.resolve(name);}catch{if(pkg.peerDependenciesMeta?.[name]?.optional!==true||Object.hasOwn(pkg.dependencies??{},name))missing.push(name);continue;}
+   let entry,resolver=require;
+   try{entry=resolver.resolve(name);}catch{
+    if(hostRequire&&hostPeers.has(name)&&Object.hasOwn(pkg.peerDependencies??{},name)&&!Object.hasOwn(pkg.dependencies??{},name)){
+     resolver=hostRequire;try{entry=resolver.resolve(name);}catch{}
+    }
+    if(!entry){if(pkg.peerDependenciesMeta?.[name]?.optional!==true||Object.hasOwn(pkg.dependencies??{},name))missing.push(name);continue;}
+   }
+   resolvers.set(name,resolver);
    let manifest;
-   try{manifest=JSON.parse(await readFile(require.resolve(name+'/package.json'),'utf8'));}catch{
+   try{manifest=JSON.parse(await readFile(resolver.resolve(name+'/package.json'),'utf8'));}catch{
     let cursor=dirname(entry);for(let i=0;i<32;i++){
      try{const value=JSON.parse(await readFile(join(cursor,'package.json'),'utf8'));if(value.name===name){manifest=value;break;}}catch{}
      const parent=dirname(cursor);if(parent===cursor)break;cursor=parent;
@@ -55,9 +76,10 @@ async function worker(directory,home){
   const path=await realpath(resolve(directory,entry)),delta=relative(directory,path);
   if(delta.startsWith('..')||isAbsolute(delta))throw Error('workbench/startup-invalid-entry');
   const hostSha256=createHash('sha256').update(await readFile(path)).digest('hex');
-  const cordisVersion=JSON.parse(await readFile(require.resolve('@deepseek-ai/cordis/package.json'),'utf8')).version;
+  const cordisRequire=resolvers.get('@deepseek-ai/cordis')??require;
+  const cordisVersion=JSON.parse(await readFile(cordisRequire.resolve('@deepseek-ai/cordis/package.json'),'utf8')).version;
   if(cordisVersion!=='4.0.5')throw Error('workbench/startup-unsupported-cordis');
-  const {Context}=await import(pathToFileURL(require.resolve('@deepseek-ai/cordis')).href);
+  const {Context}=await import(pathToFileURL(cordisRequire.resolve('@deepseek-ai/cordis')).href);
   ctx=new Context();let registered=false;
   ctx.provide('workdshWorkbenchRegistration',{async registerManaged(caller,declaration,page){
    if(!isDeepStrictEqual(declaration,pkg.workdsh?.workbench)||typeof page!=='string'||!page)throw Error('workbench/startup-registration-mismatch');

@@ -1,13 +1,15 @@
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { expect, it } from 'vitest'
-import { stopOwnedProcess, cleanOwnedProcessTree } from '../src/owned-process.ts'
+import { stopOwnedProcess, cleanOwnedProcessTree, trackOwnedProcess } from '../src/owned-process.ts'
 
 it.skipIf(process.platform === 'win32')('kills a real tool descendant that ignores SIGTERM even after its parent exits', async () => {
   const fixture = `const {spawn}=require('node:child_process');
 const tool=spawn(process.execPath,['-e',"process.on('SIGTERM',()=>{}); console.log(process.pid);setInterval(()=>{},1000)"],{stdio:['ignore','pipe','inherit']});
 tool.stdout.on('data',x=>process.stdout.write(x));process.on('SIGTERM',()=>process.exit(0));setInterval(()=>{},1000);`
+  const startedAt = Date.now()
   const parent = spawn(process.execPath, ['-e', fixture], { detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
+  trackOwnedProcess(parent, startedAt)
   let descendant = 0
   try {
     const [data] = await once(parent.stdout!, 'data')
