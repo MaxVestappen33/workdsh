@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { Context } from '@deepseek-ai/cordis';
+import { createScope } from '@deepseek-ai/dsh-scope';
 import Tools from '@deepseek-ai/dsh-tools';
 import { registerExpertManagementTools } from '../../../../packages/plugins/experts/dist/tools/management-tools.js';
 import { FileSystem, LocalFileSystem, WorkingDirectory, createMessage, Agents, AgentLoop, Sessions, Projections, SystemPrompt, Llm, skillTool, SkillRequestAdapter } from '../helpers/skill-runtime.mjs';
@@ -1028,6 +1029,43 @@ test('expert presets default to the persisted DSH_HOME when DSH_AGENTS_HOME is a
     const presetPath = expertPresetDir(receipt.presetRevisionRef, h.agentsHome);
     assert.equal((await stat(presetPath)).isDirectory(), true);
     assert.ok(presetPath.startsWith(join(h.root, 'dsh', 'agents')));
+  } finally { await h.cleanup(); }
+});
+
+test('publish and the execution guard read $DSH_HOME/agents when DSH_AGENTS_HOME is unset', async () => {
+  const h = await boot(undefined, { profileAgents: true });
+  try {
+    const a = actor('owner-a');
+    const doc = name => `---\nname: ${name}\ndescription: Team professional\n---\n# ${name}\n\nFull domain reasoning and professional delivery.`;
+    const files = {
+      '.workdsh-expert/plugin.json': JSON.stringify({ name: 'home-team', expertType: 'team', agentName: 'home-team-team-lead', agents: ['./agents/home-team-team-lead.md', './agents/analyst.md', './agents/reviewer.md'], teamInfo: { leadAgent: 'home-team-team-lead', memberAgents: ['analyst', 'reviewer'] }, workflows: [{ id: 'report', title: 'Report', trigger: 'Produce a report', deliverable: 'Verified report', stages: [{ id: 'draft', worker: 'analyst', reviewer: 'reviewer', dependsOn: [] }] }] }),
+      'settings.json': JSON.stringify({ agent: 'home-team-team-lead' }),
+      'agents/home-team-team-lead.md': doc('home-team-team-lead'),
+      'agents/analyst.md': doc('analyst'),
+      'agents/reviewer.md': doc('reviewer'),
+      'README.md': 'Agents home regression.',
+    };
+    const draft = await h.experts.createDraft(a, definitionFromDocuments(files), { operationId: 'home-team-create' });
+    const check = await h.experts.validate(a, draft.expertId, draft.revision);
+    assert.equal(check.publishable, true, JSON.stringify(check.issues));
+    const request = await h.experts.requestPublishConfirmation(a, draft.expertId, draft.revision);
+    const proof = await h.experts.confirmPublish(a, request.confirmationToken);
+    const receipt = await h.experts.publish(a, draft.expertId, draft.revision, check.dependencyLockDigest, proof, { operationId: 'home-team-publish' });
+    const publishedDir = expertPresetDir(receipt.presetRevisionRef, h.agentsHome);
+    assert.equal(expertPresetDir(receipt.presetRevisionRef), publishedDir);
+    assert.equal(await readExpertPreset(receipt.presetRevisionRef), await readFile(join(publishedDir, 'preset.json'), 'utf8'));
+    const plan = await h.experts.prepareExecution(a, draft.expertId);
+    const created = await h.experts.createExecution(a, plan.executionPlanId, { operationId: 'home-team-exec' });
+    h.ctx.workdshIdentity.resolve = async () => a;
+    await h.ctx.plugin(SystemPrompt);
+    const agentScope = createScope(h.ctx, created.sessionId);
+    registerExpertExecutionGuard(h.ctx);
+    const entered = await h.ctx.waterfall('agent/pre-step', {
+      agent: { id: created.sessionId, ctx: agentScope.ctx, session: { id: created.sessionId, header: { agentPreset: created.binding.presetRevisionRef, cwd: h.root } } },
+      messages: [], turn: 1, step: 1, signal: new AbortController().signal,
+    }, async () => ({ kind: 'enter', messages: [] }));
+    assert.equal(entered.kind, 'enter');
+    await agentScope.dispose();
   } finally { await h.cleanup(); }
 });
 

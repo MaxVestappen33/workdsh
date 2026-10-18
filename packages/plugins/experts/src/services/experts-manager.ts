@@ -1,13 +1,12 @@
 import { definitionFromDocuments, parseExpertDocument } from '../authoring/documents.js';
 import { randomUUID } from 'node:crypto';
-import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import type { ConnectorManagementService } from 'workdsh-contracts';
 import { Context, Service } from '@deepseek-ai/cordis';
 import type { KvTable } from '@deepseek-ai/dsh-storage-domain';
 import type { SessionCreateRequest, SessionCreateValue } from '@deepseek-ai/dsh-api-session-controller';
-import { expertPresetDir, readExpertPreset, registerExpertPreset } from '../runtime/preset-compiler.js';
+import { expertPresetDir, readExpertPreset, registerExpertPreset, resolveAgentsHome } from '../runtime/preset-compiler.js';
 import {
   EXPERT_LIMITS,
   ExpertsError,
@@ -231,7 +230,7 @@ export class ExpertsManager extends Service implements ExpertsService {
 
   constructor(ctx: Context, options: ExpertsManagerOptions = {}) {
     super(ctx, 'workdshExperts');
-    const agentsHome = resolve(options.agentsHome ?? process.env.DSH_AGENTS_HOME ?? (process.env.DSH_HOME ? join(process.env.DSH_HOME, 'agents') : join(homedir(), '.agents')));
+    const agentsHome = resolveAgentsHome(options.agentsHome);
     this.agentsHome = agentsHome;
     this.includeDefaultSkillRoots = options.includeDefaultSkillRoots;
     this.stagingRoot = join(agentsHome, '.workdsh-state', 'experts', 'staging');

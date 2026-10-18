@@ -3,17 +3,16 @@ import type { Agent } from '@deepseek-ai/dsh-agent';
 import type {} from '@deepseek-ai/dsh-experimental-agent-team';
 import * as Persona from '@deepseek-ai/dsh-persona';
 import * as SkillFiles from '@deepseek-ai/dsh-skill-filesystem';
-import { expertPresetDir, readExpertPreset } from './preset-compiler.js';
+import { expertPersonaConfig, expertPresetDir, readExpertPreset, resolveAgentsHome } from './preset-compiler.js';
 import { join } from 'node:path';
 import { ExpertsError } from '../domain/values.js';
-import { expertPersonaConfig } from './preset-compiler.js';
 
 /** Asset admission and role composition only. No child driver, mailbox or Team state. */
 export function registerExpertExecutionGuard(ctx: Context, options: { agentsHome?: string } = {}): void {
+  const agentsHome = resolveAgentsHome(options.agentsHome);
   const installed = new WeakMap<Agent, string>();
 
   async function prepare(agent: Agent, signal: AbortSignal | undefined, creating: boolean): Promise<void> {
-    const agentsHome = options.agentsHome;
     const membership = ctx.agentTeams.tryMembership(agent);
     const root = membership?.root ?? agent;
     const header = agent.session.header;
