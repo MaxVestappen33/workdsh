@@ -9,6 +9,14 @@ import type {} from '@deepseek-ai/dsh-attachment';
 export const browserViewPath = '/api/workdsh-agent-browser';
 const browserPrefix = 'mcp__playwright-mcp__browser_';
 const screenshotName = `${browserPrefix}take_screenshot`;
+// Information/installation tools do not establish a page that should be shown.
+// In particular, screenshotting after browser_close can recreate a blank page.
+const pageTools = new Set([
+  'open', 'navigate', 'navigate_back', 'snapshot', 'click', 'drag', 'hover',
+  'select_option', 'fill_form', 'type', 'press_key', 'press_sequentially',
+  'handle_dialog', 'resize', 'wait_for', 'evaluate', 'run_code', 'run_code_unsafe',
+  'file_upload', 'mouse_move_xy', 'mouse_click_xy', 'mouse_drag_xy',
+]);
 
 export interface BrowserViewFrame {
   sessionId: string;
@@ -17,6 +25,8 @@ export interface BrowserViewFrame {
   image?: string;
   error?: string;
 }
+/** Explicit successful browser activity; absence is unknown, not a close. */
+export interface BrowserViewActivity { readonly revision: number; readonly active: boolean }
 
 interface BrowserViewAction {
   kind: 'click' | 'scroll' | 'key' | 'type' | 'navigate' | 'back' | 'reload';
@@ -60,13 +70,19 @@ export function registerBrowserView(ctx: Context): void {
   const frames = new Map<string, BrowserViewFrame>();
   const agents = new Map<string, NonNullable<Parameters<typeof ctx.tools.execute>[0]['agent']>>();
   const queues = new Map<string, Promise<void>>();
+  const captures = new Map<string, AbortController>();
+  const activities = new Map<string, BrowserViewActivity>();
   let disposed = false;
-  ctx.effect(() => () => { disposed = true; frames.clear(); agents.clear(); queues.clear(); }, 'workdsh.browser-view');
+  const clear = (sessionId: string) => {
+    captures.get(sessionId)?.abort(); captures.delete(sessionId);
+    frames.delete(sessionId); queues.delete(sessionId);
+  };
+  ctx.effect(() => () => { disposed = true; for (const capture of captures.values()) capture.abort(); captures.clear(); frames.clear(); activities.clear(); agents.clear(); queues.clear(); }, 'workdsh.browser-view');
 
   ctx.on('agent/created', ({ agent }) => {
     const sessionId = String(agent.session.id);
     agents.set(sessionId, agent);
-    agent.ctx.effect(() => () => { frames.delete(sessionId); agents.delete(sessionId); queues.delete(sessionId); }, 'workdsh.browser-view.session');
+    agent.ctx.effect(() => () => { clear(sessionId); activities.delete(sessionId); agents.delete(sessionId); }, 'workdsh.browser-view.session');
     return undefined;
   });
 
@@ -75,14 +91,25 @@ export function registerBrowserView(ctx: Context): void {
     if (disposed || result.isError || exec.agent === undefined || !exec.name.startsWith(browserPrefix) || exec.name === screenshotName) return decision;
     const sessionId = String(exec.agent.session.id);
     const args = exec.arguments && typeof exec.arguments === 'object' ? exec.arguments as Record<string, unknown> : {};
+    const operation = exec.name.slice(browserPrefix.length);
+    if (operation === 'close' || (operation === 'tabs' && args.action === 'close')) {
+      clear(sessionId);
+      activities.set(sessionId, { revision: (activities.get(sessionId)?.revision ?? 0) + 1, active: false });
+      return decision;
+    }
+    if (!pageTools.has(operation) && !(operation === 'tabs' && ['new', 'select'].includes(String(args.action)))) return decision;
     const prior = frames.get(sessionId);
     const pageLine = result.content.filter(block => block.type === 'text').map(block => block.text).join('\n').match(/^- Page URL: (https?:\/\/\S+)/m)?.[1];
     const url = pageLine ?? (typeof args.url === 'string' ? args.url : prior?.url);
-    const revision = (prior?.revision ?? 0) + 1;
-    frames.set(sessionId, { sessionId, revision, ...(url ? { url } : {}), image: prior?.image });
+    const revision = (activities.get(sessionId)?.revision ?? 0) + 1;
+    activities.set(sessionId, { revision, active: true });
+    const frame = { sessionId, revision, ...(url ? { url } : {}), image: prior?.image };
+    frames.set(sessionId, frame);
+    captures.get(sessionId)?.abort();
+    const controller = new AbortController(); captures.set(sessionId, controller);
     const preceding = queues.get(sessionId) ?? Promise.resolve();
     const queued = preceding.catch(() => undefined).then(async () => {
-      if (disposed) return;
+      if (disposed || controller.signal.aborted || frames.get(sessionId) !== frame) return;
       const screenshot = await ctx.tools.execute({
         callId: ToolCallId(`workdsh-browser-view-${randomUUID()}`),
         rootCallId: exec.rootCallId,
@@ -90,11 +117,11 @@ export function registerBrowserView(ctx: Context): void {
         name: screenshotName,
         arguments: {},
         agent: exec.agent,
-        signal: AbortSignal.timeout(15_000),
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]),
       });
-      if (disposed) return;
+      if (disposed || controller.signal.aborted) return;
       const current = frames.get(sessionId);
-      if (!current || current.revision !== revision) return;
+      if (current !== frame) return;
       // MCP keeps its canonical raw image even when the active model route is
       // text-only. The sidebar is a UI consumer, so it must not depend on the
       // model-facing image projection admitting an attachment.
@@ -111,13 +138,16 @@ export function registerBrowserView(ctx: Context): void {
       const image = screenshot.content.find(block => block.type === 'image');
       if (image?.type === 'image' && image.attachment.bytes < 8_000_000) {
         const stored = await ctx.attachments.readImage(image.attachment);
-        frames.set(sessionId, { ...current, image: `data:${image.attachment.mediaType};base64,${Buffer.from(stored.data).toString('base64')}`, error: undefined });
+        if (!disposed && !controller.signal.aborted && frames.get(sessionId) === frame)
+          frames.set(sessionId, { ...current, image: `data:${image.attachment.mediaType};base64,${Buffer.from(stored.data).toString('base64')}`, error: undefined });
       } else if (screenshot.isError) {
         frames.set(sessionId, { ...current, error: '浏览器画面暂时不可用。' });
       }
     }).catch(() => {
       const current = frames.get(sessionId);
-      if (current?.revision === revision) frames.set(sessionId, { ...current, error: '浏览器画面暂时不可用。' });
+      if (!disposed && !controller.signal.aborted && current === frame) frames.set(sessionId, { ...current, error: '浏览器画面暂时不可用。' });
+    }).finally(() => {
+      if (captures.get(sessionId) === controller) captures.delete(sessionId);
     });
     queues.set(sessionId, queued);
     return decision;
@@ -144,7 +174,7 @@ export function registerBrowserView(ctx: Context): void {
       }
       const frame = frames.get(sessionId) ?? null;
       const unchanged = frame !== null && body?.afterRevision === frame.revision;
-      return Response.json({ frame: unchanged ? null : frame, unchanged }, { headers: { 'cache-control': 'no-store' } });
+      return Response.json({ frame: unchanged ? null : frame, unchanged, activity: activities.get(sessionId) ?? null }, { headers: { 'cache-control': 'no-store' } });
     },
   });
   ctx.effect(() => unregister, 'workdsh.browser-view.fetch');

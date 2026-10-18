@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useEffect, useRef, useState } from 'react';
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots';
-import type { BrowserViewFrame } from '../../browser-view.js';
+import type { BrowserViewFrame, BrowserViewActivity } from '../../browser-view.js';
 
 export const agentBrowserKind = 'workdsh-agent-browser';
 const buttonStyle: React.CSSProperties = { border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 6, padding: '6px 9px', background: 'var(--dsw-alias-interactive-bg-hover)', color: 'var(--dsw-alias-label-primary)', cursor: 'pointer' };
@@ -23,7 +23,7 @@ export async function sendAgentBrowserAction(sessionId: string, action: BrowserA
   if (!response.ok) throw new Error('浏览器操作失败');
 }
 
-export async function readAgentBrowserFrame(sessionId: string, signal?: AbortSignal, afterRevision?: number): Promise<{ frame: BrowserViewFrame | null; unchanged: boolean }> {
+export async function readAgentBrowserFrame(sessionId: string, signal?: AbortSignal, afterRevision?: number): Promise<{ frame: BrowserViewFrame | null; unchanged: boolean; activity: BrowserViewActivity | null }> {
   const response = await fetch('/api/workdsh-agent-browser', {
     method: 'POST',
     credentials: 'same-origin',
@@ -32,8 +32,11 @@ export async function readAgentBrowserFrame(sessionId: string, signal?: AbortSig
     signal,
   });
   if (!response.ok) throw new Error('无法读取浏览器画面');
-  const payload = await response.json() as { frame?: BrowserViewFrame | null; unchanged?: boolean };
-  return { frame: payload.frame ?? null, unchanged: payload.unchanged === true };
+  const payload = await response.json() as { frame?: BrowserViewFrame | null; unchanged?: boolean; activity?: BrowserViewActivity | null };
+  const activity = payload.activity;
+  return { frame: payload.frame ?? null, unchanged: payload.unchanged === true,
+    activity: activity && typeof activity.active === 'boolean' && Number.isSafeInteger(activity.revision) && activity.revision > 0
+      ? { active: activity.active, revision: activity.revision } : null };
 }
 
 export function AgentBrowserPage({ sessionId }: PropsRuntime<'sidebar.right.pane.tab'>) {
