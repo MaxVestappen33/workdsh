@@ -13,10 +13,11 @@ test('native reconciliation sends only the selected baseline and never claims ac
   assert.equal(path,'/api/workdsh-workbench-native-installation');
   assert.deepEqual(JSON.parse(options.body),{developmentId:'dev',expectedRevision:'r1',version:'1.0.0',sha256:selection.sha256});
   assert.equal(options.credentials,'same-origin');
-  return Response.json({ok:true,value:{...value,path:'/private',package:{...value.package,path:'/private'}}});
+  return Response.json({ok:true,value:{...value,path:'/private',package:{...value.package,path:'/private'},activation:{status:'not-checked',reason:'verification-only'},clientPage:{status:'not-checked'},nextStep:{ifActivationAuthorized:{enable:{tool:'plugin_manager',arguments:{action:'set_bundle',target:selection.packageName,enabled:true}}}}}});
  })({...selection,path:'/never-send'});
  assert.equal(result.installedVerified,true);assert.equal(result.activationVerified,false);
  assert.equal(result.path,undefined);assert.equal(result.package.path,undefined);assert.ok(Object.isFrozen(result.package));
+ assert.equal(result.nextStep,undefined,'the compatibility client does not execute or promote conditional management guidance');
 });
 test('native reconciliation rejects foreign receipts, activation claims, failed HTTP and late responses',async()=>{
  for(const bad of [{...value,developmentId:'foreign'},{...value,package:{...value.package,sha256:'b'.repeat(64)}},{...value,package:{...value.package,version:'2.0.0'}},{...value,descriptor:{...descriptor,id:'foreign.id'}},{...value,activationVerified:true},{...value,installedVerified:false}])

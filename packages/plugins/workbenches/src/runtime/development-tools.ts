@@ -61,11 +61,11 @@ export function registerWorkbenchDevelopmentTools(ctx:Context,api:WorkbenchDevel
   }));
   ctx.tools.register(defineTool({
     name:'workbench_verify_native_installation',
-    description:'原生 plugin_manager install_bundle 安装后，核对本会话关联工作台的实际安装字节、版本和候选包并登记。首次原生安装使用 enabled:false，核对后用户可在工作台列表启用。参数仅接受实际候选包的版本和SHA256，不能传开发记录、包名或文件路径。实际安装、平台登记、活动版本与页面打开是不同事实；本工具不替代启用、重启或业务验收。保持原生权限，不能用模型完成声明替代安装结果。',
+    description:'原生 plugin_manager install_bundle 安装后，核对本会话关联工作台的实际安装字节、版本和候选包并登记。参数仅接受实际候选版本和SHA256。activationVerified:false 仅表示本工具不核验启用，并非停用或失败，不能据此重复安装。用户已授权启用时按回执先 list_bundles 核对实际包名，再 set_bundle；不要猜 entryId 或用 set_plugin。未获启用授权则留在工作台列表。页面与业务需在当前已认证宿主应用验收：Desktop 用运行中的 WebView，Web 用当前已登录页面；独立任务浏览器401不代表应用失败，不得探查或复制凭据绕过。',
     parameters:{version:{type:'string',required:true,description:'实际候选包的完整、规范SemVer版本。'},sha256:{type:'string',required:true,description:'实际tgz字节的64位小写SHA256。'}},
     output:output('工作台安装核对结果'),
     presentCall:()=>({card:'generic',title:'核对工作台安装',kind:'read'}),
-    presentResult:(_args,result)=>({card:'generic',title:result.isError?'工作台安装核对未完成':'工作台安装核对结果',...(!result.isError?{content:[{type:'text' as const,text:'已核对实际安装结果；启用、重启与页面验收需分别确认。'}]}:{})}),
+    presentResult:(_args,result)=>({card:'generic',title:result.isError?'工作台安装核对未完成':'工作台安装核对结果',...(!result.isError?{content:[{type:'text' as const,text:'安装字节已核对并登记；启用状态尚未核验，不表示启用失败。启用、重启与宿主页面验收需分别确认。'}]}:{})}),
     async execute(args,exec){
       allowed(args,['version','sha256']);
       if(typeof args.version!=='string'||args.version.length>256||!exactVersion.test(args.version)||semver.valid(args.version)===null||

@@ -18,6 +18,7 @@ import { receiveWorkbenchArtifact } from './upload-artifact.js';
 import { inspectWorkbenchPackageArtifact } from './package-artifact.js';
 import { validateWorkbenchPackageLayout } from './package-layout.js';
 import { readWorkbenchRequestBody } from './request-body.js';
+import {nativeWorkbenchInstallationHandoff} from './native-installation-handoff.js';
 
 /** Reconcile a native package-manager installation. This owner never installs,
  * enables, reloads, or trusts a model-provided installation receipt. */
@@ -101,7 +102,8 @@ export async function mountNativeWorkbenchInstallationHost(ctx: Context, directo
     }, { waitMs: 10_000 });
     await guard();
     return Object.freeze({ developmentId: baseline.id, iterationId: baseline.iterationId, package: candidate.package,
-      descriptor: candidate.descriptor, installedVerified: true as const, activationVerified: false as const });
+      descriptor: candidate.descriptor, installedVerified: true as const, activationVerified: false as const,
+      ...nativeWorkbenchInstallationHandoff(baseline.packageName) });
   }
   const api = {
     async readContext(sessionId: string, signal?: AbortSignal) {
