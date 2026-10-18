@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
+import { retainWorkbenchArchives } from './retain-workbench-archives.mjs';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { copyFileSync, mkdirSync, existsSync, mkdtempSync, rmSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -29,6 +30,8 @@ const expectedHarness = manifest.harness;
 if (typeof expectedHarness !== 'string' || expectedHarness.length === 0) {
   throw new Error('Release manifest does not declare the required Harness version.');
 }
+const groupVersion = manifest.runtimeOverrides?.['@deepseek-ai/cordis-plugin-group'];
+if (typeof groupVersion !== 'string' || !/^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/.test(groupVersion)) throw new Error('Release manifest must pin the exact official Cordis group version.');
 const packages = new Map(manifest.packages.map(item => [item.name, item]));
 const defaultInstallOrder = [
   'workdsh-provider-identity-local',
@@ -40,21 +43,22 @@ const defaultInstallOrder = [
   'workdsh-plugin-experts',
   'workdsh-plugin-connectors',
   'workdsh-plugin-library',
+  'workdsh-plugin-workbenches',
   'workdsh-bundle',
 ];
 
 const optionalFeatures = {
-  office:'workdsh-plugin-office',projects:'workdsh-plugin-projects',activity:'workdsh-plugin-activity',
+  office:'workdsh-plugin-office',projects:'workdsh-plugin-projects',activity:'workdsh-plugin-activity','quality-analysis':'workdsh-plugin-quality-analysis',
 };
 const requested = value('--with','');
 if (typeof requested !== 'string') throw new Error('--with requires comma-separated feature names');
 const features = requested ? [...new Set(requested.split(','))] : [];
-if (features.some(name => !Object.hasOwn(optionalFeatures,name))) throw new Error('Only office, projects and activity may be explicitly selected; enterprise plugins are installed separately.');
+if (features.some(name => !Object.hasOwn(optionalFeatures,name))) throw new Error('Only office, projects, activity and quality-analysis may be explicitly selected; enterprise plugins are installed separately.');
 const installOrder = [...defaultInstallOrder.slice(0,-1),...features.map(name=>optionalFeatures[name]),defaultInstallOrder.at(-1)];
 // Fail before creating/updating a Profile if a future release changes the default boundary.
 if (manifest.installation?.defaultPackages && JSON.stringify(manifest.installation.defaultPackages)!==JSON.stringify(defaultInstallOrder))
   throw new Error('Release default installation policy does not match this installer');
-console.log('Default features: experts, Skill, library and MCP. Optional: '+(features.join(', ')||'none'));
+console.log('Default features: experts, Skill, library, MCP and workbenches. Optional: '+(features.join(', ')||'none'));
 
 for (const name of installOrder) {
   const item = packages.get(name);
@@ -65,12 +69,30 @@ for (const name of installOrder) {
   if (actual !== item.sha256) throw new Error(`SHA-256 mismatch for ${item.filename}.`);
 }
 
+// Official CLI resolves pnpm from PATH. Bind that executable to the same
+// Corepack version used by the remaining install steps, without global changes.
+let installationEnv = process.env;
+if (!dryRun) {
+  if (!/^pnpm@\d+\.\d+\.\d+$/.test(manifest.packageManager ?? '')) throw new Error('Release must pin pnpm');
+  const shimDirectory = mkdtempSync(join(tmpdir(), 'workdsh-pnpm-'));
+  process.once('exit', () => rmSync(shimDirectory, { recursive: true, force: true }));
+  const runner = join(shimDirectory, 'pnpm-runner.cjs');
+  writeFileSync(runner, `const {spawnSync}=require('node:child_process');const result=spawnSync(${JSON.stringify(corepack)},['pnpm',...process.argv.slice(2)],{stdio:'inherit',env:{...process.env,COREPACK_ENABLE_PROJECT_SPEC:'1'}});if(result.error)throw result.error;process.exit(result.status??1);\n`);
+  if (process.platform === 'win32') {
+    if (/["%\r\n]/.test(process.execPath + runner)) throw new Error('Unsupported executable path for pnpm launcher');
+    writeFileSync(join(shimDirectory, 'pnpm.cmd'), `@"${process.execPath}" "${runner}" %*\r\n`);
+  } else {
+    writeFileSync(join(shimDirectory, 'pnpm'), `#!${process.execPath}\nrequire(${JSON.stringify(runner)});\n`, { mode: 0o700 });
+  }
+  installationEnv = { ...process.env, PATH: shimDirectory + delimiter + (process.env.PATH ?? '') };
+}
+
 function execute(args, options = {}) {
   console.log(`> ${dsh} ${args.join(' ')}`);
   if (dryRun && !options.always) return undefined;
   const result = spawnSync(dsh, args, options.capture
-    ? { encoding: 'utf8' }
-    : { stdio: 'inherit' });
+    ? { encoding: 'utf8', env: installationEnv }
+    : { stdio: 'inherit', env: installationEnv });
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status ?? 1);
   return result;
@@ -86,7 +108,7 @@ if (actualHarness !== expectedHarness) {
   throw new Error(`WorkDSH ${manifest.version} requires dsh ${expectedHarness}; found ${actualHarness || 'unknown'}. Pass --dsh /absolute/path/to/a-compatible-dsh.`);
 }
 
-const profileManifest = join(dshHome, '../../profiles', profile, 'package.json');
+const profileManifest = join(dshHome, 'profiles', profile, 'package.json');
 if (existsSync(profileManifest)) {
   console.log(`Existing profile ${profile} detected; preserving its configuration and stored data.`);
   execute(['--profile', profile, '--dump-config']);
@@ -101,7 +123,7 @@ if (!dryRun && existsSync(profileManifest) && /^pnpm@\d+\.\d+\.\d+$/.test(manife
   writeFileSync(profileManifest, JSON.stringify(profilePackage, null, 2) + '\n');
 }
 
-const workspaceFile = join(dshHome, '../../profiles', profile, 'pnpm-workspace.yaml');
+const workspaceFile = join(dshHome, 'profiles', profile, 'pnpm-workspace.yaml');
 if (!dryRun && existsSync(workspaceFile)) {
   let current = readFileSync(workspaceFile, 'utf8');
   // Native helpers are required by the official runtime; the other two scripts
@@ -140,27 +162,33 @@ if (!dryRun && existsSync(workspaceFile)) {
   writeFileSync(workspaceFile, current);
 }
 
-execute(['plugin', '--profile', profile, 'add', `@deepseek-ai/dsh-base@${expectedHarness}`, `@deepseek-ai/dsh-web-app@${expectedHarness}`]);
-
-for (const name of installOrder) {
+// Retain installation assets independently of the download/candidate directory.
+const installAssets = join(dshHome, 'profiles', profile, 'workdsh-package-assets');
+const selectedAssets = installOrder.map(name => {
   const item = packages.get(name);
-  execute(['plugin', '--profile', profile, 'add', join(directory, item.filename)]);
-  // Installing a package does not guarantee that DSH loads its bundle. The
-  // browser-session provider is inserted by workdsh-bundle's patch instead.
-  if (!dryRun && name !== 'workdsh-provider-browser-session') {
-    const profilePackage = JSON.parse(readFileSync(profileManifest, 'utf8'));
-    const bundles = profilePackage.dsh?.profile?.bundles ?? [];
-    if (!bundles.includes(name)) bundles.push(name);
-    profilePackage.dsh = { ...profilePackage.dsh, profile: { ...profilePackage.dsh?.profile, bundles } };
-    writeFileSync(profileManifest, JSON.stringify(profilePackage, null, 2) + '\n');
-  }
+  if (dryRun) return join(directory, item.filename);
+  mkdirSync(installAssets, { recursive: true });
+  const path = join(installAssets, `${item.sha256}.tgz`);
+  if (existsSync(path)) {
+    if (createHash('sha256').update(readFileSync(path)).digest('hex') !== item.sha256) throw new Error('Retained installation asset mismatch');
+  } else copyFileSync(join(directory, item.filename), path);
+  return path;
+});
+// Submit the whole dependency update through one official, locked CLI operation.
+execute(['plugin', '--profile', profile, 'add', `@deepseek-ai/dsh-base@${expectedHarness}`, `@deepseek-ai/dsh-web-app@${expectedHarness}`, ...selectedAssets]);
+if (!dryRun) {
+  const profilePackage = JSON.parse(readFileSync(profileManifest, 'utf8'));
+  const bundles = profilePackage.dsh?.profile?.bundles ?? [];
+  for (const name of installOrder) if (name !== 'workdsh-provider-browser-session' && !bundles.includes(name)) bundles.push(name);
+  profilePackage.dsh = { ...profilePackage.dsh, profile: { ...profilePackage.dsh?.profile, bundles } };
+  writeFileSync(profileManifest, JSON.stringify(profilePackage, null, 2) + '\n');
 }
 
-// Keep CLI and ConfigEditor in the same Profile dependency graph (0.1.7).
-const runtimeArgs = ['pnpm', '--dir', join(dshHome, '../../profiles', profile), 'add', '--save-exact', `@deepseek-ai/dsh@${expectedHarness}`, `@deepseek-ai/dsh-deepseek-account@${expectedHarness}`, '@deepseek-ai/cordis-plugin-group@1.0.4'];
+// Keep CLI and ConfigEditor in the same pinned Profile dependency graph.
+const runtimeArgs = ['pnpm', '--dir', join(dshHome, 'profiles', profile), 'add', '--save-exact', `@deepseek-ai/dsh@${expectedHarness}`, `@deepseek-ai/dsh-deepseek-account@${expectedHarness}`, `@deepseek-ai/cordis-plugin-group@${groupVersion}`];
 console.log(`> ${corepack} ${runtimeArgs.join(' ')}`);
 if (!dryRun) {
-  const result = spawnSync(corepack, runtimeArgs, { stdio: 'inherit' });
+  const result = spawnSync(corepack, runtimeArgs, { stdio: 'inherit', cwd: dirname(profileManifest) });
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
@@ -168,7 +196,7 @@ if (!dryRun) {
 // are bundled and not published to npm. Install the official runtime peer closure
 // explicitly so a clean Profile can boot without relying on the developer repo.
 if (!dryRun) {
-  const scope = join(dshHome, '../../profiles', profile, 'node_modules', '@deepseek-ai');
+  const scope = join(dshHome, 'profiles', profile, 'node_modules', '@deepseek-ai');
   for (let pass = 0; existsSync(scope); pass++) {
     const missing = new Map();
     for (const entry of readdirSync(scope)) {
@@ -184,11 +212,12 @@ if (!dryRun) {
     }
     if (!missing.size) break;
     if (pass >= 8) throw new Error('Official runtime peer dependencies did not converge.');
-    const result = spawnSync(corepack, ['pnpm', '--dir', join(dshHome, '../../profiles', profile), 'add', '--save-exact', ...missing.values()], { stdio: 'inherit' });
+    const result = spawnSync(corepack, ['pnpm', '--dir', join(dshHome, 'profiles', profile), 'add', '--save-exact', ...missing.values()], { stdio: 'inherit', cwd: dirname(profileManifest) });
     if (result.error) throw result.error;
     if (result.status !== 0) process.exit(result.status ?? 1);
   }
 }
-const profileCli = join(dshHome, '../../profiles', profile, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js');
+if (!dryRun) await retainWorkbenchArchives(join(dshHome, 'profiles', profile), directory, installOrder.map(name => packages.get(name)));
+const profileCli = join(dshHome, 'profiles', profile, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js');
 console.log(`\nWorkDSH ${manifest.version} ${dryRun ? 'installation plan verified' : 'is installed'} in profile ${profile}.`);
 console.log(`Start it with: node ${JSON.stringify(profileCli)} --profile ${JSON.stringify(profile)}`);

@@ -8,6 +8,6 @@
 - [library-team](library-team/README.md)：团队资产。
 - [runtime-isolated](runtime-isolated/README.md)：隔离执行。
 
-identity-local、identity-enterprise 和 browser-session 已有开发实现；identity-oidc、library-team、runtime-isolated 仍为规划骨架。实现状态不等于已在企业部署启用。目录名不改变包身份；示例仍位于 examples。新增模块同步 [模块台账](../../apps/web/docs/modules.json) 和 workspace。开发顺序见 [逐插件计划](../../apps/web/docs/PLUGIN-DELIVERY.md)。
+identity-local、identity-enterprise 和 browser-session 已有开发实现；runtime-isolated 已提供受信离线包校验及官方工具执行适配器，尚未通过原生 Desktop 生命周期验收；identity-oidc、library-team 仍为规划骨架。实现状态不等于已在企业部署启用。目录名不改变包身份；示例仍位于 examples。新增模块同步 [模块台账](../../apps/web/docs/modules.json) 和 workspace。开发顺序见 [逐插件计划](../../apps/web/docs/PLUGIN-DELIVERY.md)。
 
-企业服务器当前路线与边界见[架构](../../apps/web/docs/ARCHITECTURE.md)和[验收要求](../../apps/web/docs/ACCEPTANCE.md)。library-team 暂不开发；执行隔离需求保留，runtime-isolated 是否独立实现须先核对官方接口。
+企业服务器当前路线与边界见[架构](../../apps/web/docs/ARCHITECTURE.md)和[验收要求](../../apps/web/docs/ACCEPTANCE.md)。library-team 暂不开发；执行隔离需求保留，runtime-isolated 通过官方工具执行，当前为开发库；不提供第二套 Agent、Host 或通用作业调度器。

@@ -78,7 +78,7 @@ try {
   assert.ok(config.includes("name: '@deepseek-ai/dsh-experimental-browser-use-playwright-mcp'"));
   assert.ok(config.includes("name: '@deepseek-ai/dsh-experimental-auto-review'"));
   assert.equal(config.split('id: workdsh-skills').length - 1, 1);
-  const installed = JSON.parse(readFileSync(resolve(home, '../../profiles/probe/node_modules/workdsh-bundle/package.json'), 'utf8'));
+  const installed = JSON.parse(readFileSync(resolve(home, 'profiles/probe/node_modules/workdsh-bundle/package.json'), 'utf8'));
   assert.equal(installed.version, version);
   if (process.argv.includes('--browser')) {
     // Browser coverage needs one selectable official Workspace. Seed only the

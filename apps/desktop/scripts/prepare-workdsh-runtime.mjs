@@ -5,9 +5,9 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync,
 import { dirname, join, resolve } from 'node:path'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
-import { DSH_VERSION } from './runtime-version.mjs'
+import { DSH_VERSION, OFFICIAL_PNPM_VERSION } from './runtime-version.mjs'
 import { CATALOG_PACKAGES, ENTERPRISE_PACKAGES, PRODUCT_PACKAGES, RELEASE_PACKAGES } from './workdsh-package-boundary.mjs'
-import { verifyDefaultComposition, verifyDefaultProfile, verifyInstalledDshVersions, verifyOfficialWebPackages, verifyPackageDshReferences, verifyProfileRelease, verifyReleaseArchives } from './verify-profile-release.mjs'
+import { composeProfilePatches, verifyDefaultComposition, verifyDefaultProfile, verifyInstalledDshVersions, verifyOfficialWebPackages, verifyPackageDshReferences, verifyProfileRelease, verifyReleaseArchives } from './verify-profile-release.mjs'
 import { runtimeArchitecture, runtimeArchitectureYaml } from './runtime-architecture.mjs'
 const architecture = runtimeArchitecture()
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -20,7 +20,7 @@ if (!existsSync(manifestFile)) throw new Error('Pack built current WorkDSH sourc
 const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'))
 verifyProfileRelease(manifest, DSH_VERSION, RELEASE_PACKAGES)
 verifyReleaseArchives(manifest, release)
-const marker = JSON.stringify({ harness: DSH_VERSION, layout: 'five-feature-plugins-external-enterprise-v6', architecture, release: manifest })
+const marker = JSON.stringify({ harness: DSH_VERSION, pnpm: OFFICIAL_PNPM_VERSION, layout: 'five-feature-plugins-external-enterprise-v6', architecture, release: manifest })
 const markerPath = join(profile, '.workdsh-desktop-release.json')
 const readJson = path => JSON.parse(readFileSync(path, 'utf8'))
 function run(command, args, options = {}) {
@@ -102,12 +102,12 @@ if (!prepared) {
       const target = PRODUCT_PACKAGES.includes(item.name) ? dependencies : optionalDependencies
       target[item.name] = 'file:../../package-cache/' + item.filename
     }
-    const pkg = { name: 'workdsh-desktop-profile', private: true, type: 'module', packageManager: 'pnpm@11.7.0', dependencies, optionalDependencies,
+    const pkg = { name: 'workdsh-desktop-profile', private: true, type: 'module', packageManager: `pnpm@${OFFICIAL_PNPM_VERSION}`, dependencies, optionalDependencies,
       dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', ...PRODUCT_PACKAGES, ...Object.keys(CATALOG_PACKAGES)] } } }
     writeFileSync(join(profile, 'package.json'), JSON.stringify(pkg, null, 2) + '\n')
     const overrides = Object.entries(manifest.runtimeOverrides ?? {}).map(([name, version]) => `  ${JSON.stringify(name)}: ${JSON.stringify(version)}`).join('\n')
     writeFileSync(join(profile, 'pnpm-workspace.yaml'), 'autoInstallPeers: true\nstrictPeerDependencies: false\n' + runtimeArchitectureYaml(architecture) + 'overrides:\n' + overrides + '\n')
-    run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['--yes', 'pnpm@11.7.0', '--dir', profile, 'install', '--prod', '--ignore-scripts'], { shell: process.platform === 'win32' })
+    run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['--yes', `pnpm@${OFFICIAL_PNPM_VERSION}`, '--dir', profile, 'install', '--prod', '--ignore-scripts'], { shell: process.platform === 'win32' })
     // Promote mandatory official peers into this installation's single root
     // graph, so CLI, Config Editor and Agent providers share module instances.
     for (let pass = 0; pass < 9; pass++) {
@@ -123,13 +123,13 @@ if (!prepared) {
       }
       if (!missing.size) break
       if (pass === 8) throw new Error('Official runtime peer closure did not converge')
-      run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['--yes', 'pnpm@11.7.0', '--dir', profile, 'add', '--save-exact', '--ignore-scripts', ...missing.values()], { shell: process.platform === 'win32' })
+      run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['--yes', `pnpm@${OFFICIAL_PNPM_VERSION}`, '--dir', profile, 'add', '--save-exact', '--ignore-scripts', ...missing.values()], { shell: process.platform === 'win32' })
     }
     const patches = RELEASE_PACKAGES.filter(name => !PRODUCT_PACKAGES.includes(name) && !ENTERPRISE_PACKAGES.includes(name))
       .map(name => join(profile, 'node_modules', name, 'cordis.patch.yml')).filter(existsSync)
       .map(path => readFileSync(path, 'utf8').trim())
     writeFileSync(join(profile, 'cordis.yml'), '[]\n')
-    writeFileSync(join(profile, 'cordis.patch.yml'), patches.join('\n') + '\n')
+    writeFileSync(join(profile, 'cordis.patch.yml'), composeProfilePatches(patches))
     verifyInstalled()
     writeFileSync(markerPath, marker + '\n')
     rmSync(backup, { recursive: true, force: true })

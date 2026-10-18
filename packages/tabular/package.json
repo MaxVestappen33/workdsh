@@ -1,0 +1,37 @@
+{
+  "name": "workdsh-tabular",
+  "version": "0.1.0-alpha.5",
+  "private": true,
+  "type": "module",
+  "description": "Shared bounded CSV/XLSX reading and primitive-only XLSX writing; no Office UI or plugin activation.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./csv": {
+      "types": "./dist/csv.d.ts",
+      "default": "./dist/csv.js"
+    },
+    "./package.json": "./package.json",
+    "./licenses": "./dist/THIRD-PARTY-LICENSES.txt"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node ../../apps/web/scripts/build-tabular.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "exceljs": "4.4.0",
+    "papaparse": "5.7.0",
+    "jszip": "3.10.1",
+    "saxes": "5.0.1"
+  },
+  "devDependencies": {
+    "@types/papaparse": "5.5.2"
+  }
+}

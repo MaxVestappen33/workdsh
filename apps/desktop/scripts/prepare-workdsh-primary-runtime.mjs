@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
-import { cpSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { prepareOfficialRelease } from './official-desktop-release.mjs'
-import { DSH_VERSION } from './runtime-version.mjs'
+import { copyOfficialRuntime, prepareOfficialRelease } from './official-desktop-release.mjs'
+import { DSH_VERSION, OFFICIAL_PNPM_VERSION } from './runtime-version.mjs'
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const target = process.platform === 'win32' ? 'win-x64'
@@ -20,7 +20,7 @@ if (!existsSync(profileMarker) || JSON.parse(readFileSync(profileMarker, 'utf8')
   throw new Error('Prepare and verify the target WorkDSH Profile before its primary runtime')
 }
 const released = await prepareOfficialRelease(desktopRoot, target)
-for (const name of ['primary-runtime', 'office-skills']) cpSync(join(released, 'runtime', name), join(output, name), { recursive: true, force: true, dereference: false })
+for (const name of ['primary-runtime', 'office-skills']) copyOfficialRuntime(join(released, 'runtime', name), join(output, name))
 const manifestPath = join(output, 'primary-runtime', 'runtime.json')
 if (!existsSync(manifestPath) || !existsSync(join(output, 'office-skills'))) {
   throw new Error('Official primary runtime payload is incomplete')
@@ -31,7 +31,7 @@ if (manifest.desktopVersion !== DSH_VERSION || manifest.platform !== process.pla
   throw new Error(`Official primary runtime metadata does not match ${target} / ${DSH_VERSION}`)
 }
 const runtimePnpm = join(output, 'primary-runtime', 'dependencies', 'pnpm', 'bin', 'pnpm.cjs')
-if (manifest.pnpm !== '11.7.0' || !existsSync(runtimePnpm)) throw new Error('Official primary runtime must carry its pinned pnpm 11.7.0 JavaScript CLI')
+if (manifest.pnpm !== OFFICIAL_PNPM_VERSION || !existsSync(runtimePnpm)) throw new Error('Official primary runtime must carry the locked official pnpm JavaScript CLI')
 const packagePath = join(profile, 'package.json')
 if (!existsSync(packagePath)) throw new Error('WorkDSH release profile must be prepared first')
 const profilePackage = JSON.parse(readFileSync(packagePath, 'utf8'))

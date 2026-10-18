@@ -20,7 +20,7 @@ test('published registry registers frozen expert declaration and restores it aft
   async function boot() {
     const ctx = new Context(); ctx.baseUrl = pathToFileURL(dirname(require.resolve('@deepseek-ai/dsh/package.json')) + '/').href; contexts.push(ctx);
     await ctx.plugin(Loader, { baseUrl: pathToFileURL(dirname(require.resolve('@deepseek-ai/dsh/package.json')) + '/').href });
-    for (const name of ['dsh-session', 'dsh-session-projection', 'dsh-system-prompt', 'dsh-tools', 'dsh-llm', 'dsh-agent', 'dsh-skill']) await ctx.loader.create({name: '@deepseek-ai/' + name});
+    for (const name of ['dsh-fs-local', 'dsh-working-directory', 'dsh-session', 'dsh-session-projection', 'dsh-system-prompt', 'dsh-tools', 'dsh-llm', 'dsh-agent', 'dsh-skill']) await ctx.loader.create({name: '@deepseek-ai/' + name});
     await ctx.plugin(AgentPresetRegistry, { default: 'standard' });
     await ctx.loader.create({ name: '@deepseek-ai/dsh-agent-preset', config: { id: 'standard', plugins: [] } });
     return ctx;
@@ -63,7 +63,7 @@ test('explicit expert homes compile and restore without reading another home or 
     const ctx = new Context(); contexts.push(ctx);
     const baseUrl = pathToFileURL(dirname(require.resolve('@deepseek-ai/dsh/package.json')) + '/').href;
     ctx.baseUrl = baseUrl; await ctx.plugin(Loader,{baseUrl});
-    for(const name of ['dsh-session','dsh-session-projection','dsh-system-prompt','dsh-tools','dsh-llm','dsh-agent','dsh-skill'])await ctx.loader.create({name:'@deepseek-ai/'+name});
+    for(const name of ['dsh-fs-local', 'dsh-working-directory', 'dsh-session','dsh-session-projection','dsh-system-prompt','dsh-tools','dsh-llm','dsh-agent','dsh-skill'])await ctx.loader.create({name:'@deepseek-ai/'+name});
     await ctx.plugin(AgentPresetRegistry,{default:'standard'});
     await ctx.loader.create({name:'@deepseek-ai/dsh-agent-preset',config:{id:'standard',plugins:[]}});
     return ctx;

@@ -2,14 +2,6 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { Context } from '@deepseek-ai/cordis';
-import Sessions from '@deepseek-ai/dsh-session';
-import Projections from '@deepseek-ai/dsh-session-projection';
-import SystemPrompt from '@deepseek-ai/dsh-system-prompt';
-import Tools from '@deepseek-ai/dsh-tools';
-import Llm from '@deepseek-ai/dsh-llm';
-import Agents from '@deepseek-ai/dsh-agent';
-import AgentLoop from '@deepseek-ai/dsh-agent-loop';
-import BrowserUse from '@deepseek-ai/dsh-browser-use';
 import * as BrowserSession from '../dist/index.js';
 
 const TOOL = 'mcp__workdsh-playwright__browser_navigate';
@@ -18,6 +10,9 @@ test('official Agent Sessions receive isolated managed Playwright tools', {
   skip: !process.env.DSH_BROWSER_EXECUTABLE && !process.env.DSH_ELECTRON_TEST_EXECUTABLE,
   timeout: 60_000,
 }, async () => {
+  const runtime = await import('../../../../apps/web/tests/helpers/skill-runtime.mjs');
+  const {Sessions, Projections, SystemPrompt, Tools, Llm, Agents, AgentLoop} = runtime;
+  const {default: BrowserUse} = await import('@deepseek-ai/dsh-browser-use');
   const ctx = new Context();
   const handles = [];
   let route;

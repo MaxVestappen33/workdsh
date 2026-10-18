@@ -37,6 +37,25 @@ test('skills Host owns a disposable manager and official skill registration', as
       assert.ok((await readFile(resource, 'utf8')).length > 100);
     }
     assert.ok(renderSkillContent(registered).includes(registered.resourceBase.path));
+    const workbench = await ctx.skills.get('workdsh-workbench-dev');
+    assert.equal(workbench.name, 'workdsh-workbench-dev');
+    assert.equal(workbench.source, 'bundled');
+    assert.equal(workbench.resourceBase.kind, 'directory');
+    const workbenchDocument = await readFile(new URL('../../../../packages/plugins/skills/resources/skills/workdsh-workbench-dev/SKILL.md', import.meta.url), 'utf8');
+    const workbenchBody = workbenchDocument.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n([\s\S]*)$/);
+    assert.ok(workbenchBody, 'the packaged Markdown source has frontmatter and a body');
+    assert.equal(workbench.content, workbenchBody[1].trim(), 'registered content is generated from the single Markdown source');
+    const workbenchIntroduction = workbench.content.split(/\r?\n\r?\n/)[1];
+    assert.match(workbenchIntroduction, /^先通过宿主技能工具加载官方 `cordis-plugin-development`/);
+    assert.match(workbenchIntroduction, /官方 Creator.*`cordis`/);
+    assert.ok(renderSkillContent(workbench).includes(workbench.resourceBase.path));
+    for (const reference of ['first-development.md', 'iteration.md']) {
+      assert.ok(workbench.content.includes(`references/${reference}`));
+      const resource = await readFile(join(workbench.resourceBase.path, 'references', reference), 'utf8');
+      assert.ok(resource.length > 100, `${reference} is a readable bundled resource`);
+      assert.match(resource, /^# /);
+      assert.match(resource, /先加载\s*(?:官方\s+)?`cordis-plugin-development`/);
+    }
     for (const skillName of ['workdsh-ppt-design', 'workdsh-word-design', 'workdsh-excel-design', 'workdsh-web-design']) {
       const guidance = await ctx.skills.get(skillName);
       assert.equal(guidance.source, 'bundled');

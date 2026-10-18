@@ -452,3 +452,48 @@ test('official watcher retires a disabled skill and rediscovers it after enable'
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('plugin display contributions preserve execution identity and release without touching skills', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'workdsh-skill-display-'));
+  const ctx = new Context();
+  try {
+    await ctx.plugin(SkillRegistry);
+    new SkillManager(ctx, { dshHome: root, agentsHome: join(root, 'agents') });
+    const registration = { name: 'sigmapad-normality-test', description: 'Normality', source: 'bundled', content: '# Instructions' };
+    const removeSkill = ctx.skills.register(registration);
+    const rows = [{ name: registration.name, title: '正态性检验', localizedDescription: '核对连续变量的正态性。' }];
+    const release = ctx.workdshSkills.registerDisplayMetadata('sigmapad', rows);
+    rows[0].title = 'Mutated';
+    assert.equal((await ctx.workdshSkills.list()).find(row => row.name === registration.name).title, '正态性检验');
+    assert.equal((await ctx.workdshSkills.detail(registration.name)).title, '正态性检验');
+    assert.equal((await ctx.skills.get(registration.name)).name, registration.name);
+    assert.throws(() => ctx.workdshSkills.registerDisplayMetadata('sigmapad', []), /display-conflict/);
+    assert.throws(() => ctx.workdshSkills.registerDisplayMetadata('other', [{ name: registration.name, title: '覆盖' }]), /display-invalid/);
+    assert.throws(() => ctx.workdshSkills.registerDisplayMetadata('workdsh', []), /display-invalid/);
+    assert.throws(() => ctx.workdshSkills.registerDisplayMetadata('other', [{ name: 'other-one', title: '\n' }]), /display-invalid/);
+    release(); release();
+    assert.equal((await ctx.workdshSkills.detail(registration.name)).title, undefined);
+    assert.ok(await ctx.skills.get(registration.name));
+    const release2 = ctx.workdshSkills.registerDisplayMetadata('sigmapad', [{ name: registration.name, title: '新版正态性检验' }]);
+    release();
+    assert.equal((await ctx.workdshSkills.detail(registration.name)).title, '新版正态性检验');
+    release2(); removeSkill();
+  } finally { await ctx.fiber.dispose(); await rm(root, { recursive: true, force: true }); }
+});
+
+test('catalog-owned titles take precedence over plugin display contributions', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'workdsh-skill-display-catalog-'));
+  const ctx = new Context();
+  try {
+    const catalogRoot = join(root, 'catalog'); await mkdir(catalogRoot);
+    await writeFile(join(catalogRoot, 'catalog.json'), JSON.stringify({ schema: 1, kind: 'workdsh-skill-catalog', entries: [{ name: 'sigmapad-normality-test', title: '目录核定名称' }] }));
+    await ctx.plugin(SkillRegistry);
+    new SkillManager(ctx, { dshHome: root, agentsHome: join(root, 'agents'), catalogRoot });
+    ctx.skills.register({ name: 'sigmapad-normality-test', description: 'Normality', source: 'bundled', content: '# Instructions' });
+    ctx.workdshSkills.registerDisplayMetadata('sigmapad', [{ name: 'sigmapad-normality-test', title: '插件名称' }]);
+    assert.equal((await ctx.workdshSkills.detail('sigmapad-normality-test')).title, '目录核定名称');
+    assert.equal((await ctx.workdshSkills.list()).find(row => row.name === 'sigmapad-normality-test').title, '目录核定名称');
+    await writeFile(join(catalogRoot, 'catalog.json'), JSON.stringify({ schema: 1, kind: 'workdsh-skill-catalog', entries: [{ name: 'sigmapad-normality-test' }] }));
+    assert.equal((await ctx.workdshSkills.detail('sigmapad-normality-test')).title, '插件名称');
+  } finally { await ctx.fiber.dispose(); await rm(root, { recursive: true, force: true }); }
+});

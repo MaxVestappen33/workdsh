@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import type { ConnectorManagementService } from 'workdsh-contracts';
 import { Context, Service } from '@deepseek-ai/cordis';
 import type { KvTable } from '@deepseek-ai/dsh-storage-domain';
 import type { SessionCreateRequest, SessionCreateValue } from '@deepseek-ai/dsh-api-session-controller';
@@ -197,6 +198,8 @@ function sanitizeFileName(fileName: string): string {
   return base || 'expert.zip';
 }
 
+declare module '@deepseek-ai/cordis' { interface Context { workdshConnectors: ConnectorManagementService; } }
+
 export interface ExpertsManagerOptions { agentsHome?: string; includeDefaultSkillRoots?: boolean; }
 
 export class ExpertsManager extends Service implements ExpertsService {
@@ -222,11 +225,13 @@ export class ExpertsManager extends Service implements ExpertsService {
   private readonly stagedImports = new TtlStore<StagedImport>(PLAN_TTL_MS);
   private readonly stagingRoot: string;
   private readonly agentsHome: string;
+  private connectors?: ConnectorManagementService;
+  private readonly unavailablePresets = new Set<string>();
   private readonly includeDefaultSkillRoots?: boolean;
 
   constructor(ctx: Context, options: ExpertsManagerOptions = {}) {
     super(ctx, 'workdshExperts');
-    const agentsHome = resolve(options.agentsHome ?? process.env.DSH_AGENTS_HOME ?? join(homedir(), '.agents'));
+    const agentsHome = resolve(options.agentsHome ?? process.env.DSH_AGENTS_HOME ?? (process.env.DSH_HOME ? join(process.env.DSH_HOME, 'agents') : join(homedir(), '.agents')));
     this.agentsHome = agentsHome;
     this.includeDefaultSkillRoots = options.includeDefaultSkillRoots;
     this.stagingRoot = join(agentsHome, '.workdsh-state', 'experts', 'staging');
@@ -237,6 +242,11 @@ export class ExpertsManager extends Service implements ExpertsService {
   }
 
   async [Service.init](): Promise<void> {
+    this.ctx.inject(['workdshConnectors'], (ctx) => {
+      const service = ctx.workdshConnectors;
+      this.connectors = service;
+      ctx.effect(() => () => { if (this.connectors === service) this.connectors = undefined; }, 'experts.connectors');
+    });
     const domain = await this.ctx.storageDomain.open(expertsDomainSpec);
     this.ctx.effect(() => () => domain.close(), 'workdshExperts.domainClose');
     this.experts = domain.table('experts');
@@ -246,7 +256,13 @@ export class ExpertsManager extends Service implements ExpertsService {
     this.preferences = domain.table('preferences');
     this.operations = domain.table('operations');
     for (const [, revision] of this.revisions.entries()) {
-      if (revision.compilerVersion === COMPILER_VERSION) await registerExpertPreset(this.ctx, revision.presetRevisionRef, revision.compositionDigest, this.agentsHome);
+      if (revision.compilerVersion !== COMPILER_VERSION) continue;
+      try {
+        await registerExpertPreset(this.ctx, revision.presetRevisionRef, revision.compositionDigest, this.agentsHome);
+      } catch {
+        // A missing persisted preset must not take unrelated experts offline.
+        this.unavailablePresets.add(revision.presetRevisionRef);
+      }
     }
     // Staged uploads are transient; best-effort cleanup when the plugin unloads.
     this.ctx.effect(() => () => { void rm(this.stagingRoot, { recursive: true, force: true }); }, 'workdshExperts.stagingCleanup');
@@ -558,6 +574,7 @@ export class ExpertsManager extends Service implements ExpertsService {
   private async readinessMap(revisions: readonly ExpertRevision[]): Promise<Map<string, ExpertReadiness>> {
     const map = new Map<string, ExpertReadiness>();
     if (revisions.length === 0) return map;
+    const availableConnectors = new Set((await this.connectors?.list().catch(() => []) ?? []).filter(row => row.enabled && row.state === 'ready').map(row => row.id));
     let health: Map<string, boolean> | undefined;
     try {
       health = new Map((await this.ctx.agentPresets.list()).map((preset) => [preset.id, !preset.broken]));
@@ -565,7 +582,11 @@ export class ExpertsManager extends Service implements ExpertsService {
       health = undefined;
     }
     for (const revision of revisions) {
-      if (revision.definition.futureRequirements.some((requirement) => requirement.required)) {
+      if (this.unavailablePresets.has(revision.presetRevisionRef)) {
+        map.set(revision.revisionId, 'broken');
+        continue;
+      }
+      if (revision.definition.futureRequirements.some((requirement) => requirement.required && (requirement.kind !== 'connector' || !availableConnectors.has(requirement.key)))) {
         map.set(revision.revisionId, 'unsupported-capability');
         continue;
       }
@@ -575,9 +596,30 @@ export class ExpertsManager extends Service implements ExpertsService {
     return map;
   }
 
+  private requiredConnectorIds(revision: ExpertRevision): string[] {
+    return [...new Set([
+      ...revision.definition.futureRequirements.filter(req => req.required && req.kind === 'connector').map(req => req.key),
+      ...Object.values(revision.teamMembers ?? {}).flatMap(ref => this.requiredConnectorIds(this.loadRevision(ref.expertId, ref.revisionId))),
+    ])];
+  }
+
+  private async requiredCapabilityIssues(revision: ExpertRevision, signal?: AbortSignal): Promise<DomainIssue[]> {
+    const rows = await this.connectors?.list(signal).catch(() => []) ?? [];
+    const ready = new Set(rows.filter(row => row.enabled && row.state === 'ready').map(row => row.id));
+    const issues: DomainIssue[] = [];
+    for (const req of revision.definition.futureRequirements.filter(req => req.required)) {
+      if (req.kind === 'connector') {
+        if (!ready.has(req.key)) issues.push({ code: 'experts/connector-unavailable', message: `必需连接器 ${req.key} 尚未安装、启用或连接成功。` });
+      } else issues.push({ code: 'experts/unsupported-capability', message: `尚未支持必需能力 ${req.kind}：${req.key}。` });
+    }
+    for (const ref of Object.values(revision.teamMembers ?? {})) issues.push(...await this.requiredCapabilityIssues(this.loadRevision(ref.expertId, ref.revisionId), signal));
+    return issues;
+  }
+
   /** Authoritative readiness for one revision: preset health plus every frozen Skill dependency. */
   private async computeReadiness(revision: ExpertRevision | undefined, actor: ActorContext, signal?: AbortSignal): Promise<ExpertReadiness> {
     if (!revision) return 'unknown';
+    if (this.unavailablePresets.has(revision.presetRevisionRef)) return 'broken';
     if (revision.definition.packageDocuments) {
       try { await verifyPackageFiles(expertPresetDir(revision.presetRevisionRef, this.agentsHome), revision.definition.packageDocuments, revision.definition.packageAssets); }
       catch { return 'missing-dependency'; }
@@ -586,7 +628,7 @@ export class ExpertsManager extends Service implements ExpertsService {
       const state = await this.computeReadiness(this.loadRevision(ref.expertId, ref.revisionId), actor, signal);
       if (state !== 'ready') return state;
     }
-    if (revision.definition.futureRequirements.some((requirement) => requirement.required)) return 'unsupported-capability';
+    if ((await this.requiredCapabilityIssues(revision, signal)).length) return 'unsupported-capability';
     try {
       const preset = await this.ctx.agentPresets.resolve(revision.presetRevisionRef);
       if (preset.broken) return 'broken';
@@ -1298,7 +1340,7 @@ export class ExpertsManager extends Service implements ExpertsService {
     const readiness = await this.computeReadiness(revision, actor, signal);
     const missing: DomainIssue[] = [];
     if (readiness === 'missing-dependency') missing.push({ code: 'experts/dependency-missing', message: '存在缺失或漂移的 Skill 依赖，请修复后再召唤。' });
-    else if (readiness === 'unsupported-capability') missing.push({ code: 'experts/unsupported-capability', message: '存在尚未满足的必需能力，暂不可召唤。' });
+    else if (readiness === 'unsupported-capability') missing.push(...await this.requiredCapabilityIssues(revision, signal));
     else if (readiness === 'broken') missing.push({ code: 'experts/preset-broken', message: '专家 preset 不可用，请重新发布后再召唤。' });
     const executionPlanId = `plan-${randomUUID()}`;
     const plan: ExecutionPlan = {
@@ -1352,6 +1394,8 @@ export class ExpertsManager extends Service implements ExpertsService {
     if (!this.isVisible(actor, expert)) throw new ExpertsError('experts/not-found', '未找到该专家。');
     await this.authorize(actor, 'experts.create-execution', expert, signal);
     const revision = this.loadRevision(plan.expertRevisionRef.expertId, plan.expertRevisionRef.revisionId);
+    const capabilityIssues = await this.requiredCapabilityIssues(revision, signal);
+    if (capabilityIssues.length) throw new ExpertsError('experts/dependency-missing', '必需能力已不可用，请重新准备任务。', { issues: capabilityIssues });
     try {
       const creation = await this.withOperation(actor, 'experts.create-execution', context, payloadDigest, signal,
         async (record) => {
@@ -1371,6 +1415,12 @@ export class ExpertsManager extends Service implements ExpertsService {
             ...(plan.workspaceId === undefined ? {} : { workspaceId: plan.workspaceId as SessionCreateRequest['workspaceId'] }),
           }, signal);
           const boundSessionId = String(created.sessionId);
+          const connectorIds = this.requiredConnectorIds(revision);
+          if (connectorIds.length) {
+            if (!this.connectors) throw new ExpertsError('experts/dependency-missing', '连接器服务已不可用。');
+            const selected = await this.connectors.selection(boundSessionId);
+            await this.connectors.setSelection(boundSessionId, [...new Set([...selected, ...connectorIds])]);
+          }
           if (plan.modelSelection) {
             try {
               await this.ctx.sessionController.selectModel({ sessionId: created.sessionId, ...plan.modelSelection });
@@ -1511,6 +1561,8 @@ export class ExpertsManager extends Service implements ExpertsService {
     const targetRevisionId = targetExpert.publishedRevisionRef?.revisionId;
     if (targetRevisionId === undefined) throw new ExpertsError('experts/not-published', '目标专家尚未发布，无法交接。');
     const targetRevision = this.loadRevision(plan.targetExpertId, targetRevisionId);
+    const capabilityIssues = await this.requiredCapabilityIssues(targetRevision, signal);
+    if (capabilityIssues.length) throw new ExpertsError('experts/dependency-missing', '目标专家必需能力不可用。', { issues: capabilityIssues });
     try {
       const creation = await this.withOperation(actor, 'experts.create-handoff', context, payloadDigest, signal,
         async (record) => {
@@ -1524,6 +1576,12 @@ export class ExpertsManager extends Service implements ExpertsService {
           }
           const created = await this.ctx.workdshSessionAccess.create({ sessionId: sessionId as SessionId, agentPreset: targetRevision.presetRevisionRef }, signal);
           const boundSessionId = String(created.sessionId);
+          const connectorIds = this.requiredConnectorIds(targetRevision);
+          if (connectorIds.length) {
+            if (!this.connectors) throw new ExpertsError('experts/dependency-missing', '连接器服务已不可用。');
+            const selected = await this.connectors.selection(boundSessionId);
+            await this.connectors.setSelection(boundSessionId, [...new Set([...selected, ...connectorIds])]);
+          }
           const now = new Date().toISOString();
           const binding: ExecutionBinding = {
             sessionId: boundSessionId,

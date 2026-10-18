@@ -39,6 +39,25 @@
 
 ## 表格资料
 
-CSV/XLSX 可上传、按类型检索并引用到任务；原始文件按字节保留。Host 转换在构建时复用 Office 的公开 `workdsh-plugin-office/tabular` 入口的 CSV 解码/解析；表格提取模块随 Library 构建，运行时复用 ExcelJS，无需安装或激活 Office 插件即可导入和检索。CSV 支持 UTF-8、GB18030、UTF-16，以及逗号、分号和制表符；XLSX 提取工作表名称和单元格已有值，公式不重新计算，图表、图片和格式不进入检索文本。检索文本最多 1500 行/120 列/24000 单元格，XLSX 最多 20 个工作表；截取会显示警告，完整原件仍可下载。
+CSV/XLSX 可上传、按类型检索并引用到任务；原始文件按字节保留。Host 转换在构建时复用共享 `workdsh-tabular` 的 CSV 解码/解析；表格提取模块与 PapaParse 随 Library 构建，运行时复用 ExcelJS，无需安装或激活 Office 插件即可导入和检索。CSV 支持 UTF-8、GB18030、UTF-16，以及逗号、分号和制表符；XLSX 提取工作表名称和单元格已有值，公式不重新计算，图表、图片和格式不进入检索文本。检索文本最多 1500 行/120 列/24000 单元格，XLSX 最多 20 个工作表；截取会显示警告，完整原件仍可下载。
 
-原件预览通过公开可选注册表复用 Office：CSV 为只读表格，XLSX 使用现有隔离编辑器，导出为副本，不覆盖资料库修订。未启用 Office 预览时显示检索文本。个人与企业 Desktop、Web 复用相同导入和预览实现，实际资料授权保持不变。
+原件预览通过公开可选注册表复用 Office：CSV 为只读表格，XLSX 使用现有隔离编辑器；普通预览导出副本，提供公开保存回调的业务工作台可明确保存为新修订，不覆盖旧原件。未启用 Office 预览时显示检索文本。个人与企业 Desktop、Web 复用相同导入和预览实现，实际资料授权保持不变。
+
+## 公开资料选择组件
+
+客户端公开入口 `workdsh-plugin-library/client` 导出 `LibraryAssetPicker`、`LibraryAssetPickerProps`、`createLibraryClient` 与 `LibraryClient`。工作台可复用目录浏览和资料管理入口，无需创建对话或伪造sessionId。组件接收 `management.list`、`openLibrary` 和同步 `onSelect(entry)`；返回true关闭选择面板，返回false保留面板并提示重试。调用方保留选中资产及精确修订ID，再通过Host领域服务读取原件；选择组件不授予读取权限。通用组件不响应对话输入框的资料选择事件，原 `LibraryPicker` 继续承担对话引用插入。客户端的lifetime信号由所在插件拥有，卸载时取消。
+
+
+### 工作台编辑原件并保存新修订
+
+公开 `createLibraryOriginalPanelClient(ctx).open({assetId,revisionId,name,kind,returnPanel?:{id,label}},signal?)` 将固定修订打开在官方会话右侧资料 Tab。官方当前版本的右侧栏属于真实 Session，全局工作台页面不能与它并列；入口先返回已选会话，没有会话时通过官方 Workspace owner 复用或创建真实会话，再打开右侧文件。右侧文件可提供“返回工作台”，仅跳转仍注册的 main 页面。Tab 参数仅携带 JSON 引用与返回位置，不传回调、凭据或业务正文。
+
+右侧文件沿用唯一 Library/Office 预览注册表。CSV 只读；XLSX 的显式保存通过 Library 的 `saveOriginalRevision` 校验固定基准修订、操作幂等及字节摘要，新版本待工作台回读并明确采用。保存中阻止官方 Tab 关闭和返回按钮，已访问正文保持挂载以保留切 Tab 时的编辑状态；插件卸载与导航更新取消旧请求，取消/通信失败须核对资料库保存结果，不能宣称未保存或重试为另一份文件。
+
+工作台从公开 Library Client 读取 `readOriginal(assetId, revisionId, signal)`，将固定版本的字节交给 `workdshLibraryPreview.mount`。`LibraryOriginalPreviewInput.onSaveOriginal(bytes, signal)` 是可选能力：目前系统 Office 的 XLSX 编辑器支持它，CSV、DOCX 与 PPTX 不因此获得保存能力。未提供回调时 XLSX 仍导出副本。工作台应检查预览注册表 `canOpen`，保持缺少 Office 时的资料库入口。
+
+回调调用公开 Client `saveOriginalRevision({assetId, expectedRevisionId, operationId, bytes}, signal)`，返回 `LibraryTreeEntry`。Host 在当前身份与权限下保存不可变原件、转换结果和新修订；不接受客户端 token 或外部 URL。当前 Host 上原资产已有更新时拒绝旧基础保存。同一操作编号和同一输入可重试得到原保存回执，输入改变则不能复用操作编号。回执可能指向已经不是最新的历史修订，不要用资产当前版本字段替代回执里的 `revision.id`。
+
+保存回调只提出新的来源。工作台显示“采用新版本”，经用户选择再使用新 `revision.id` 导入和分析，保留旧快照、运行和报告。关闭预览或身份变化需取消请求；如果提交结果未知，核对资料库或用原操作编号重试，不能把网络错误当作未保存。通用原件保存限额为 50MiB，目前 Office XLSX 编辑保存限额为 10MiB，仍受编辑器对不支持工作簿对象的导出检查约束。
+
+质量分析插件已有此接线，并在实际安装的官方 Profile 中验证新 XLSX 修订重新分析及历史保留；Office 浏览器按钮和实际页面交互尚未完成 GUI 验收。上述单 Host 串行版本检查不构成多 Host 存储事务保证。

@@ -84,3 +84,10 @@ dsh --profile workdsh
 ### 专家技能扫描配置
 
 `ExpertsManagerOptions.includeDefaultSkillRoots` 为可选启动配置。省略或 true 保留个人版默认项目/用户技能发现；false 生成仅使用受管 Skill 快照及专家包资源的官方 filesystem provider 配置。false 参与不可变 preset 标识及输入摘要，不能复用旧的默认扫描 preset。此配置由服务器装配传入，不从浏览器请求接收。独立目录不等于完整企业执行验收；官方 preset/子 Agent 仍需成员组合验证。
+
+
+### 专家文件持久化与连接器
+
+专家制作文件优先使用显式 `agentsHome`，其次 `DSH_AGENTS_HOME`；两者未配置时使用 `$DSH_HOME/agents`，没有 `DSH_HOME` 时才使用用户目录 `.agents`。容器部署应把 `DSH_HOME` 放在持久卷内；若单独配置 `DSH_AGENTS_HOME`，该目录也必须持久化。缺失或损坏的已发布预设标为不可用，不阻止其他专家启动；修复后应重新发布或重启服务核查，历史修订不自动覆盖。
+
+`futureRequirements` 中 `kind: "connector"` 的 `key` 填已安装连接器 ID。必需项在准备任务及实际创建时检查启用和连接状态，并通过连接器服务选入原生会话；保留会话已有选择。缺失项明确提示，不自动安装或填写授权。可选项不阻止执行，也不自动选中；在原生会话中选择。其他能力类型仍明确标为尚未支持。

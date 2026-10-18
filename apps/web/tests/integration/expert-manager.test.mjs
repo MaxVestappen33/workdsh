@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 import { Context } from '@deepseek-ai/cordis';
 import Tools from '@deepseek-ai/dsh-tools';
 import { registerExpertManagementTools } from '../../../../packages/plugins/experts/dist/tools/management-tools.js';
-import { createMessage, Agents, AgentLoop, Sessions, Projections, SystemPrompt, Llm, skillTool, SkillRequestAdapter } from '../helpers/skill-runtime.mjs';
+import { FileSystem, LocalFileSystem, WorkingDirectory, createMessage, Agents, AgentLoop, Sessions, Projections, SystemPrompt, Llm, skillTool, SkillRequestAdapter } from '../helpers/skill-runtime.mjs';
 import Storage from '@deepseek-ai/dsh-storage';
 import * as JsonStorage from '@deepseek-ai/dsh-storage-json';
 import * as StorageDomain from '@deepseek-ai/dsh-storage-domain';
@@ -140,15 +140,15 @@ function fullDefinition(name, overrides = {}) {
  * a previously used home (cold-restart test); the returned `cleanup` only removes a
  * root this call created.
  */
-async function boot(existingRoot) {
+async function boot(existingRoot, { profileAgents = false, connectors } = {}) {
   const root = existingRoot ?? await mkdtemp(join(tmpdir(), 'workdsh-experts-'));
-  const agentsHome = join(root, 'agents');
   const dshHome = join(root, 'dsh');
+  const agentsHome = profileAgents ? join(dshHome, 'agents') : join(root, 'agents');
   const storageRoot = join(root, 'storage');
   const userPresetRoot = join(agentsHome, '.agent-presets');
   const savedAgentsHome = process.env.DSH_AGENTS_HOME;
   const savedDshHome = process.env.DSH_HOME;
-  process.env.DSH_AGENTS_HOME = agentsHome;
+  if (profileAgents) delete process.env.DSH_AGENTS_HOME; else process.env.DSH_AGENTS_HOME = agentsHome;
   process.env.DSH_HOME = dshHome;
 
   // A real local Skill so an expert can freeze an explicit dependency (AT-07/08).
@@ -163,6 +163,7 @@ async function boot(existingRoot) {
   const createCalls = [];
   try {
     ctx.provide('workdshIdentity', createIdentity());
+    if (connectors) ctx.provide('workdshConnectors', connectors);
     await ctx.plugin(Storage);
     await ctx.plugin(JsonStorage, { root: storageRoot });
     await ctx.plugin(StorageDomain, { backend: 'json' });
@@ -728,7 +729,7 @@ test('published expert persona and frozen Skill reach the official Agent Loop wi
     const personaConfig = rows.find(row => row.name === '@deepseek-ai/dsh-persona').config;
     const skillConfig = rows.find(row => row.name === '@deepseek-ai/dsh-skill-filesystem').config;
     const persona = await import(pathToFileURL(packageRequire.resolve('@deepseek-ai/dsh-persona')).href);
-    for (const plugin of [Sessions, Projections, SystemPrompt, Tools, Llm, Agents, AgentLoop]) await h.ctx.plugin(plugin);
+    for (const plugin of [LocalFileSystem, WorkingDirectory, Sessions, Projections, SystemPrompt, Tools, Llm, Agents, AgentLoop]) await h.ctx.plugin(plugin);
     // Alter the dynamic source after publication: the expert must consume its snapshot.
     await writeFile(join(h.agentsHome, 'skills/sample-skill/SKILL.md'), '---\nname: sample-skill\ndescription: Changed dynamic fixture\n---\nDYNAMIC_SOURCE_AFTER_PUBLISH\n');
     class PublishedSkillAdapter extends SkillRequestAdapter {
@@ -1016,5 +1017,91 @@ test('expert execution guard admits ordinary unbound tasks only through live fix
     member.restore(); member.revokeDuringVerification(); await assert.rejects(run(), /Expired/);
     member.restore(); assert.equal((await run()).kind, 'enter');
     assert.ok(member.evidence.every(request => request.sessionId === agent.id));
+  } finally { await h.cleanup(); }
+});
+
+
+test('expert presets default to the persisted DSH_HOME when DSH_AGENTS_HOME is absent', async () => {
+  const h = await boot(undefined, { profileAgents: true });
+  try {
+    const { receipt } = await publishCopyOfDefault(h, actor('owner-a'), 'persistent-home');
+    const presetPath = expertPresetDir(receipt.presetRevisionRef, h.agentsHome);
+    assert.equal((await stat(presetPath)).isDirectory(), true);
+    assert.ok(presetPath.startsWith(join(h.root, 'dsh', 'agents')));
+  } finally { await h.cleanup(); }
+});
+
+test('one missing expert preset does not disable the manager after a cold restart', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'workdsh-broken-expert-'));
+  let h = await boot(root);
+  try {
+    const a = actor('owner-a');
+    const broken = await publishCopyOfDefault(h, a, 'missing-preset');
+    const healthy = await publishCopyOfDefault(h, a, 'healthy-preset');
+    await rm(expertPresetDir(broken.receipt.presetRevisionRef, h.agentsHome), { recursive: true, force: true });
+    await h.cleanup();
+    h = await boot(root);
+    assert.equal((await h.experts.get(a, broken.expertId)).readiness, 'broken');
+    assert.equal((await h.experts.get(a, healthy.expertId)).readiness, 'ready');
+    const list = await h.experts.list(a, {});
+    assert.equal(list.items.find(row => row.id === broken.expertId).readiness, 'broken');
+  } finally { await h.cleanup(); await rm(root, { recursive: true, force: true }); }
+});
+
+
+test('required ready connector is selected in the native expert session and becomes unavailable when disabled', async () => {
+  let enabled = true;
+  const selections = new Map();
+  const connectors = {
+    async list() { return [{ id: 'test-connector', enabled, state: enabled ? 'ready' : 'disabled' }]; },
+    async selection(id) { return selections.get(id) ?? ['already-selected']; },
+    async setSelection(id, ids) { selections.set(id, ids); return ids; },
+  };
+  const h = await boot(undefined, { connectors });
+  try {
+    const a = actor('owner-a');
+    const { expertId } = await publishCopyOfDefault(h, a, 'connector-ready', {
+      futureRequirements: [{ kind: 'connector', key: 'test-connector', required: true, description: 'Test connector' }],
+    });
+    assert.equal((await h.experts.get(a, expertId)).readiness, 'ready');
+    const plan = await h.experts.prepareExecution(a, expertId);
+    assert.deepEqual(plan.missing, []);
+    const execution = await h.experts.createExecution(a, plan.executionPlanId, { operationId: 'connector-execution' });
+    assert.deepEqual(selections.get(execution.sessionId), ['already-selected', 'test-connector']);
+    const stale = await h.experts.prepareExecution(a, expertId);
+    enabled = false;
+    await assert.rejects(h.experts.createExecution(a, stale.executionPlanId, { operationId: 'connector-disabled' }), error => error.code === 'experts/dependency-missing');
+    const blocked = await h.experts.prepareExecution(a, expertId);
+    assert.equal(blocked.missing[0].code, 'experts/connector-unavailable');
+    assert.match(blocked.missing[0].message, /test-connector/);
+  } finally { await h.cleanup(); }
+});
+
+test('optional absent connector does not block expert execution or grant selection', async () => {
+  const h = await boot();
+  try {
+    const a = actor('owner-a');
+    const { expertId } = await publishCopyOfDefault(h, a, 'connector-optional', {
+      futureRequirements: [{ kind: 'connector', key: 'not-installed', required: false, description: 'Optional' }],
+    });
+    const plan = await h.experts.prepareExecution(a, expertId);
+    assert.deepEqual(plan.missing, []);
+    await h.experts.createExecution(a, plan.executionPlanId, { operationId: 'optional-execution' });
+  } finally { await h.cleanup(); }
+});
+
+
+test('missing required connector reports its ID before creating a native session', async () => {
+  const h = await boot();
+  try {
+    const a = actor('owner-a');
+    const { expertId } = await publishCopyOfDefault(h, a, 'connector-missing', {
+      futureRequirements: [{ kind: 'connector', key: 'missing-connector', required: true, description: 'Required' }],
+    });
+    const plan = await h.experts.prepareExecution(a, expertId);
+    assert.equal(plan.missing[0].code, 'experts/connector-unavailable');
+    assert.match(plan.missing[0].message, /missing-connector/);
+    await assert.rejects(h.experts.createExecution(a, plan.executionPlanId, { operationId: 'missing-execution' }), error => error.code === 'experts/dependency-missing');
+    assert.equal(h.createCalls.length, 0);
   } finally { await h.cleanup(); }
 });

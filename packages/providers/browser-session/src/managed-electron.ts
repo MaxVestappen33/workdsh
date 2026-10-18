@@ -4,7 +4,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { chromium, type Browser, type BrowserContext } from 'playwright-core';
 import type { ManagedChromium } from './managed-chromium.js';
@@ -53,8 +53,17 @@ async function readyEndpoint(port: number, child: ChildProcess, signal?: AbortSi
   throw new Error('Electron browser worker did not publish a page');
 }
 
+export function electronWorkerArguments(port: number, profileDir: string, applicationPath?: string): string[] {
+  if (applicationPath !== undefined && !isAbsolute(applicationPath)) throw new Error('Electron application path must be absolute');
+  return [
+    ...(applicationPath === undefined ? [] : [applicationPath]),
+    `--workdsh-browser-worker-port=${port}`,
+    `--workdsh-browser-worker-profile=${profileDir}`,
+  ];
+}
+
 /** Start one hidden Electron instance whose CDP exposes no WorkDSH app page. */
-export async function launchManagedElectron(executable: string, signal?: AbortSignal): Promise<ManagedChromium> {
+export async function launchManagedElectron(executable: string, signal?: AbortSignal, applicationPath?: string): Promise<ManagedChromium> {
   if (!executable.trim()) throw new Error('Desktop Electron executable is required');
   signal?.throwIfAborted();
   const profileDir = await mkdtemp(join(tmpdir(), 'workdsh-electron-browser-'));
@@ -64,10 +73,7 @@ export async function launchManagedElectron(executable: string, signal?: AbortSi
     const port = await vacantPort();
     const env = { ...process.env };
     delete env.ELECTRON_RUN_AS_NODE;
-    child = spawn(executable, [
-      `--workdsh-browser-worker-port=${port}`,
-      `--workdsh-browser-worker-profile=${profileDir}`,
-    ], { env, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
+    child = spawn(executable, electronWorkerArguments(port, profileDir, applicationPath), { env, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
     child.stderr?.resume();
     const endpoint = await readyEndpoint(port, child, signal);
     browser = await chromium.connectOverCDP(endpoint);

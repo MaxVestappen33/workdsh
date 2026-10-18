@@ -43,6 +43,14 @@ test('Skill service waits, activates independently, disposes consumers and resto
     await settle(() => skillFiber.state === 2);
     await ctx.plugin(filesystem, { dshHome: process.env.DSH_HOME, agentsHome: process.env.DSH_AGENTS_HOME, watch: false });
     assert.equal(ctx.workdshSkills.contractVersion, 1);
+    const workbenchSkill = await ctx.skills.get('workdsh-workbench-dev', { cwd: home });
+    assert.ok(workbenchSkill, 'workbench development resource is registered through official Skills');
+    assert.match(workbenchSkill.content, /官方.*install_bundle/);
+    assert.equal(workbenchSkill.resourceBase.kind, 'directory');
+    for (const name of ['requirements', 'first-development', 'iteration']) {
+      const resource = await readFile(join(workbenchSkill.resourceBase.path, 'references', `${name}.md`), 'utf8');
+      assert.ok(resource.trim(), `packaged ${name} resource remains readable`);
+    }
     const originalService = ctx.workdshSkills;
     const observed = [], disposed = [];
     const consumer = id => ({ inject: ['workdshSkills'], apply(context) {

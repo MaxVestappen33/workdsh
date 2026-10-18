@@ -40,4 +40,4 @@ if (checked === 0) throw new Error('No Web DSH dependencies found; alignment che
 if (mismatches.length > 0) {
   throw new Error(`Web dependencies differ from Desktop DSH ${expected}:\n${mismatches.join('\n')}`)
 }
-console.log(`Web and Desktop use DSH ${expected}; checked ${checked} Web dependency declarations.`)
+console.log(`Web dependency declarations match the DSH target ${expected}; checked ${checked}. Desktop packaged-runtime acceptance is checked separately.`)

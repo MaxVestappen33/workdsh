@@ -8,6 +8,16 @@
 
 [![GitHub Actions](https://github.com/techflag/workdsh/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/techflag/workdsh/actions/workflows/ci.yml) [![Gitee stars](https://gitee.com/techflag/workdsh/badge/star.svg?theme=dark)](https://gitee.com/techflag/workdsh/stargazers) [![Gitee forks](https://gitee.com/techflag/workdsh/badge/fork.svg?theme=dark)](https://gitee.com/techflag/workdsh/members)
 
+## 每个人，都能定制自己的 AI 服务
+
+说出需求、确认范围，让原生 AI 制作可持续使用的工作台。以旅行管理为例：用户可以自己新增多次旅行，每次独立管理行程、预算和出行待办。
+
+[![观看 WorkDSH 定制个人 AI 服务演示](assets/promotion/workdsh-personal-ai-service-cover.png)](assets/promotion/workdsh-personal-ai-service-landscape.mp4)
+
+**[▶ 观看全系统演示 · 101 秒 · 中文配音与字幕](assets/promotion/workdsh-personal-ai-service-landscape.mp4)**
+
+<sub>完整应用界面实录，保留原生侧栏、工作台与 AI 对话，经过剪辑与加速；视频时长不代表应用制作耗时。</sub>
+
 ## 功能建议与 Bug 反馈
 
 **WorkDSH 正在持续改进，欢迎告诉我们：你想要什么功能、哪里不好用、遇到了什么 Bug。无需懂代码。**

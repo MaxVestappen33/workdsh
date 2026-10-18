@@ -1,0 +1,94 @@
+{
+  "name": "workdsh-plugin-quality-analysis",
+  "version": "3.0.0-alpha.57",
+  "private": true,
+  "type": "module",
+  "description": "WorkDSH quality-analysis business workbench; installation acceptance in progress.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json",
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "default": "./dist/client.browser.js"
+    }
+  },
+  "files": [
+    "dist",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "workdsh-plugin-workbenches",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-workspace"
+      ],
+      "external": [
+        "workdsh-plugin-library/client",
+        "workdsh-plugin-workbenches/client"
+      ]
+    }
+  },
+  "workdsh": {
+    "workbench": {
+      "id": "workdsh.quality-analysis",
+      "title": "质量分析",
+      "description": "检验数据、缺陷分析和可追溯报告",
+      "protocolVersion": "1.0",
+      "layout": "full-page",
+      "hostCompatibility": {
+        "sdk": "^1.0.0",
+        "harness": "0.2.1-rc.1"
+      },
+      "capabilities": []
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node ../../../apps/web/scripts/build-quality-analysis.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "zod": "4.4.3",
+    "exceljs": "4.4.0",
+    "jszip": "3.10.1",
+    "saxes": "5.0.1"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.1",
+    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/dsh-storage-domain": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-client-connection": "0.2.1-rc.1",
+    "workdsh-plugin-library": "0.1.0-alpha.8",
+    "workdsh-plugin-workbenches": "3.0.0-alpha.49",
+    "@deepseek-ai/dsh-client-ui-layout": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-api-session-controller": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-conversation": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-workspace": "0.2.1-rc.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.1",
+    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/dsh-storage-domain": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-client-connection": "0.2.1-rc.1",
+    "@types/node": "22.19.0",
+    "@types/react": "19.2.14",
+    "react": "19.2.4",
+    "workdsh-contracts": "workspace:*",
+    "workdsh-plugin-library": "workspace:*",
+    "@deepseek-ai/dsh-client-ui-layout": "0.2.1-rc.1",
+    "workdsh-tabular": "workspace:*",
+    "workdsh-plugin-workbenches": "workspace:*",
+    "@deepseek-ai/dsh-api-session-controller": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-conversation": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-workspace": "0.2.1-rc.1"
+  }
+}
