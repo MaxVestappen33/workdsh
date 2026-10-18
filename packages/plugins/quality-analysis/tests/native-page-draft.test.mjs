@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {fileURLToPath} from 'node:url';
+import {readFile} from 'node:fs/promises';
 const require=createRequire(new URL('../../../../apps/web/package.json',import.meta.url));
+const declaredDescriptor=JSON.parse(await readFile(new URL('../package.json',import.meta.url),'utf8')).workdsh.workbench;
 // Execute the registered QualityPage itself. Only SDK boundary owners and child
 // surfaces are replaced; the real native draft preflight stays in this bundle.
 const built=await require('esbuild').build({entryPoints:[fileURLToPath(new URL('../src/client.tsx',import.meta.url))],bundle:true,platform:'node',format:'esm',write:false,jsx:'transform',tsconfigRaw:{compilerOptions:{jsx:'react',jsxFactory:'React.createElement',jsxFragmentFactory:'React.Fragment'}},plugins:[{name:'native-quality-page-fixture',setup(b){
@@ -33,7 +35,7 @@ async function fixture({draft='',phase='plain',running=false,readyHook,initialCo
  const native={get:()=>({canOpen:()=>true}),layout:{selectPanel(){}},sessions:{retain(id){calls.push(['retain',id]);return{ready:Promise.resolve().then(async()=>{calls.push(['nativeReady',id]);await readyHook?.();return{sessionId:id,ctx:{},session:{getSnapshot:()=>({running}),subscribe:()=>()=>{}}};}),release(){releases++;}};}},conversation:{blocks:{storeFor:()=>({getSnapshot:()=>composerBlock,subscribe:subscribe(blockListeners)}),set(id,value){calls.push(['nativeBlock',id,value]);composerBlock=value;for(const listener of blockListeners)listener();}},input:{for(){return{state:{getSnapshot:()=>input,subscribe:subscribe(inputListeners)}};}}}};
  const globals={window:globalThis.window,document:globalThis.document};globalThis.window={addEventListener(){},removeEventListener(){}};globalThis.document={visibilityState:'visible',addEventListener(){},removeEventListener(){}};
  globalThis.__nativePageClient=client;globalThis.__nativePageHooks=hooks;
- await apply({...native,get:key=>key==='workdshWorkbenchClientRegistration'?{registerManaged(_ctx,_descriptor,create){renderFactory=create;}}:key==='sessions'?native.sessions:key==='conversation'?native.conversation:native.get(key)});
+ await apply({...native,get:key=>key==='workdshWorkbenchClientRegistration'?{registerManaged(_ctx,descriptor,create){assert.deepEqual(descriptor,declaredDescriptor,'the real Client declaration must match its installation manifest');renderFactory=create;}}:key==='sessions'?native.sessions:key==='conversation'?native.conversation:native.get(key)});
  async function settle(){for(let n=0;n<30;n++){if(dirty){dirty=false;cursor=0;const element=renderFactory();tree=element.type(element.props);while(effects.length)effects.shift()();}await new Promise(r=>setImmediate(r));if(!dirty&&!effects.length)return;}throw Error('page-did-not-settle');}
  const node=type=>flatten(tree).find(n=>n.type===type);
  await settle();node('quality:browser').props.onNavigation({recordId:'record',tab:'overview'});await settle();

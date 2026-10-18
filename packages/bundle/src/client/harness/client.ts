@@ -67,24 +67,42 @@ export function apply(ctx: Context): void {
   ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({ name: 'sidebar.right.pane.tab', key: agentBrowserKind }, AgentBrowserPage));
   ctx.effect(() => {
     const sessions = ctx.sessions as unknown as ISessions;
-    const opened = new Set<string>();
+    const observed = new Map<string, number>();
     let pending = false;
+    let disposed = false;
+    const selectedSession = () => Object.values(sessions.list.getSnapshot().byId).find(row => (row.retainedBy.mainView ?? 0) > 0)?.id;
+    let selection = selectedSession(), selectionRevision = 0;
+    const changed = () => { const next = selectedSession(); if (next !== selection) { selection = next; selectionRevision++; } };
+    const unsubscribe = sessions.list.subscribe(changed);
     const poll = async () => {
-      if (pending || !legacyBrowserEnabled) return;
-      const state = sessions.list.getSnapshot();
-      const current = Object.values(state.byId).find(row => (row.retainedBy.mainView ?? 0) > 0)?.id;
-      if (!current || opened.has(String(current))) return;
+      if (pending || disposed || !legacyBrowserEnabled) return;
+      changed(); const current = selection, requestedSelection = selectionRevision;
+      if (!current) return;
+      const hadOwnTab = ctx.sidebarRight.openTabs.getSnapshot().some(tab => tab.sessionId === current && tab.kind === agentBrowserKind);
       pending = true;
       try {
-        const { frame } = await readAgentBrowserFrame(String(current));
-        if (!frame || frame.revision === 0) return;
-        opened.add(String(current));
+        const { frame, activity } = await readAgentBrowserFrame(String(current));
+        if (disposed || !legacyBrowserEnabled || !activity) return;
+        changed(); if (selection !== current || selectionRevision !== requestedSelection) return;
+        const ownTabs = ctx.sidebarRight.openTabs.getSnapshot().filter(tab => tab.sessionId === current && tab.kind === agentBrowserKind);
+        if (!activity.active) {
+          if (observed.get(String(current)) === activity.revision) return;
+          observed.set(String(current), activity.revision);
+          for (const tab of ownTabs) ctx.sidebarRight.closeIn(current, tab.tabId);
+          return;
+        }
+        if (!frame || frame.sessionId !== current || frame.revision !== activity.revision) return;
+        if (ownTabs.length) { observed.set(String(current), activity.revision); return; }
+        if (hadOwnTab) { observed.set(String(current), activity.revision); return; }
+        if (observed.get(String(current)) === activity.revision) return;
         ctx.sidebarRight.openTabIn(current, agentBrowserKind, { params: {} });
+        if (ctx.sidebarRight.openTabs.getSnapshot().some(tab => tab.sessionId === current && tab.kind === agentBrowserKind))
+          observed.set(String(current), activity.revision);
       } catch { /* The browser provider is optional; retry on the next poll. */ }
       finally { pending = false; }
     };
     const timer = window.setInterval(() => { void poll(); }, 900);
-    return () => window.clearInterval(timer);
+    return () => { disposed = true; unsubscribe(); window.clearInterval(timer); };
   }, 'workdsh.agent-browser.auto-open');
   ctx.slots.inject('shell.overlay', () => ctx.slots.register({ name: 'shell.overlay', id: 'workdsh-shell-appearance' }, ShellAppearance));
   const diagnostics = new URL(window.location.href).searchParams.get('diagnostics') === '1';

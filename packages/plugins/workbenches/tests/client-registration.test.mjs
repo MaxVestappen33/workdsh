@@ -34,3 +34,35 @@ test('managed caller lifetime withdraws page and failed lifecycle attachment rol
  await assert.rejects(f.registration.registerManaged({...caller,effect(){throw new Error('caller-disposed');}},descriptor,()=>null),/caller-disposed/);
  assert.deepEqual(f.counts(),[0,0]);f.registration.close();
 });
+
+test('managed incompatible authority creates no page and compatible reload can mount normally',async()=>{
+ let verified={...authority,compatible:false};
+ const f=fixture(async()=>verified),managed={...caller,effect:body=>body()};
+ await assert.rejects(f.registration.register(caller,descriptor,()=>null),/incompatible-host/);
+ const blocked=await f.registration.registerManaged(managed,descriptor,()=>null);
+ assert.deepEqual(f.counts(),[0,0]);blocked();blocked();
+ verified=authority;const stop=await f.registration.registerManaged(managed,descriptor,()=>null);
+ blocked();assert.deepEqual(f.counts(),[1,0]);stop();f.registration.close();
+});
+
+test('managed incompatibility rejects mismatched declaration, receipt and unverified errors',async()=>{
+ for(const [verified,declaration,code] of [
+  [{...authority,compatible:false},{...descriptor,title:'forged'},'declaration-mismatch'],
+  [{...authority,compatible:false,package:{...authority.package,sha256:'bad'}},descriptor,'invalid-package-receipt'],
+  [{...authority,compatible:false,package:{...authority.package,packageName:'other'}},descriptor,'installation-changed'],
+  [{...authority,compatible:false,enabled:false},descriptor,'package-disabled'],
+ ]){
+  const f=fixture(async()=>verified);
+  await assert.rejects(f.registration.registerManaged({...caller,effect:body=>body()},declaration,()=>null),new RegExp(code));assert.deepEqual(f.counts(),[0,0]);f.registration.close();
+ }
+ const f=fixture(async()=>{throw Error('workbench/incompatible-host');});
+ await assert.rejects(f.registration.registerManaged({...caller,effect:body=>body()},descriptor,()=>null),/incompatible-host/);
+ assert.deepEqual(f.counts(),[0,0]);f.registration.close();
+});
+
+test('closing Client registration safely releases managed blocked lifetimes',async()=>{
+ const f=fixture(async()=>({...authority,compatible:false}));
+ const release=await f.registration.registerManaged({...caller,effect:body=>body()},descriptor,()=>null);
+ f.registration.close();release();f.registration.close();assert.deepEqual(f.counts(),[0,0]);
+ await assert.rejects(f.registration.registerManaged({...caller,effect:body=>body()},descriptor,()=>null),/registration-service-closed/);
+});

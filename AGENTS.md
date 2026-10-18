@@ -33,7 +33,8 @@ This repository owns WorkDSH Web and Desktop. Desktop and Web consume the same e
 
 ## Current authorized npm migration
 
-- The user explicitly requires the latest published DSH release, currently `0.2.1-rc.1` (2026-10-17). `upstream.json` locks the same npm target and downloaded official Desktop artifacts. Web preview and Desktop preserve the complete native Conversation, using public Workspace/Layout APIs and only the narrowly authorized shared outer-frame patch below, without embedded custom conversation controls. Matching artifact hashes do not prove Desktop packaged-runtime acceptance; do not release Desktop until its runtime and UI checks pass.
+- The user explicitly requires the latest published DSH release, currently `0.2.1-rc.2` (2026-10-17). Every actual DSH Host, Client and SDK npm package must use this same exact version. Web preview and Desktop preserve the complete native Conversation, using public Workspace/Layout APIs and only the narrowly authorized shared outer-frame patch below, without embedded custom conversation controls. Matching artifact hashes do not prove Desktop packaged-runtime acceptance; do not release Desktop until its runtime and UI checks pass.
+- `upstream.json` separately locks each official binary archive's own version, URL, size and SHA-512. The explicitly locked macOS Intel archive remains the official `0.2.1-rc.1` archive solely for Node, pnpm, Python, Office assets and prebuilt command helpers, because no Intel `rc.2` archive is published. It must not supply DSH Host, Client or SDK packages. Preserve its original `runtime.json` and record the source accurately; do not relabel it as `rc.2` or implement an automatic fallback. Intel publication requires checks against its actual packaged x64 Resources, in addition to the common npm version gate.
 
 ## Personal and enterprise product boundary
 
@@ -46,7 +47,7 @@ This repository owns WorkDSH Web and Desktop. Desktop and Web consume the same e
 
 - Never clone, import or compile official DSH source as part of product builds. `upstream.json` locks published package versions and Desktop archive URLs, sizes and SHA-512 hashes. Extract only runtime dependencies, Office assets and prebuilt command helpers; do not carry a second official Electron application or DSH installation.
 
-- Explicit user-authorized exception (Web preview 2026-10-17; Desktop packaging and release 2026-10-18): both may apply the same exact-version/checksum-locked `native-workbench-frame-patch` for official `0.2.1-rc.1` to restore the rightmost complete native Conversation. Only the two outer-frame seams may change; preserve original headers, views, Composer and right-sidebar owners. Fail closed on unknown bytes, verify the packaged result and keep exact rollback. Desktop release still requires actual packaged-runtime and UI acceptance; no other official file changes are authorized.
+- Explicit user-authorized exception (Web preview 2026-10-17; Desktop packaging and release 2026-10-18): the user's latest-version and compatibility-adaptation authorization extends this same two-seam exception to official `0.2.1-rc.2`; both may apply the exact-version/checksum-locked `native-workbench-frame-patch` to restore the rightmost complete native Conversation. Only the two outer-frame seams may change; preserve original headers, views, Composer and right-sidebar owners. Fail closed on unknown bytes, verify the packaged result and keep exact rollback. Desktop release still requires actual packaged-runtime and UI acceptance; no other official file changes are authorized.
 
 ## Delivery regression gate
 

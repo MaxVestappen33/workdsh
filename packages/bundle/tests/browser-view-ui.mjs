@@ -37,7 +37,7 @@ test('Web client opens the Agent browser tab and sends image clicks to its Sessi
       const body = route.request().postDataJSON();
       if (body.action) actions.push(body.action);
       const frame = { sessionId: body.sessionId, revision: 1, url: 'https://example.test/', image: `data:image/png;base64,${onePixelPng}` };
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ frame, unchanged: false }) });
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ frame, unchanged: false, activity:{revision:1,active:true} }) });
     });
     await page.goto(url);
     const continueButton = page.getByRole('button', { name: '继续', exact: true });

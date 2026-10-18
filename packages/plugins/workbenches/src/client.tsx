@@ -57,7 +57,7 @@ export function apply(ctx: Context) {
     const lifetime=new AbortController();
     // This is the platform's own authoring surface, not an unverified business
     // registration. Reuse the one native frame and its original Conversation.
-    const page = pagePorts.mountPage({panelKey:WORKBENCH_AUTHORING_PANEL,signal:lifetime.signal,descriptor:{id:'workdsh.authoring',title:'制作应用',description:'',protocolVersion:'1.0',layout:'full-page',hostCompatibility:{sdk:'^1.0.0',harness:'0.2.1-rc.1'},capabilities:[]}},
+    const page = pagePorts.mountPage({panelKey:WORKBENCH_AUTHORING_PANEL,signal:lifetime.signal,descriptor:{id:'workdsh.authoring',title:'制作应用',description:'',protocolVersion:'1.0',layout:'full-page',hostCompatibility:{sdk:'^1.0.0',harness:'0.2.1-rc.2'},capabilities:[]}},
       AuthoringPage);
     return () => { lifetime.abort();try { if (pagePorts.selectedPanel() === WORKBENCH_AUTHORING_PANEL) close(); } finally { page(); } };
   });

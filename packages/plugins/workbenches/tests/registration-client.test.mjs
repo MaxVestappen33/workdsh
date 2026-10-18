@@ -10,8 +10,10 @@ const authority=()=>({descriptor,package:{packageName:'quality-plugin',version:'
 test('registration Client checks exact receipt and discards unexpected response data',async()=>{
  const result=await client(async(_url,options)=>{assert.deepEqual(JSON.parse(options.body),{endpoint:'client-authority',payload:{packageName:'quality-plugin'}});return Response.json({ok:true,value:{...authority(),token:'unused'}});})('quality-plugin');
  assert.equal(result.token,undefined);assert.equal(Object.isFrozen(result),true);assert.equal(Object.isFrozen(result.package),true);
- for(const value of [{...authority(),enabled:false},{...authority(),compatible:false},{...authority(),package:{...authority().package,packageName:'other'}},{...authority(),package:{...authority().package,sha256:'bad'}}])
+ for(const value of [{...authority(),enabled:false},{...authority(),compatible:undefined},{...authority(),package:{...authority().package,packageName:'other'}},{...authority(),package:{...authority().package,sha256:'bad'}}])
  await assert.rejects(client(async()=>Response.json({ok:true,value}))('quality-plugin'));
+ const blocked=await client(async()=>Response.json({ok:true,value:{...authority(),compatible:false}}))('quality-plugin');
+ assert.equal(blocked.compatible,false);assert.deepEqual(blocked.package,authority().package);
 });
 test('cancelled lookup cannot return late authority',async()=>{
  const controller=new AbortController();

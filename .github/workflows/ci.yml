@@ -142,6 +142,19 @@ jobs:
       - name: Install browser for Web integration tests
         working-directory: apps/web
         run: pnpm exec playwright install --with-deps chromium
+      - name: Browser display lifecycle and real managed browser tests
+        working-directory: apps/web
+        run: |
+          node --test ../../packages/bundle/tests/browser-view.test.mjs ../../packages/providers/browser-session/tests/client-auto-open.test.mjs ../../packages/providers/browser-session/tests/tool-activity.test.mjs
+          node --input-type=module <<'JS'
+          import { spawnSync } from 'node:child_process';
+          import { chromium } from '@playwright/test';
+          const result = spawnSync(process.execPath, ['--test', '../../packages/providers/browser-session/tests/session-provider.test.mjs'], {
+            env: { ...process.env, DSH_BROWSER_EXECUTABLE: chromium.executablePath() }, stdio: 'inherit',
+          });
+          if (result.error) throw result.error;
+          process.exit(result.status ?? 1);
+          JS
       - working-directory: apps/web
         run: pnpm test:integration
       - name: Library import, search and task reference tests

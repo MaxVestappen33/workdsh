@@ -50,7 +50,7 @@ export function registerBrowserSessionConnection(ctx: Context): void {
       if (!agent || agent.id !== sessionId || !host.workdshBrowserSession.available(agent)) {
         return response({ error: 'browser Session is unavailable' }, 404);
       }
-      if (operation === 'status') return response({ active: host.workdshBrowserSession.active(agent) });
+      if (operation === 'status') return response({ active: host.workdshBrowserSession.active(agent), revision: host.workdshBrowserSession.revision(agent) });
       try {
         const view = host.workdshBrowserSession;
         const frame = operation === 'capture'

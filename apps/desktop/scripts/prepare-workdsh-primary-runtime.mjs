@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { copyOfficialRuntime, prepareOfficialRelease } from './official-desktop-release.mjs'
 import { DSH_VERSION, OFFICIAL_PNPM_VERSION } from './runtime-version.mjs'
 import { ensureNativeWorkbenchFrame, verifyNativeWorkbenchFrame } from '../../../scripts/native-workbench-frame-patch.mjs'
+import {verifyOfficialRuntimeProvenance} from './official-runtime-provenance.mjs'
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const target = process.platform === 'win32' ? 'win-x64'
@@ -31,10 +32,7 @@ if (!existsSync(manifestPath) || !existsSync(join(output, 'office-skills'))) {
   throw new Error('Official primary runtime payload is incomplete')
 }
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
-if (manifest.desktopVersion !== DSH_VERSION || manifest.platform !== process.platform
-  || manifest.arch !== target.slice(4)) {
-  throw new Error(`Official primary runtime metadata does not match ${target} / ${DSH_VERSION}`)
-}
+verifyOfficialRuntimeProvenance(join(output,'primary-runtime'),target)
 const runtimePnpm = join(output, 'primary-runtime', 'dependencies', 'pnpm', 'bin', 'pnpm.cjs')
 if (manifest.pnpm !== OFFICIAL_PNPM_VERSION || !existsSync(runtimePnpm)) throw new Error('Official primary runtime must carry the locked official pnpm JavaScript CLI')
 const packagePath = join(profile, 'package.json')

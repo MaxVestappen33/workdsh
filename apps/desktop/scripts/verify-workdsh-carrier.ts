@@ -9,10 +9,12 @@ import { ENTERPRISE_PACKAGES, PRODUCT_PACKAGES, RELEASE_PACKAGES } from './workd
 import { verifyBuiltPackageExports, verifyDefaultComposition, verifyDefaultProfile, verifyInstalledDshVersions, verifyOfficialWebPackages, verifyProfileRelease, verifyReleaseArchives } from './verify-profile-release.mjs'
 import { parseDeploymentConfig } from '../src/deployment-config.ts'
 import { verifyNativeWorkbenchFrame } from '../../../scripts/native-workbench-frame-patch.mjs'
+import {verifyOfficialRuntimeProvenance} from './official-runtime-provenance.mjs'
 
 interface PackContext {
   appOutDir: string
   electronPlatformName: string
+  arch: number
   packager: { appInfo: { productFilename: string } }
 }
 
@@ -67,10 +69,12 @@ export async function afterPack(context: PackContext): Promise<void> {
   const primary = JSON.parse(readFileSync(join(runtime, 'primary-runtime', 'runtime.json'), 'utf8')) as {
     desktopVersion?: string
     pnpm?: string
+    arch?: string
   }
-  if (primary.desktopVersion !== DSH_VERSION) {
-    throw new Error(`Bundled primary runtime is ${String(primary.desktopVersion)}, expected ${DSH_VERSION}`)
-  }
+  const expectedArch=context.arch===1?'x64':context.arch===3?'arm64':undefined
+  if(!expectedArch||!['darwin','win32'].includes(context.electronPlatformName))throw Error('Unsupported packaged binary resource target')
+  const binaryTarget=`${context.electronPlatformName==='darwin'?'mac':'win'}-${expectedArch}`
+  verifyOfficialRuntimeProvenance(join(runtime,'primary-runtime'),binaryTarget)
   const profile = join(runtime, 'profiles', 'workdsh')
   // Inspect copied Resources bytes: a preparation log or receipt cannot prove
   // that the official Conversation frame actually reached this installer.

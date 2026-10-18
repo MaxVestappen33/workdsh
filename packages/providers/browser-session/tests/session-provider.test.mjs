@@ -43,6 +43,31 @@ test('official Agent Sessions receive isolated managed Playwright tools', {
     }
     assert.equal(ctx.workdshBrowserSession.active(first.agent), false);
 
+    const close = agent => ctx.tools.execute({
+      agent,
+      name: 'mcp__workdsh-playwright__browser_close',
+      arguments: {},
+      callId: `close-${randomUUID()}`,
+      signal: new AbortController().signal,
+    });
+    for (let repeat = 0; repeat < 2; repeat++) {
+      const result = await close(first.agent);
+      assert.equal(result.isError, false, JSON.stringify(result));
+      assert.equal(ctx.workdshBrowserSession.active(first.agent), false, 'closing an untouched browser never activates its blank view');
+    }
+    const tabs = (agent, action, extra = {}) => ctx.tools.execute({
+      agent, name: 'mcp__workdsh-playwright__browser_tabs', arguments: { action, ...extra },
+      callId: `tabs-${randomUUID()}`, signal: new AbortController().signal,
+    });
+    assert.equal((await tabs(first.agent, 'list')).isError, false);
+    assert.equal(ctx.workdshBrowserSession.active(first.agent), false, 'listing browser tabs is not page use');
+    const failedNavigation = await ctx.tools.execute({
+      agent: first.agent, name: TOOL, arguments: { url: 42 },
+      callId: 'invalid-navigation', signal: new AbortController().signal,
+    });
+    assert.equal(failedNavigation.isError, true);
+    assert.equal(ctx.workdshBrowserSession.active(first.agent), false, 'failed tools do not announce browser activity');
+
     const execute = (agent, label) => ctx.tools.execute({
       agent,
       name: TOOL,
@@ -69,7 +94,7 @@ test('official Agent Sessions receive isolated managed Playwright tools', {
       }));
       return { status: result.status, body: await result.json() };
     };
-    assert.deepEqual(await callRoute(first.agent.id, 'status'), { status: 200, body: { active: true } });
+    assert.deepEqual(await callRoute(first.agent.id, 'status'), { status: 200, body: { active: true, revision: ctx.workdshBrowserSession.revision(first.agent) } });
     assert.equal((await callRoute('unknown-session', 'capture')).status, 404);
     assert.equal((await callRoute(second.agent.id, 'capture')).body.url.includes('FIRST_SESSION'), false);
     profile.organization.kind = 'shared';
@@ -91,6 +116,21 @@ test('official Agent Sessions receive isolated managed Playwright tools', {
     assert.equal(observed.isError, false, JSON.stringify(observed));
     assert.match(JSON.stringify(observed), /CLICKED_FIRST_SESSION/);
     await assert.rejects(ctx.workdshBrowserSession.capture({ ...first.agent }, new AbortController().signal));
+
+    const closed = await close(first.agent);
+    assert.equal(closed.isError, false, JSON.stringify(closed));
+    const closedRevision = ctx.workdshBrowserSession.revision(first.agent);
+    assert.deepEqual(await callRoute(first.agent.id, 'status'), { status: 200, body: { active: false, revision: closedRevision } });
+    const reopened = await execute(first.agent, 'FIRST_REOPENED');
+    assert.equal(reopened.isError, false, JSON.stringify(reopened));
+    assert.ok(ctx.workdshBrowserSession.revision(first.agent) > closedRevision);
+    assert.deepEqual(await callRoute(first.agent.id, 'status'), { status: 200, body: { active: true, revision: ctx.workdshBrowserSession.revision(first.agent) } });
+    const beforeFailedClose = ctx.workdshBrowserSession.revision(first.agent);
+    assert.equal((await tabs(first.agent, 'close', { index: 999 })).isError, true);
+    assert.equal(ctx.workdshBrowserSession.active(first.agent), true, 'a failed close does not claim the live view was closed');
+    assert.equal(ctx.workdshBrowserSession.revision(first.agent), beforeFailedClose);
+    assert.equal((await tabs(first.agent, 'close')).isError, false);
+    assert.equal(ctx.workdshBrowserSession.active(first.agent), false, 'closing a tab withdraws automatic display');
 
     await first.dispose();
     handles.splice(handles.indexOf(first), 1);
