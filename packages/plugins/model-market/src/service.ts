@@ -330,7 +330,7 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
 
   private settings(): SettingsLike {
     const service = (this.ctx as ContextWithSettings).settings;
-    if (!service) throw new ModelMarketError('model-market/settings-unavailable', '当前环境缺少模型配置，无法安装。');
+    if (!service) throw new ModelMarketError('model-market/settings-unavailable', '当前环境缺少模型配置，无法添加。');
     return service;
   }
 
@@ -361,12 +361,12 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
       throw new ModelMarketError(code, usable.reason);
     }
     const api = protocolApi(model.apiProtocol)!;
-    if (!model.apiKey.trim()) throw new ModelMarketError('model-market/invalid-model', '模型缺少访问密钥，无法安装。');
+    if (!model.apiKey.trim()) throw new ModelMarketError('model-market/invalid-model', '模型缺少访问密钥，无法添加。');
 
     const settings = this.settings();
-    if (!settings.writable) throw new ModelMarketError('model-market/settings-readonly', '当前配置为只读，无法安装模型。');
+    if (!settings.writable) throw new ModelMarketError('model-market/settings-readonly', '当前配置为只读，无法添加模型。');
     const descriptor = this.descriptor(SETTINGS_NS);
-    if (!descriptor) throw new ModelMarketError('model-market/settings-unavailable', '当前环境缺少模型配置，无法安装。');
+    if (!descriptor) throw new ModelMarketError('model-market/settings-unavailable', '当前环境缺少模型配置，无法添加。');
     const providers = providersOf(descriptor);
     const groupHash = groupHashOf(model);
     const route = this.allocateRoute(model, groupHash, providers, records);
@@ -412,9 +412,9 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
   private async uninstallInternal(id: string, signal: AbortSignal | undefined): Promise<ModelMarketUninstallResult> {
     const records = await readMarketRecords();
     const install = records.installs[id];
-    if (!install) throw new ModelMarketError('model-market/not-installed', '该模型尚未安装。');
+    if (!install) throw new ModelMarketError('model-market/not-installed', '该模型尚未添加。');
     const descriptor = this.descriptor(SETTINGS_NS);
-    if (!descriptor) throw new ModelMarketError('model-market/settings-unavailable', '当前环境缺少模型配置，无法卸载。');
+    if (!descriptor) throw new ModelMarketError('model-market/settings-unavailable', '当前环境缺少模型配置，无法移除。');
 
     const providers = providersOf(descriptor);
     if (providers[install.route] !== undefined) {
@@ -439,9 +439,9 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
   private async customInstallInternal(input: unknown): Promise<CustomModelEntry> {
     const draft = parseCustomDraft(input);
     const settings = this.settings();
-    if (!settings.writable) throw new ModelMarketError('model-market/settings-readonly', '当前配置为只读，无法安装模型。');
+    if (!settings.writable) throw new ModelMarketError('model-market/settings-readonly', '当前配置为只读，无法添加模型。');
     const descriptor = this.descriptor(SETTINGS_NS);
-    if (!descriptor) throw new ModelMarketError('model-market/settings-unavailable', '当前环境缺少模型配置，无法安装。');
+    if (!descriptor) throw new ModelMarketError('model-market/settings-unavailable', '当前环境缺少模型配置，无法添加。');
     if (providersOf(descriptor)[draft.providerId] !== undefined) {
       throw new ModelMarketError('model-market/provider-exists', 'Provider ID 已存在，请换一个。');
     }
@@ -498,7 +498,7 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
       const install = records.installs[candidate];
       return install.kind === 'custom' && (candidate === key || install.route === route);
     });
-    if (!recordKey) throw new ModelMarketError('model-market/not-installed', '该自定义模型尚未安装。');
+    if (!recordKey) throw new ModelMarketError('model-market/not-installed', '该自定义模型尚未添加。');
     const install = records.installs[recordKey]!;
     // 编辑时密钥留空表示沿用现有凭据，因此不强制要求重新填写。
     const draft = parseCustomDraft(input, { requireKey: false });
@@ -508,7 +508,7 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
     const descriptor = this.descriptor(SETTINGS_NS);
     if (!descriptor) throw new ModelMarketError('model-market/settings-unavailable', '当前环境缺少模型配置，无法保存修改。');
     if (providersOf(descriptor)[install.route] === undefined) {
-      throw new ModelMarketError('model-market/not-installed', '该自定义模型尚未安装。');
+      throw new ModelMarketError('model-market/not-installed', '该自定义模型尚未添加。');
     }
 
     if (draft.apiKey) await this.writeCredential(install.credentialRef, draft.apiKey);
@@ -553,7 +553,7 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
       const install = records.installs[candidate];
       return install.kind === 'custom' && (candidate === key || install.route === route);
     });
-    if (!recordKey) throw new ModelMarketError('model-market/not-installed', '该自定义模型尚未安装。');
+    if (!recordKey) throw new ModelMarketError('model-market/not-installed', '该自定义模型尚未添加。');
     const install = records.installs[recordKey]!;
     const descriptor = this.descriptor(SETTINGS_NS);
     if (descriptor && providersOf(descriptor)[install.route] !== undefined) {
@@ -589,30 +589,53 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
 
     const base = apiUrl.replace(/\/+$/u, '');
     const anthropic = apiProtocol === 'anthropic-messages';
-    const target = anthropic
-      ? `${base}${base.endsWith('/v1') ? '' : '/v1'}/models?limit=1000`
-      : `${base}/models`;
-    const headers: Record<string, string> = anthropic
-      ? { accept: 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }
-      : { accept: 'application/json', authorization: `Bearer ${apiKey}` };
-    let response: Response;
-    try {
-      response = await fetch(target, { headers, redirect: 'error', signal: AbortSignal.timeout(20_000) });
-    } catch {
-      throw new ModelMarketError('model-market/discover-failed', '无法连接模型接口，请检查地址和网络。');
+    const json = { accept: 'application/json' };
+    // 依次尝试的探测地址：Anthropic 兼容网关不一定实现模型列表接口，
+    // 因此 404/405 时回退到同一服务的 OpenAI 兼容列表；安装仍按所选协议写入。
+    const attempts: { url: string; headers: Record<string, string> }[] = [];
+    if (anthropic) {
+      attempts.push({
+        url: `${base}${base.endsWith('/v1') ? '' : '/v1'}/models?limit=1000`,
+        headers: { ...json, 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      });
+      const openaiBase = base.replace(/\/anthropic$/u, '');
+      if (openaiBase !== base) attempts.push({
+        url: `${openaiBase}/models`,
+        headers: { ...json, authorization: `Bearer ${apiKey}` },
+      });
+    } else {
+      attempts.push({ url: `${base}/models`, headers: { ...json, authorization: `Bearer ${apiKey}` } });
     }
-    if (!response.ok) {
-      throw new ModelMarketError('model-market/discover-failed', `模型接口返回 ${response.status}，请检查地址、协议和密钥。`);
+
+    let lastStatus: number | undefined;
+    for (const [index, attempt] of attempts.entries()) {
+      let response: Response;
+      try {
+        response = await fetch(attempt.url, { headers: attempt.headers, redirect: 'error', signal: AbortSignal.timeout(20_000) });
+      } catch {
+        throw new ModelMarketError('model-market/discover-failed', '无法连接模型接口，请检查地址和网络。');
+      }
+      lastStatus = response.status;
+      if (!response.ok) {
+        // 仅当接口未实现（404/405）且还有备选地址时继续尝试；鉴权失败等直接报告。
+        if ((response.status === 404 || response.status === 405) && index < attempts.length - 1) continue;
+        throw new ModelMarketError('model-market/discover-failed', `模型接口返回 ${response.status}，请检查地址、协议和密钥。`);
+      }
+      let payload: unknown;
+      try {
+        payload = await response.json();
+      } catch {
+        throw new ModelMarketError('model-market/discover-failed', '模型接口返回的数据无法识别。');
+      }
+      const models = discoveredModels(payload);
+      if (models.length) return models;
     }
-    let payload: unknown;
-    try {
-      payload = await response.json();
-    } catch {
-      throw new ModelMarketError('model-market/discover-failed', '模型接口返回的数据无法识别。');
-    }
-    const models = discoveredModels(payload);
-    if (!models.length) throw new ModelMarketError('model-market/discover-failed', '接口没有返回可用模型。');
-    return models;
+    throw new ModelMarketError(
+      'model-market/discover-failed',
+      lastStatus === 404
+        ? '模型接口返回 404：该地址未提供模型列表，请改用 OpenAI 协议获取，或手动填写模型 ID。'
+        : '接口没有返回可用模型。',
+    );
   }
 
   /** 同一组（供应商 + 协议 + 地址 + 密钥）复用已有路由，否则分配新的 workdsh-* 路由。 */
@@ -662,7 +685,7 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
     const settings = this.settings();
     for (let attempt = 0; attempt < 2; attempt++) {
       const descriptor = this.descriptor(SETTINGS_NS);
-      if (!descriptor) throw new ModelMarketError('model-market/settings-unavailable', '当前环境缺少模型配置，无法安装。');
+      if (!descriptor) throw new ModelMarketError('model-market/settings-unavailable', '当前环境缺少模型配置，无法添加。');
       try {
         await settings.mutate(SETTINGS_NS, build(providersOf(descriptor)), descriptor.revision);
         return;

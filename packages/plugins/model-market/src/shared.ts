@@ -165,11 +165,11 @@ export function dictionaryLabel(options: readonly (readonly [string, string])[],
   return options.find(([key]) => key === value)?.[1] ?? value;
 }
 
-/** 安装前的静态校验：类型、协议与必填字段。 */
+/** 添加前的静态校验：类型、协议与必填字段。 */
 export function installability(model: ModelMarketModel): ModelMarketInstallability {
   if (!INSTALLABLE_TYPES.has(model.modelType)) return { installable: false, reason: '当前客户端仅支持对话模型' };
-  if (!PROTOCOL_API[model.apiProtocol]) return { installable: false, reason: '该协议暂不支持安装' };
-  if (!model.modelCode.trim() || !model.apiUrl.trim() || !model.id.trim()) return { installable: false, reason: '模型信息不完整，无法安装' };
+  if (!PROTOCOL_API[model.apiProtocol]) return { installable: false, reason: '该协议暂不支持添加' };
+  if (!model.modelCode.trim() || !model.apiUrl.trim() || !model.id.trim()) return { installable: false, reason: '模型信息不完整，无法添加' };
   return { installable: true };
 }
 
@@ -177,9 +177,9 @@ export function protocolApi(apiProtocol: string): string | undefined {
   return PROTOCOL_API[apiProtocol];
 }
 
-/** 不可安装时的按钮文案：类型/协议不支持与后台数据缺失分开表达。 */
+/** 不可添加时的按钮文案：类型/协议不支持与后台数据缺失分开表达。 */
 export function installActionLabel(model: ModelMarketModel, result: ModelMarketInstallability): string {
-  if (result.installable) return '安装';
+  if (result.installable) return '添加';
   if ((model.modelType !== 'LLM' && model.modelType !== 'MLLM') || !protocolApi(model.apiProtocol)) return '不支持';
   return '待完善';
 }
@@ -224,6 +224,39 @@ export function formatCapacity(value: number | undefined): string {
   if (value >= 1024 * 1024 && value % (1024 * 1024) === 0) return `${value / (1024 * 1024)}M`;
   if (value >= 1024 && value % 1024 === 0) return `${value / 1024}K`;
   return String(value);
+}
+
+/**
+ * 把探测到的模型合并进当前目录：按 id 新增或就地更新，保留原顺序与未选中的手工条目。
+ * 覆盖会删除探测未返回的条目、冲掉手工修改，因此这里只在同 id 时用探测结果更新元数据。
+ * @param current - 当前目录（调用方先过滤掉完全空白的行）。
+ * @param additions - 本次勾选的模型。
+ * @param merge - 合并同 id 行的策略；返回原对象表示无变化，不计入 updated。
+ * @returns 合并后的目录与新增/更新数量。
+ */
+export function mergeDiscoveredModels<T extends { readonly id: string }>(
+  current: readonly T[],
+  additions: readonly T[],
+  merge: (existing: T, addition: T) => T,
+): { readonly rows: T[]; readonly added: number; readonly updated: number } {
+  const rows = [...current];
+  let added = 0;
+  let updated = 0;
+  for (const addition of additions) {
+    const id = addition.id.trim();
+    const index = rows.findIndex(row => row.id.trim() === id);
+    if (index < 0) {
+      rows.push(addition);
+      added += 1;
+      continue;
+    }
+    const merged = merge(rows[index]!, addition);
+    if (merged !== rows[index]) {
+      rows[index] = merged;
+      updated += 1;
+    }
+  }
+  return { rows, added, updated };
 }
 
 /** 归一化后台分页字段（JSON 数字可能是字符串）。 */

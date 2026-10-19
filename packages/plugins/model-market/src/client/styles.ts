@@ -12,7 +12,7 @@ export const modelMarketCss = `
 .wd-model-market input:not([type="checkbox"]):focus,.wd-model-market select:focus{border-color:var(--dsw-alias-state-business-primary)}
 
 .wd-model-market .mm-head{display:flex;align-items:baseline;gap:10px;margin:0 0 14px}
-.wd-model-market .mm-title{margin:0;font-size:22px;line-height:30px;font-weight:600}
+.wd-model-market .mm-title{margin:0;font-family:var(--dsw-font-family);font-size:18px;line-height:25px;font-weight:600}
 .wd-model-market .mm-count{color:var(--dsw-alias-label-tertiary);font-size:12px}
 .wd-model-market .mm-head-add{margin-left:auto}
 .wd-model-market .mm-local{margin-bottom:18px}
@@ -24,10 +24,13 @@ export const modelMarketCss = `
 .wd-model-market .mm-count-pill{display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:28px;padding:0 8px;border-radius:8px;background:color-mix(in srgb,var(--dsw-alias-label-primary) 8%,transparent);color:var(--dsw-alias-label-primary);font-size:14px;font-weight:600;line-height:1}
 .wd-model-market .mm-card-static{cursor:default}
 
-.wd-model-market .mm-tools{display:flex;flex-direction:column;gap:10px;margin-bottom:16px}
+.wd-model-market .mm-tools{display:flex;align-items:center;gap:8px;margin-bottom:16px}
 .wd-model-market .mm-search{width:100%;height:36px;padding:0 12px;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary)}
 .wd-model-market .mm-search::placeholder{color:var(--dsw-alias-label-tertiary)}
-.wd-model-market .mm-filters{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+/* 搜索框与两个筛选条件同排：搜索框缩短并自适应，筛选下拉保持自身宽度。 */
+.wd-model-market .mm-tools > .mm-search{flex:1 1 180px;width:auto;min-width:120px;height:32px}
+.wd-model-market .mm-filters{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+@media (max-width:560px){.wd-model-market .mm-tools{flex-wrap:wrap}}
 .wd-model-market .mm-select{height:32px;padding:0 10px;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary)}
 .wd-model-market .mm-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 @media (max-width:560px){.wd-model-market .mm-grid{grid-template-columns:minmax(0,1fr)}}
@@ -60,11 +63,14 @@ export const modelMarketCss = `
 .wd-model-market .mm-action.uninstall:hover:not(:disabled){background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent)}
 .wd-model-market .mm-spinner{flex:none;width:12px;height:12px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:wd-mm-spin .7s linear infinite}
 @keyframes wd-mm-spin{to{transform:rotate(360deg)}}
-.wd-model-market .mm-card-confirm{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px;border:1px solid color-mix(in srgb,var(--dsw-alias-state-error-primary) 45%,transparent);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-state-error-primary);font-size:12px}
-.wd-model-market .mm-card-confirm span{margin-right:auto}
-.wd-model-market .mm-card-confirm button{height:26px;padding:0 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-size:12px}
+.wd-model-market .mm-card-confirm{display:flex;align-items:center;gap:6px;padding:8px;border:1px solid color-mix(in srgb,var(--dsw-alias-state-error-primary) 45%,transparent);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-state-error-primary);font-size:12px}
+.wd-model-market .mm-card-confirm span{min-width:0;margin-right:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wd-model-market .mm-card-confirm button{flex:none;white-space:nowrap;height:26px;padding:0 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-size:12px}
 .wd-model-market .mm-card-confirm button.danger{border-color:var(--dsw-alias-state-error-primary);background:var(--dsw-alias-state-error-primary);color:#fff}
 
+/* 页面级提示吸顶：长页面滚动到任何位置操作时，错误/成功信息都保持可见。 */
+.wd-model-market .mm-banners{position:sticky;top:0;z-index:20;display:flex;flex-direction:column;gap:4px;margin:0 0 12px;padding:8px 0;background:var(--dsw-alias-bg-layer-2)}
+.wd-model-market .mm-banners .mm-error,.wd-model-market .mm-banners .mm-notice{margin:0}
 .wd-model-market .mm-error,.wd-model-market .mm-notice{margin:0 0 12px;font-size:13px}
 .wd-model-market .mm-error{color:#ff746c}
 .wd-model-market .mm-notice{color:#55ce63}

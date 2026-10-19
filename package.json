@@ -35,6 +35,7 @@
     "check:layout": "yarn check:bilingual-docs && node scripts/verify-layout.mjs && node scripts/verify-delivery-paths.mjs",
     "check": "yarn check:layout && yarn check:desktop-dsh-alignment && yarn check:web-dsh-alignment && yarn check:web-plan && yarn workspace dsh-plugin-desktop check",
     "dev": "yarn workspace dsh-plugin-desktop dev",
+    "dev:rebuild": "node scripts/dev-rebuild.mjs",
     "start": "yarn workspace dsh-plugin-desktop start",
     "package:dir": "yarn workspace dsh-plugin-desktop package:dir",
     "dist:mac": "yarn workspace dsh-plugin-desktop dist:mac",

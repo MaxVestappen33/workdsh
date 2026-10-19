@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  CUSTOM_API_PROTOCOLS, MODEL_TYPES, installActionLabel, installability,
+  MODEL_TYPES, installActionLabel, installability,
   type CustomModelDraft, type CustomModelEntry, type ModelMarketDetail, type ModelMarketModel, type ModelMarketPage,
 } from '../shared.js';
 import { createModelMarketClient } from './management.js';
@@ -54,7 +54,6 @@ export function ModelMarketPanel() {
   const [pageNo, setPageNo] = useState(1);
   const [reloadKey, setReloadKey] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [detailLoading, setDetailLoading] = useState(false);
   const [busyId, setBusyId] = useState<string>();
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -91,7 +90,7 @@ export function ModelMarketPanel() {
   }, [notice]);
 
   useEffect(() => {
-    // 只看本地自定义时不需要请求市场接口，避免多余的远程查询。
+    // 只看本地模型时不需要请求市场接口，避免多余的远程查询。
     if (!available || source === 'custom') return;
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
@@ -133,19 +132,12 @@ export function ModelMarketPanel() {
     apply();
   };
 
-  const openDetail = async (id: string) => {
-    setSelectedId(id);
-    setDetail(undefined);
-    setDetailLoading(true);
+  // 列表行已包含详情页展示的全部字段：直接用该行渲染，避免为同一份数据再请求后台。
+  const openDetail = (model: ModelMarketModel) => {
+    setSelectedId(model.id);
+    setDetail({ model, installed: installed.has(model.id) });
     setConfirmUninstall(false);
     setError('');
-    try {
-      setDetail(await client.detail(id));
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '读取模型详情失败。');
-    } finally {
-      setDetailLoading(false);
-    }
   };
 
   const closeDetail = () => {
@@ -161,7 +153,7 @@ export function ModelMarketPanel() {
     setNotice('');
     try {
       const result = await client.install(model.id);
-      // 安装已经成功：先本地落状态，避免列表刷新期间按钮仍显示「安装」。
+      // 添加已经成功：先本地落状态，避免列表刷新期间按钮仍显示「添加」。
       setPage(current => current && !current.installedIds.includes(model.id)
         ? { ...current, installedIds: [...current.installedIds, model.id] }
         : current);
@@ -170,11 +162,10 @@ export function ModelMarketPanel() {
           ? { ...current, installed: true, route: result.route }
           : current);
       }
-      setNotice(`已安装「${model.modelName || model.modelCode}」，可在「设置 → 模型」中查看。`);
+      setNotice(`已添加「${model.modelName || model.modelCode}」。`);
       refresh();
-      if (selectedId === model.id) setDetail(await client.detail(model.id));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '安装模型失败。');
+      setError(cause instanceof Error ? cause.message : '添加模型失败。');
     } finally {
       setBusyId(undefined);
     }
@@ -186,7 +177,7 @@ export function ModelMarketPanel() {
     setNotice('');
     try {
       await client.uninstall(model.id);
-      // 卸载已经成功：先本地落状态，避免列表刷新期间按钮仍显示「卸载」。
+      // 移除已经成功：先本地落状态，避免列表刷新期间按钮仍显示「移除」。
       setPage(current => current
         ? { ...current, installedIds: current.installedIds.filter(value => value !== model.id) }
         : current);
@@ -195,13 +186,12 @@ export function ModelMarketPanel() {
           ? { ...current, installed: false, route: undefined }
           : current);
       }
-      setNotice(`已卸载「${model.modelName || model.modelCode}」。`);
+      setNotice(`已移除「${model.modelName || model.modelCode}」。`);
       setConfirmUninstall(false);
       setConfirmCardId(undefined);
       refresh();
-      if (selectedId === model.id) setDetail(await client.detail(model.id));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '卸载模型失败。');
+      setError(cause instanceof Error ? cause.message : '移除模型失败。');
     } finally {
       setBusyId(undefined);
     }
@@ -213,11 +203,11 @@ export function ModelMarketPanel() {
     setNotice('');
     try {
       const entry = await client.customInstall(draft);
-      setNotice(`已添加自定义模型「${entry.displayName}」。`);
+      setNotice(`已添加本地模型「${entry.displayName}」。`);
       setCreating(false);
       refresh();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '添加自定义模型失败。');
+      setError(cause instanceof Error ? cause.message : '添加本地模型失败。');
     } finally {
       setCustomBusyKey(undefined);
     }
@@ -233,7 +223,7 @@ export function ModelMarketPanel() {
       setEditing(undefined);
       refresh();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '保存自定义模型失败。');
+      setError(cause instanceof Error ? cause.message : '保存本地模型失败。');
     } finally {
       setCustomBusyKey(undefined);
     }
@@ -247,23 +237,26 @@ export function ModelMarketPanel() {
       await client.customUninstall(entry.key);
       setCustomEntries(current => current.filter(item => item.key !== entry.key));
       setConfirmCustomKey(undefined);
-      setNotice(`已卸载自定义模型「${entry.displayName}」。`);
+      setNotice(`已移除本地模型「${entry.displayName}」。`);
       refresh();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '卸载自定义模型失败。');
+      setError(cause instanceof Error ? cause.message : '移除本地模型失败。');
     } finally {
       setCustomBusyKey(undefined);
     }
   };
 
-  const protocolLabel = (value: string) => CUSTOM_API_PROTOCOLS.find(([key]) => key === value)?.[1] ?? value;
+  // 卡片只展示协议品牌：openai-* 归为 OpenAI，anthropic-* 归为 Anthropic。
+  const protocolBrand = (value: string) =>
+    value.startsWith('openai-') ? 'OpenAI' : value.startsWith('anthropic-') ? 'Anthropic' : value;
 
-  const notices = (
-    <>
+  // 页面级提示使用吸顶容器：无论滚动到哪个位置操作，错误和成功提示都保持可见。
+  const notices = error || notice ? (
+    <div className="mm-banners">
       {error ? <p className="mm-error" role="alert">{error}</p> : null}
       {notice ? <p className="mm-notice" role="status">{notice}</p> : null}
-    </>
-  );
+    </div>
+  ) : null;
 
   if (creating || editing) {
     return (
@@ -285,8 +278,8 @@ export function ModelMarketPanel() {
     return (
       <section className="wd-model-market" data-testid="workdsh-model-market" aria-busy="true">
         <style>{modelMarketCss}</style>
-        <div className="mm-head"><h1 className="mm-title">模型市场</h1></div>
-        <div className="mm-loading" role="status">正在检查模型市场…</div>
+        <div className="mm-head"><h1 className="mm-title">模型管理</h1></div>
+        <div className="mm-loading" role="status">正在检查模型管理…</div>
       </section>
     );
   }
@@ -295,7 +288,7 @@ export function ModelMarketPanel() {
     return (
       <section className="wd-model-market" data-testid="workdsh-model-market">
         <style>{modelMarketCss}</style>
-        <div className="mm-head"><h1 className="mm-title">模型市场</h1></div>
+        <div className="mm-head"><h1 className="mm-title">模型管理</h1></div>
         <div className="mm-empty">
           <strong>当前环境未接入模型市场</strong>
           <span>请先登录公司账号，或联系管理员确认模型授权配置。</span>
@@ -324,10 +317,10 @@ export function ModelMarketPanel() {
             <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
               <path d="M10 3 5 8l5 5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
-            返回模型市场
+            返回模型管理
           </button>
           {notices}
-          {detailLoading || !model ? (
+          {!model ? (
             <div className="mm-loading" role="status">正在读取模型详情…</div>
           ) : (
             <>
@@ -336,14 +329,14 @@ export function ModelMarketPanel() {
                 <div style={{ minWidth: 0 }}>
                   <div className="mm-detail-title-row">
                     <span className="mm-detail-title">{model.modelName || model.modelCode}</span>
-                    <span className={detail?.installed ? 'mm-state on' : 'mm-state'}>{detail?.installed ? '已安装' : '未安装'}</span>
+                    <span className={detail?.installed ? 'mm-state on' : 'mm-state'}>{detail?.installed ? '已添加' : '未添加'}</span>
                   </div>
                   <div className="mm-detail-sub">{model.providerName || model.provider}{model.version ? ` · ${model.version}` : ''}</div>
                 </div>
                 <span className="mm-detail-action">
                   {detail?.installed ? (
                     <button type="button" className="mm-action uninstall" disabled={busy} onClick={() => setConfirmUninstall(true)}>
-                      {busy ? <><span className="mm-spinner" />卸载中…</> : '卸载'}
+                      {busy ? <><span className="mm-spinner" />移除中…</> : '移除'}
                     </button>
                   ) : (
                     <button
@@ -353,7 +346,7 @@ export function ModelMarketPanel() {
                       title={usable?.installable ? undefined : usable?.reason}
                       onClick={() => void install(model)}
                     >
-                      {busy ? <><span className="mm-spinner" />安装中…</> : usable?.installable ? '安装' : installActionLabel(model, usable ?? { installable: false, reason: '' })}
+                      {busy ? <><span className="mm-spinner" />添加中…</> : usable?.installable ? '添加' : installActionLabel(model, usable ?? { installable: false, reason: '' })}
                     </button>
                   )}
                 </span>
@@ -364,11 +357,11 @@ export function ModelMarketPanel() {
                 <span className="mm-badge">{model.modelTypeName || model.modelType || '类型未知'}</span>
               </div>
               {confirmUninstall ? (
-                <div className="mm-confirm" role="alertdialog" aria-label="确认卸载模型">
-                  <span>卸载后将删除本机该模型的配置与凭据，确认卸载？</span>
+                <div className="mm-confirm" role="alertdialog" aria-label="确认移除模型">
+                  <span>移除后将删除本机该模型的配置与凭据，确认移除？</span>
                   <button type="button" onClick={() => setConfirmUninstall(false)} disabled={busy}>取消</button>
                   <button type="button" className="danger" onClick={() => void uninstall(model)} disabled={busy}>
-                    {busy ? '卸载中…' : '确认卸载'}
+                    {busy ? '移除中…' : '确认移除'}
                   </button>
                 </div>
               ) : null}
@@ -407,23 +400,23 @@ export function ModelMarketPanel() {
     <section className="wd-model-market" data-testid="workdsh-model-market">
       <style>{modelMarketCss}</style>
       <div className="mm-head">
-        <h1 className="mm-title">模型市场</h1>
+        <h1 className="mm-title">模型管理</h1>
         <span className="mm-count">
-          市场模型 {page?.total ?? 0} 个{customEntries.length ? ` · 本地 ${customEntries.length} 个` : ''}
+          市场模型 {page?.total ?? 0} 个{customEntries.length ? ` · 本地模型 ${customEntries.length} 个` : ''}
         </span>
         <button
           type="button"
           className="mm-action install mm-head-add"
           onClick={() => { setCreating(true); setError(''); }}
         >
-          ＋ 添加自定义模型
+          ＋ 添加本地模型
         </button>
       </div>
       <div className="mm-tools">
         <input
           className="mm-search"
           aria-label="搜索模型"
-          placeholder="搜索模型名称或说明"
+          placeholder="请输入模型名称或说明"
           value={query}
           onChange={event => { setPageNo(1); setQuery(event.currentTarget.value); }}
         />
@@ -431,7 +424,7 @@ export function ModelMarketPanel() {
           <select className="mm-select" aria-label="模型来源" value={source} onChange={event => changeFilter(() => setSource(event.currentTarget.value))}>
             <option value="">全部来源</option>
             <option value="market">市场模型</option>
-            <option value="custom">本地自定义</option>
+            <option value="custom">本地模型</option>
           </select>
           <select className="mm-select" aria-label="模型类型" value={modelType} onChange={event => changeFilter(() => setModelType(event.currentTarget.value))}>
             <option value="">全部类型</option>
@@ -443,7 +436,7 @@ export function ModelMarketPanel() {
       {source !== 'market' && customEntries.length ? (
         <div className="mm-local">
           <GroupHead
-            title="本地自定义"
+            title="本地模型"
             count={customEntries.length}
             expanded={!customCollapsed}
             onToggle={() => setCustomCollapsed(value => !value)}
@@ -462,13 +455,13 @@ export function ModelMarketPanel() {
                     </div>
                   </div>
                   <div className="mm-meta">
-                    <span className="mm-source custom">本地自定义</span>
-                    <span className="mm-meta-text">自定义 · {protocolLabel(entry.apiProtocol)}</span>
+                    <span className="mm-source custom">本地模型</span>
+                    <span className="mm-meta-text">{protocolBrand(entry.apiProtocol)}</span>
                   </div>
                   <div className="mm-desc">{entry.models.map(model => model.name || model.id).join('、')}</div>
                   <div className="mm-foot">
                     <span className="mm-foot-left">
-                      <span className="mm-state on">已安装</span>
+                      <span className="mm-state on">已添加</span>
                       {entry.isDefault ? <span className="mm-badge default">默认</span> : null}
                       <span className="mm-context">{entry.models.length} 个模型</span>
                     </span>
@@ -487,16 +480,16 @@ export function ModelMarketPanel() {
                         disabled={busy}
                         onClick={() => setConfirmCustomKey(entry.key)}
                       >
-                        {busy ? <><span className="mm-spinner" />卸载中…</> : '卸载'}
+                        {busy ? <><span className="mm-spinner" />移除中…</> : '移除'}
                       </button>
                     </span>
                   </div>
                   {confirmCustomKey === entry.key ? (
                     <div className="mm-card-confirm">
-                      <span>确认卸载该自定义模型？</span>
+                      <span>确认移除？</span>
                       <button type="button" onClick={() => setConfirmCustomKey(undefined)} disabled={busy}>取消</button>
                       <button type="button" className="danger" disabled={busy} onClick={() => void uninstallCustom(entry)}>
-                        {busy ? '卸载中…' : '确认卸载'}
+                        {busy ? '移除中…' : '确认移除'}
                       </button>
                     </div>
                   ) : null}
@@ -530,11 +523,11 @@ export function ModelMarketPanel() {
                   role="button"
                   tabIndex={0}
                   aria-busy={busy}
-                  onClick={() => void openDetail(model.id)}
+                  onClick={() => openDetail(model)}
                   onKeyDown={event => {
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault();
-                      void openDetail(model.id);
+                      openDetail(model);
                     }
                   }}
                 >
@@ -552,7 +545,7 @@ export function ModelMarketPanel() {
                   <div className="mm-desc">{model.description || '暂无说明'}</div>
                   <div className="mm-foot">
                     <span className="mm-foot-left">
-                      <span className={isInstalled ? 'mm-state on' : 'mm-state'}>{isInstalled ? '已安装' : '未安装'}</span>
+                      <span className={isInstalled ? 'mm-state on' : 'mm-state'}>{isInstalled ? '已添加' : '未添加'}</span>
                       {model.isDefault ? <span className="mm-badge default">默认</span> : null}
                       <span className="mm-context">{model.contextLength || '—'}</span>
                     </span>
@@ -566,7 +559,7 @@ export function ModelMarketPanel() {
                           setConfirmCardId(model.id);
                         }}
                       >
-                        {busy ? <><span className="mm-spinner" />卸载中…</> : '卸载'}
+                        {busy ? <><span className="mm-spinner" />移除中…</> : '移除'}
                       </button>
                     ) : (
                       <button
@@ -579,16 +572,16 @@ export function ModelMarketPanel() {
                           if (usable.installable) void install(model);
                         }}
                       >
-                        {busy ? <><span className="mm-spinner" />安装中…</> : installActionLabel(model, usable)}
+                        {busy ? <><span className="mm-spinner" />添加中…</> : installActionLabel(model, usable)}
                       </button>
                     )}
                   </div>
                   {confirmCardId === model.id ? (
                     <div className="mm-card-confirm" onClick={event => event.stopPropagation()}>
-                      <span>确认卸载该模型？</span>
+                      <span>确认移除？</span>
                       <button type="button" onClick={() => setConfirmCardId(undefined)} disabled={busy}>取消</button>
                       <button type="button" className="danger" disabled={busy} onClick={() => void uninstall(model)}>
-                        {busy ? '卸载中…' : '确认卸载'}
+                        {busy ? '移除中…' : '确认移除'}
                       </button>
                     </div>
                   ) : null}
@@ -613,8 +606,8 @@ export function ModelMarketPanel() {
       ) : null}
       {source === 'custom' && !customEntries.length ? (
         <div className="mm-empty">
-          <strong>还没有本地自定义模型</strong>
-          <span>点击右上角「＋ 添加自定义模型」创建。</span>
+          <strong>还没有本地模型</strong>
+          <span>点击右上角「＋ 添加本地模型」创建。</span>
         </div>
       ) : null}
     </section>

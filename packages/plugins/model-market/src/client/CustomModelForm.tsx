@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
-  CUSTOM_API_PROTOCOLS, CUSTOM_PROVIDER_ID, formatCapacity, parseContextWindow,
+  CUSTOM_API_PROTOCOLS, CUSTOM_PROVIDER_ID, formatCapacity, mergeDiscoveredModels, parseContextWindow,
   type CustomModelDefinition, type CustomModelDraft, type CustomModelEntry,
 } from '../shared.js';
 
@@ -19,14 +19,14 @@ const blankModel = (): FormModel => ({ id: '', name: '', context: '', maxTokens:
 export interface CustomModelFormProps {
   readonly busy: boolean;
   readonly error: string;
-  /** 传入已安装的自定义模型时进入编辑模式，表单回显现有配置。 */
+  /** 传入已安装的本地模型时进入编辑模式，表单回显现有配置。 */
   readonly initial?: CustomModelEntry;
   readonly onSubmit: (draft: CustomModelDraft) => void;
   readonly onCancel: () => void;
   readonly onDiscover: (input: { apiUrl: string; apiProtocol: string; apiKey: string }) => Promise<readonly CustomModelDefinition[]>;
 }
 
-/** 自定义模型表单：复用官方 llm-pi-ai 的配置结构，但不复制官方设置页。 */
+/** 本地模型表单：复用官方 llm-pi-ai 的配置结构，但不复制官方设置页。 */
 export function CustomModelForm({ busy, error, initial, onSubmit, onCancel, onDiscover }: CustomModelFormProps) {
   const editing = initial !== undefined;
   const [providerId, setProviderId] = useState(initial?.providerId ?? '');
@@ -46,12 +46,20 @@ export function CustomModelForm({ busy, error, initial, onSubmit, onCancel, onDi
     }))
     : [blankModel()]);
   const [localError, setLocalError] = useState('');
+  const [localNotice, setLocalNotice] = useState('');
   const [discoverOpen, setDiscoverOpen] = useState(false);
   const [discoverLoading, setDiscoverLoading] = useState(false);
   const [discoverError, setDiscoverError] = useState('');
   const [candidates, setCandidates] = useState<readonly CustomModelDefinition[]>([]);
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
   const [discoverQuery, setDiscoverQuery] = useState('');
+
+  // 成功提示 3 秒后自动消失，避免吸顶横幅长期占用空间。
+  useEffect(() => {
+    if (!localNotice) return;
+    const timer = window.setTimeout(() => setLocalNotice(''), 3_000);
+    return () => window.clearTimeout(timer);
+  }, [localNotice]);
 
   const updateModel = (index: number, patch: Partial<FormModel>) => {
     setModels(current => current.map((model, position) => position === index ? { ...model, ...patch } : model));
@@ -72,6 +80,7 @@ export function CustomModelForm({ busy, error, initial, onSubmit, onCancel, onDi
 
   const discover = async () => {
     setLocalError('');
+    setLocalNotice('');
     setDiscoverError('');
     const invalid = validateTarget();
     if (invalid) {
@@ -101,32 +110,37 @@ export function CustomModelForm({ busy, error, initial, onSubmit, onCancel, onDi
       setDiscoverError('请先勾选要添加的模型。');
       return;
     }
-    setModels(current => {
-      const kept = current.filter(model => model.id.trim() || model.name.trim() || model.context.trim() || model.maxTokens.trim());
-      const ids = new Set(kept.map(model => model.id.trim()).filter(Boolean));
-      return [
-        ...kept,
-        ...additions.flatMap(candidate => {
-          if (ids.has(candidate.id)) return [];
-          ids.add(candidate.id);
-          return [{
-            id: candidate.id,
-            name: candidate.name,
-            context: formatCapacity(candidate.contextWindow),
-            maxTokens: formatCapacity(candidate.maxTokens),
-            text: candidate.input.includes('text') || !candidate.input.length,
-            image: candidate.input.includes('image'),
-            expanded: true,
-          }];
-        }),
-      ];
+    // 合并而不是覆盖：同 id 条目用探测结果更新元数据（保留原顺序与展开状态），
+    // 新 id 追加到末尾，未勾选/未探测到的手工条目保持不变。
+    const kept = models.filter(model => model.id.trim() || model.name.trim() || model.context.trim() || model.maxTokens.trim());
+    const discovered = additions.map(candidate => ({
+      id: candidate.id,
+      name: candidate.name,
+      context: formatCapacity(candidate.contextWindow),
+      maxTokens: formatCapacity(candidate.maxTokens),
+      text: candidate.input.includes('text') || !candidate.input.length,
+      image: candidate.input.includes('image'),
+      expanded: true,
+    }));
+    const { rows, added, updated } = mergeDiscoveredModels(kept, discovered, (existing, addition) => {
+      const merged = { ...existing, ...addition, expanded: existing.expanded };
+      const unchanged = merged.name === existing.name && merged.context === existing.context
+        && merged.maxTokens === existing.maxTokens && merged.text === existing.text
+        && merged.image === existing.image;
+      return unchanged ? existing : merged;
     });
+    setModels(rows);
     setDiscoverOpen(false);
     setDiscoverError('');
+    setLocalError('');
+    setLocalNotice(added || updated
+      ? `已${added ? `添加 ${added} 个` : ''}${added && updated ? '、' : ''}${updated ? `更新 ${updated} 个` : ''}模型。`
+      : '所选模型均已在列表中，无需重复添加。');
   };
 
   const submit = () => {
     setLocalError('');
+    setLocalNotice('');
     const invalid = validateTarget();
     if (invalid) {
       setLocalError(invalid);
@@ -195,11 +209,15 @@ export function CustomModelForm({ busy, error, initial, onSubmit, onCancel, onDi
         <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
           <path d="M10 3 5 8l5 5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
-        返回模型市场
+        返回模型列表
       </button>
-      <h1 className="mm-title">{editing ? '编辑自定义模型' : '添加自定义模型'}</h1>
-      <p className="mm-hint">连接中转站、自部署服务或其他兼容 OpenAI / Anthropic 协议的接口。</p>
-      {localError || error ? <p className="mm-error" role="alert">{localError || error}</p> : null}
+      {/* 页面级提示吸顶显示：表单较长时，滚动到任何位置都能立即看到校验/请求结果。 */}
+      {localError || error || localNotice ? (
+        <div className="mm-banners">
+          {localError || error ? <p className="mm-error" role="alert">{localError || error}</p> : null}
+          {localNotice ? <p className="mm-notice" role="status">{localNotice}</p> : null}
+        </div>
+      ) : null}
 
       <section className="mm-form-section">
         <h2 className="mm-section-title">基本信息</h2>
@@ -256,7 +274,7 @@ export function CustomModelForm({ busy, error, initial, onSubmit, onCancel, onDi
                 className="mm-discover-link"
                 onClick={() => setSelectedIds(new Set(visibleCandidates.map(candidate => candidate.id)))}
               >
-                全选可见
+                全选
               </button>
               <button type="button" className="mm-discover-link" onClick={() => setDiscoverOpen(false)}>取消</button>
             </div>
@@ -268,9 +286,12 @@ export function CustomModelForm({ busy, error, initial, onSubmit, onCancel, onDi
                     type="checkbox"
                     checked={selectedIds.has(candidate.id)}
                     onChange={event => {
+                      // 先取出选中状态：函数式更新回调可能延迟到事件结束后执行，
+                      // 那时合成事件的 currentTarget 已被置空，直接读取会抛异常导致整页空白。
+                      const checked = event.currentTarget.checked;
                       setSelectedIds(current => {
                         const next = new Set(current);
-                        if (event.currentTarget.checked) next.add(candidate.id);
+                        if (checked) next.add(candidate.id);
                         else next.delete(candidate.id);
                         return next;
                       });
@@ -386,7 +407,7 @@ export function CustomModelForm({ busy, error, initial, onSubmit, onCancel, onDi
       <div className="mm-form-actions">
         <button type="button" className="mm-action" disabled={busy} onClick={onCancel}>取消</button>
         <button type="button" className="mm-action install" disabled={busy} onClick={submit}>
-          {busy ? <><span className="mm-spinner" />{editing ? '保存中…' : '创建中…'}</> : editing ? '保存修改' : '创建并安装'}
+          {busy ? <><span className="mm-spinner" />保存中…</> : '保存'}
         </button>
       </div>
     </div>

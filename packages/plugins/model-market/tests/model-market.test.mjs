@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { installability, installActionLabel, formatCapacity, modelRouteEntry, parseContextWindow } from '../dist/shared.js';
+import { installability, installActionLabel, formatCapacity, mergeDiscoveredModels, modelRouteEntry, parseContextWindow } from '../dist/shared.js';
 import { normalizeModel } from '../dist/market.js';
 import { readMarketRecords, writeMarketRecords } from '../dist/records.js';
 
@@ -34,10 +34,37 @@ test('对话模型可以安装，非对话模型与不支持的协议被拒绝',
 });
 
 test('不可安装时区分「不支持」与后台数据待完善', () => {
-  assert.equal(installActionLabel(model, installability(model)), '安装');
+  assert.equal(installActionLabel(model, installability(model)), '添加');
   assert.equal(installActionLabel({ ...model, modelType: 'ASR' }, installability({ ...model, modelType: 'ASR' })), '不支持');
   assert.equal(installActionLabel({ ...model, apiProtocol: '04' }, installability({ ...model, apiProtocol: '04' })), '不支持');
   assert.equal(installActionLabel({ ...model, apiUrl: '' }, installability({ ...model, apiUrl: '' })), '待完善');
+});
+
+test('重新获取可用模型时按 id 合并：新增追加、同 id 更新、未选中的条目保留', () => {
+  const current = [
+    { id: 'a', name: 'A', context: '128K', maxTokens: '32K', text: true, image: false, expanded: true },
+    { id: 'manual', name: '手工模型', context: '', maxTokens: '', text: true, image: false, expanded: false },
+  ];
+  const additions = [
+    { id: 'a', name: 'A2', context: '256K', maxTokens: '32K', text: true, image: false, expanded: true },
+    { id: 'b', name: 'B', context: '1M', maxTokens: '384K', text: true, image: false, expanded: true },
+  ];
+  const merge = (existing, addition) => {
+    const merged = { ...existing, ...addition, expanded: existing.expanded };
+    return merged.name === existing.name && merged.context === existing.context ? existing : merged;
+  };
+  const result = mergeDiscoveredModels(current, additions, merge);
+  assert.equal(result.added, 1);
+  assert.equal(result.updated, 1);
+  assert.deepEqual(result.rows.map(row => row.id), ['a', 'manual', 'b']);
+  assert.equal(result.rows[0].name, 'A2');
+  assert.equal(result.rows[0].expanded, true);
+
+  // 内容没有变化时不产生“更新”计数，界面可以据此提示“均已在列表中”。
+  const unchanged = mergeDiscoveredModels(current, [current[0]], merge);
+  assert.equal(unchanged.added, 0);
+  assert.equal(unchanged.updated, 0);
+  assert.deepEqual(unchanged.rows, current);
 });
 
 test('pi-ai 模型条目携带容量与输入类型', () => {
