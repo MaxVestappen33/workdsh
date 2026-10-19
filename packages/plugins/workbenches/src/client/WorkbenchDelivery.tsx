@@ -1,0 +1,39 @@
+import React,{useEffect,useMemo,useRef,useState}from'react';
+import{createWorkbenchCatalogClient,type WorkbenchCatalogEntry}from'./catalog-client.js';
+import{createWorkbenchActivationClient}from'./activation-client.js';
+import{createWorkbenchDevelopmentClient}from'./development-client.js';
+import{workbenchDeliveryState}from'./delivery-state.js';
+import type{WorkbenchDevelopmentIndexEntry}from'workdsh-contracts';
+import type{AcceptanceBinding}from'../runtime/acceptance-service.js';
+type Review={binding?:AcceptanceBinding;ready:boolean;criteria?:string;accepted?:{acceptedAt:string}};
+export function WorkbenchDelivery({entry,criteria,refreshToken,canOpen,onOpen,onPackage,onFeedback,onContinue,submitting,submissionMessage,submissionError}:{submitting?:boolean;submissionMessage?:string;submissionError?:string;entry:WorkbenchDevelopmentIndexEntry;criteria?:string;refreshToken:number;canOpen?:(id:string)=>boolean;onOpen?:(id:string)=>void;onPackage:()=>void;onFeedback:()=>void;onContinue:()=>void}){
+ const catalog=useMemo(()=>createWorkbenchCatalogClient(),[]),activate=useMemo(()=>createWorkbenchActivationClient(),[]);
+ const [snapshot,setSnapshot]=useState<{row?:WorkbenchCatalogEntry;count:number;review:Review}>(),[error,setError]=useState<string>(),[notice,setNotice]=useState<string>(),[busy,setBusy]=useState(false),[checked,setChecked]=useState(false);
+ const request=useRef<AbortController|undefined>(undefined),operation=useRef(false),generation=useRef(0);
+ const d=entry.development;
+ const lifetime=useRef(new AbortController());useEffect(()=>()=>lifetime.current.abort(),[]);
+ async function review(accept?:AcceptanceBinding,signal?:AbortSignal){const r=await fetch('/api/workdsh-workbench-acceptance',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({developmentId:d.id,...(accept?{accept}:{})}),signal:AbortSignal.any([AbortSignal.timeout(30000),...(signal?[signal]:[])])});const j=await r.json();if(!r.ok||j.ok!==true)throw Error(j.error?.code??'workbench/acceptance-unavailable');return j.value as Review;}
+ async function refresh(){if(request.current||operation.current)return;const controller=new AbortController();request.current=controller;const id=++generation.current;
+  try{const [rows,acceptance,candidates]=await Promise.all([catalog(controller.signal),review(undefined,controller.signal),(async()=>{const r=await fetch('/api/workdsh-workbench-source-candidates',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({developmentId:d.id}),signal:controller.signal});const j=await r.json();if(!r.ok||j.ok!==true||!Array.isArray(j.value))throw Error('candidate-check');return j.value.filter((x:any)=>x.candidate?.compatible===true).length;})()]);controller.signal.throwIfAborted();if(id!==generation.current)return;
+   if(acceptance.binding&&acceptance.binding.requirementsRevision!==d.requirementsRevision)throw Error('requirements-changed');const row=rows.find(r=>r.packageName===d.packageName);setSnapshot({row,count:candidates,review:acceptance});setError(undefined);
+  }catch{if(!controller.signal.aborted){setSnapshot(undefined);setError('当前交付状态未能核对，请重试。没有把它标记为完成。');}}
+  finally{if(request.current===controller)request.current=undefined;}
+ }
+ useEffect(()=>{setSnapshot(undefined);setChecked(false);setNotice(undefined);void refresh();const timer=setInterval(()=>void refresh(),15000);const focus=()=>void refresh();window.addEventListener('focus',focus);return()=>{clearInterval(timer);window.removeEventListener('focus',focus);request.current?.abort();request.current=undefined;generation.current++;};},[d.id,d.requirementsRevision]);
+ useEffect(()=>{void refresh();},[refreshToken]);
+ const completionCriteria=snapshot?.review.criteria??criteria;
+ const available=!!canOpen?.(d.workbenchId),state=snapshot&&workbenchDeliveryState(snapshot.row,available,snapshot.count,!!snapshot.review.accepted);
+ const ready=state?.key==='trial'||state?.key==='accepted';
+ useEffect(()=>setChecked(false),[snapshot?.review.binding?.sha256,snapshot?.review.binding?.requirementsRevision]);
+ async function primary(){if(!state||!snapshot)return;if(state.key==='disabled'){
+  if(operation.current||!snapshot.row?.installed)return;request.current?.abort();request.current=undefined;operation.current=true;setBusy(true);setError(undefined);
+  try{const fresh=(await createWorkbenchDevelopmentClient().list(lifetime.current.signal)).find(r=>r.development.id===d.id);if(!fresh||fresh.development.requirementsRevision!==d.requirementsRevision)throw Error('stale');const result=await activate({developmentId:d.id,...snapshot.row.installed,workbenchId:d.workbenchId},true,lifetime.current.signal);setNotice(result.pendingRestart?'启用选择已保存，需要重启后生效。请先保存其他任务，平台不会自动重启。':result.confirmed?'已选择启用，正在核对应用是否就绪。':'启用结果待核对，请刷新状态。');}
+  catch{setError('启用尚未确认，请重新核对；不会重复安装。');}finally{operation.current=false;setBusy(false);void refresh();}
+ }else if(ready){if(canOpen?.(d.workbenchId))onOpen?.(d.workbenchId);else void refresh();}
+ else if(['built','failed','incompatible'].includes(state.key))onPackage();else if(state.key==='developing')onContinue();else void refresh();}
+ async function accept(){if(!checked||!ready||!snapshot?.review.binding||!completionCriteria?.trim()||operation.current)return;request.current?.abort();request.current=undefined;operation.current=true;setBusy(true);
+  try{const result=await review(snapshot.review.binding,lifetime.current.signal);setSnapshot(old=>old?{...old,review:result}:old);setChecked(false);setNotice('已保存你的验收确认。此版本可从工作台打开日常使用。');}
+  catch{setError('验收未保存：版本、需求或运行状态可能已变化，请重新核对后再确认。');}finally{operation.current=false;setBusy(false);void refresh();}
+ }
+ return <section className="wd-delivery" aria-label="制作交付进度"><p className="wd-delivery-eyebrow">当前进度{snapshot?.row?.installed?` · ${snapshot.row.installed.version}`:''}</p><h2>{state?.title??(error?'交付状态待核对':'正在核对交付状态…')}</h2><p>{state?.description??'正在读取安装、启用、注册和验收记录。'}</p>{snapshot?.row?.installed&&snapshot.count>0&&<p className="wd-delivery-note">当前进度针对已安装版本；刚完成修改时，请在“查看版本与安装”核对新的开发产物。</p>}{snapshot&&<ol className="wd-delivery-checks" aria-label="交付检查清单"><li>安装文件：{snapshot.row?.installed?'已核验':'待安装'}</li><li>应用启动：{snapshot.row?.runtimeStatus==='failed'?'失败':snapshot.row?.runtimeStatus==='active'&&snapshot.row.registered?'已就绪':'待核对'}</li><li>页面入口：{snapshot.row?.descriptor&&canOpen?.(snapshot.row.descriptor.id)?'已就绪，待试用':'待核对'}</li><li>试用验收：{snapshot.review.accepted?'此版本已确认':'待用户确认'}</li></ol>}{error&&<p role="alert">{error}</p>}{notice&&<p role="status">{notice}</p>}{submissionMessage&&<p role="status">{submissionMessage}</p>}{submissionError&&<p role="alert">{submissionError}</p>}<div className="wd-delivery-actions"><button data-variant="primary" disabled={busy||submitting} onClick={()=>void(state?primary():refresh())}>{submitting?'正在提交开发指令…':busy?'正在处理…':state?.action??'重新核对'}</button><button disabled={busy} onClick={()=>void refresh()}>刷新状态</button>{snapshot&&<button onClick={onPackage}>查看版本与安装</button>}</div>{completionCriteria&&<details className="wd-delivery-criteria" open={ready}><summary>本轮完成标准</summary><p>{completionCriteria}</p><p>逐项实际操作，并核对未实现项；AI 的完成声明不能代替试用。</p></details>}{ready&&!snapshot?.review.accepted&&<div className="wd-delivery-accept"><label><input type="checkbox" checked={checked} onChange={e=>setChecked(e.currentTarget.checked)}/> 我已打开此版本并按本轮完成标准试用，确认满足需求</label><div className="wd-delivery-actions"><button disabled={!checked||busy||!snapshot?.review.ready||!completionCriteria?.trim()} onClick={()=>void accept()}>确认此版本验收通过</button><button disabled={busy} onClick={onFeedback}>发现问题，记录并继续修改</button></div></div>}{snapshot?.review.accepted&&<p>验收确认时间：{new Date(snapshot.review.accepted.acceptedAt).toLocaleString()}</p>}{!ready&&<p className="wd-delivery-note">应用尚未通过试用验收。需求不符或已知限制需记录并处理。</p>}</section>;
+}

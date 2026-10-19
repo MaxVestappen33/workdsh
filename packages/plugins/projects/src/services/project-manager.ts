@@ -5,6 +5,8 @@ import type { ActorContext } from 'workdsh-contracts';
 import type { CreateProjectInput, Project, ProjectActivity, ProjectAssetRef, ProjectCapabilityRef, ProjectConfig, ProjectConfigRevision, ProjectInputRef, ProjectService, ProjectSnapshot, ProjectTaskContext, ProjectTaskLink, ProjectTemplate, ProjectWorkItem } from 'workdsh-contracts/projects';
 import { PROJECT_INSTRUCTION_TOKEN_BUDGET, estimateProjectInstructionTokens } from '../instruction-budget.js';
 import { projectDomainSpec, projectStateKey, type ProjectState } from '../storage/domain.js';
+import { assertActorContext } from 'workdsh-contracts';
+import { assertSessionAssociationAccess, sameTaskBinding } from '../runtime/session-association.js';
 declare module '@deepseek-ai/cordis' { interface Context { workdshProjects: ProjectService; } }
 const timestamp = () => new Date().toISOString();
 const clean = (value: string, code = 'projects/invalid-name', max = 10_000) => { const next = value.trim(); if (!next || next.length > max) throw new Error(code); return next; };
@@ -33,8 +35,36 @@ export class ProjectManager extends Service implements ProjectService {
   addAsset(actor: ActorContext, projectId:string, input:Omit<ProjectAssetRef,'id'|'projectId'|'createdAt'>){return this.enqueue(async()=>{const state=await this.state(actor);this.requireProject(state,projectId);const existing=Object.values(state.assets).find(row=>row.projectId===projectId&&row.assetId===input.assetId&&row.revisionId===input.revisionId);if(existing)return existing;const ref:ProjectAssetRef={...input,id:randomUUID(),projectId,createdAt:timestamp()};const activity=this.event(projectId,actor,'asset',`关联资产「${ref.name}」`);await this.put(actor,{...state,assets:{...state.assets,[ref.id]:ref},activity:{...state.activity,[activity.id]:activity}});return ref;});}
   removeAsset(actor:ActorContext,projectId:string,refId:string){return this.enqueue(async()=>{const state=await this.state(actor),ref=state.assets[refId];if(!ref||ref.projectId!==projectId)throw new Error('projects/not-found');const assets={...state.assets};delete assets[refId];const activity=this.event(projectId,actor,'asset',`移除资产引用「${ref.name}」`);await this.put(actor,{...state,assets,activity:{...state.activity,[activity.id]:activity}});});}
   validateInputRefs(actor:ActorContext,projectId:string,references:readonly ProjectInputRef[]){return this.enqueue(async()=>{const state=await this.state(actor),project=this.requireProject(state,projectId);return this.validateReferences(state,project,references);});}
-  linkTask(actor:ActorContext,projectId:string,sessionId:string,title:string,workItemId?:string,references:readonly ProjectInputRef[]=[],_signal?:AbortSignal,capabilities?:readonly ProjectCapabilityRef[]){return this.enqueue(async()=>{const state=await this.state(actor),project=this.requireProject(state,projectId);if(workItemId&&state.workItems[workItemId]?.projectId!==projectId)throw new Error('projects/not-found');const validated=this.validateReferences(state,project,references);const configured=state.configs[project.configRevisionId].capabilities;const selection=(capabilities??configured).map(ref=>{const bound=configured.find(x=>x.id===ref.id&&x.kind===ref.kind&&x.revision===ref.revision);if(!bound)throw new Error('projects/capability-not-bound');return bound});const link:ProjectTaskLink={id:randomUUID(),projectId,sessionId:clean(sessionId),title:clean(title,'projects/invalid-title',500),configRevisionId:project.configRevisionId,capabilities:selection,...(workItemId?{workItemId}:{}),references:validated,createdAt:timestamp()};const activity=this.event(projectId,actor,'task',`创建任务「${link.title}」`);await this.put(actor,{...state,tasks:{...state.tasks,[link.id]:link},activity:{...state.activity,[activity.id]:activity}});return link;});}
-  taskContext(actor:ActorContext,sessionId:string){return this.enqueue(async():Promise<ProjectTaskContext|undefined>=>{const state=await this.state(actor),task=Object.values(state.tasks).find(row=>row.sessionId===sessionId);if(!task)return undefined;const project=state.projects[task.projectId],config=state.configs[task.configRevisionId];if(!project||!config)return undefined;return{availableCapabilities:config.capabilities,project:this.normalizedProject(project),config:{...config,capabilities:task.capabilities??config.capabilities},task:{...task,references:task.references??[]}};});}
+  linkTask(actor:ActorContext,projectId:string,sessionId:string,title:string,workItemId?:string,references:readonly ProjectInputRef[]=[],signal?:AbortSignal,capabilities?:readonly ProjectCapabilityRef[]){return this.enqueue(async()=>{
+    const id=clean(sessionId,'projects/invalid-session',256);
+    await assertSessionAssociationAccess(this.ctx,actor,id,signal);
+    const state=await this.state(actor),project=this.requireProject(state,projectId);
+    if(workItemId&&state.workItems[workItemId]?.projectId!==projectId)throw new Error('projects/not-found');
+    const validated=this.validateReferences(state,project,references);
+    const configured=state.configs[project.configRevisionId].capabilities;
+    const selection=(capabilities??configured).map(ref=>{const bound=configured.find(x=>x.id===ref.id&&x.kind===ref.kind&&x.revision===ref.revision);if(!bound)throw new Error('projects/capability-not-bound');return bound});
+    const link:ProjectTaskLink={id:randomUUID(),projectId,sessionId:id,title:clean(title,'projects/invalid-title',500),configRevisionId:project.configRevisionId,capabilities:selection,...(workItemId?{workItemId}:{}),references:validated,createdAt:timestamp()};
+    const existing=Object.values(state.tasks).filter(row=>row.sessionId===id);
+    if(existing.length>1)throw new Error('projects/session-link-conflict');
+    if(existing[0]){
+      if(!sameTaskBinding(existing[0],link))throw new Error('projects/session-binding-conflict');
+      return existing[0];
+    }
+    signal?.throwIfAborted();
+    const activity=this.event(projectId,actor,'task',`创建任务「${link.title}」`);
+    await this.put(actor,{...state,tasks:{...state.tasks,[link.id]:link},activity:{...state.activity,[activity.id]:activity}});return link;
+  });}
+  taskContext(actor:ActorContext,sessionId:string,signal?:AbortSignal){return this.enqueue(async():Promise<ProjectTaskContext|undefined>=>{
+    signal?.throwIfAborted();
+    const id=clean(sessionId,'projects/invalid-session',256),state=await this.state(actor);
+    const tasks=Object.values(state.tasks).filter(row=>row.sessionId===id);
+    if(!tasks.length)return undefined;
+    if(tasks.length>1)throw new Error('projects/session-link-conflict');
+    await assertSessionAssociationAccess(this.ctx,actor,id,signal);
+    const task=tasks[0],project=state.projects[task.projectId],config=state.configs[task.configRevisionId];
+    if(!project||!config||config.projectId!==project.id)throw new Error('projects/session-binding-conflict');
+    return{availableCapabilities:config.capabilities,project:this.normalizedProject(project),config:{...config,capabilities:task.capabilities??config.capabilities},task:{...task,references:task.references??[]}};
+  });}
   noteDeliveryGap(actor:ActorContext,projectId:string,text:string){return this.enqueue(async()=>{const state=await this.state(actor);this.requireProject(state,projectId);const activity=this.event(projectId,actor,'asset',clean(text,'projects/invalid-title',500));await this.put(actor,{...state,activity:{...state.activity,[activity.id]:activity}});});}
 
   private listForStatus(actor:ActorContext,query:string,status:Project['status']){return this.enqueue(async()=>{const state=await this.state(actor),needle=query.trim().toLocaleLowerCase();return Object.values(state.projects).map(row=>this.normalizedProject(row)).filter(row=>row.status===status&&(!needle||`${row.name} ${row.description}`.toLocaleLowerCase().includes(needle))).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt));});}
@@ -43,7 +73,7 @@ export class ProjectManager extends Service implements ProjectService {
   private validateReferences(state:Stored,project:Project,references:readonly ProjectInputRef[]){const config=state.configs[project.configRevisionId],unique=new Map<string,ProjectInputRef>();for(const ref of references){const key=`${ref.kind}:${ref.id}`;if(unique.has(key))continue;if(ref.kind==='work-item'){const item=state.workItems[ref.id];if(!item||item.projectId!==project.id||item.revision!==ref.revision)throw new Error('projects/reference-stale');}else if(ref.kind==='asset'){const asset=state.assets[ref.id];if(!asset||asset.projectId!==project.id||asset.revisionId!==ref.revision)throw new Error('projects/reference-stale');}else{const skill=config?.capabilities.find(row=>row.kind==='skill'&&row.id===ref.id);if(!skill||(skill.revision??project.configRevisionId)!==ref.revision)throw new Error('projects/reference-stale');}unique.set(key,{...ref,label:clean(ref.label,'projects/invalid-title',500)});}return[...unique.values()];}
   private normalizedProject(project:Project):Project{return{...project,description:project.description??''};}
   private requireProject(state:Stored,id:string){const row=state.projects[id];if(!row||row.status==='archived')throw new Error('projects/not-found');return this.normalizedProject(row);}
-  private async state(actor:ActorContext):Promise<Stored>{const key=projectStateKey(actor.organizationId,actor.principalId),found=await this.states().get(key);if(found)return found as Stored;const state:Stored={schemaVersion:1,projects:{},configs:{},workItems:{},assets:{},tasks:{},activity:{}};await this.states().put(key,state);return state;}
+  private async state(actor:ActorContext):Promise<Stored>{assertActorContext(actor);const key=projectStateKey(actor.organizationId,actor.principalId),found=await this.states().get(key);if(found){const state=found as Stored;if(Object.values(state.projects).some(project=>project.owner.organizationId!==actor.organizationId||project.owner.ownerPrincipalId!==actor.principalId))throw new Error('projects/owner-mismatch');return state;}const state:Stored={schemaVersion:1,projects:{},configs:{},workItems:{},assets:{},tasks:{},activity:{}};await this.states().put(key,state);return state;}
   private put(actor:ActorContext,state:Stored){return this.states().put(projectStateKey(actor.organizationId,actor.principalId),state);}
   private states(){if(!this.table)throw new Error('projects/not-ready');return this.table;}
   private enqueue<T>(work:()=>Promise<T>):Promise<T>{const next=this.serial.then(work,work);this.serial=next.then(()=>undefined,()=>undefined);return next;}

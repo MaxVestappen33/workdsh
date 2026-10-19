@@ -1,3 +1,4 @@
+import { load as loadYaml, dump as dumpYaml, Type as YamlType, DEFAULT_SCHEMA } from 'js-yaml'
 import { ENTERPRISE_PACKAGES, PRODUCT_PACKAGES, RELEASE_PACKAGES } from './workdsh-package-boundary.mjs'
 import { createHash } from 'node:crypto'
 import { existsSync, globSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
@@ -133,4 +134,26 @@ export function verifyBuiltPackageFreshness(pkg, directory) {
   if (newestMtime(source) > newestMtime(output)) {
     throw new Error(`Stale build for ${pkg.name}: dist/ is older than src/; rebuild WorkDSH packages ("corepack pnpm build" in apps/web) before packing`)
   }
+}
+
+// Preserve Harness expressions as opaque data; composition must not evaluate them.
+class ProfileExpression { constructor(source) { this.source = source } }
+const PROFILE_PATCH_SCHEMA = DEFAULT_SCHEMA.extend(new YamlType('tag:yaml.org,2002:js', {
+  kind: 'scalar', construct: value => new ProfileExpression(value),
+  instanceOf: ProfileExpression, represent: value => value.source,
+}))
+/** Compose owned overlay documents as YAML values, including empty overlays. */
+export function composeProfilePatches(documents) {
+  const operations = documents.flatMap(document => {
+    const parsed = loadYaml(document, { schema: PROFILE_PATCH_SCHEMA })
+    if (parsed == null) return []
+    if (!Array.isArray(parsed)) throw new Error('Owned Profile patch must be an array')
+    return parsed
+  })
+  return dumpYaml(operations, { schema: PROFILE_PATCH_SCHEMA, noRefs: true, lineWidth: -1 })
+}
+
+/** Loader patch rows can reference dependencies as well as service peers. */
+export function requiredRuntimeDependencies(pkg) {
+  return { ...pkg.dependencies, ...Object.fromEntries(Object.entries(pkg.peerDependencies ?? {}).filter(([name]) => !pkg.peerDependenciesMeta?.[name]?.optional)) }
 }

@@ -2,13 +2,13 @@
 
 [English](README.md)
 
-本包构建 Electron 应用，包含一套个人运行时 Profile。官方 DeepSeek Harness 拥有 Host、完整 Web 客户端及核心执行；WorkDSH 功能包提供共同的专家、Skill、资料库和 MCP/连接器。这是默认自有功能边界，不代表预装全部定义或 MCP 服务。企业账号插件随只读运行包提供、仅企业登录后启用；个人 Profile 不启用它。协作与通知仍为显式安装的外置插件。
+本包构建 Electron 应用，包含一套个人运行时 Profile。官方 DeepSeek Harness 拥有 Host、完整 Web 客户端及核心执行；共享 WorkDSH 功能包提供经核对的 Profile 所选产品能力，不代表预装全部专家定义、Skill 或 MCP 服务。企业账号和协作作为外置插件显式安装，基础安装包不预装；通知及独立业务应用同样是可选外置插件。
 
 ## 个人与企业连接
 
-外壳先显示使用方式选择。个人模式启动个人本机 Home/Profile。企业管理员在打包配置中固定公司后台 HTTPS 地址，员工通过 Main 登录并核验真实组织与成员；HTTP 仅允许回环开发地址。登录后在独立成员空间启动本机官方 DSH，不再打开远端企业 Web。企业 Web 自身仍在 ECS 按账号运行。
+外壳先显示使用方式选择。个人模式启动个人本机 Home/Profile。企业管理员在打包配置中固定公司后台 HTTPS 地址，员工通过 Main 登录并核验真实组织与成员；HTTP 仅允许回环开发地址。登录后在独立成员空间启动本机官方 DSH，不再打开远端企业 Web。企业执行仍在员工桌面端，服务器提供账号、授权、协作数据与模型转发。
 
-企业账号插件从安装包的共同官方依赖图加载，不需要员工再安装 tgz；缺失、版本不匹配或成员目录同名包遮蔽时阻止企业进入。个人默认组合不选择企业账号；协作与通知不自动安装。企业空间按后台、组织和成员隔离配置、凭据、技能根与窗口存储，仍使用同一官方客户端、设置和右侧面板。本轮只实现账号/正文适配，不自动安装协作或通知。
+先在个人空间安装并启用企业连接插件，再登录公司账号。企业插件缺失或版本不兼容时阻止企业进入。企业空间按后台、组织和成员隔离配置、凭据、技能根与窗口存储；两种模式仍使用同一官方客户端、设置和右侧面板。安装插件不授予成员资格或业务权限，权限由后台核验。
 
 后台登录 bearer 只在 Main 内存，业务页面和 DSH CLI 不持有它。受控本机接口按固定账号逐操作复验，只提供账号、退出和可见正文同步。企业账号页复用插件页面，显示组织名称、同步状态、重试/删除和退出。
 
@@ -23,7 +23,7 @@
 ```
 
 ```sh
-WORKDSH_DEPLOYMENT_CONFIG=/absolute/path/company.json corepack yarn package:dir
+WORKDSH_DEPLOYMENT_CONFIG=/absolute/path/company.json corepack yarn workspace dsh-plugin-desktop package:dir
 ```
 
 打包将校验后的配置写入应用 Resources 的 `workdsh-config.json`，员工入口只显示该地址，不允许改写。配置只接受 `enterprise.backendUrl`，拒绝密码或 Key。未设置此环境变量的个人构建生成空配置，不沿用上一次公司的地址。开发可运行 `corepack yarn dev` 并手填地址，或用 `WORKDSH_ENTERPRISE_PORTAL` 预填；这不是企业交付配置。
@@ -36,8 +36,9 @@ WORKDSH_DEPLOYMENT_CONFIG=/absolute/path/company.json corepack yarn package:dir
 
 ```sh
 corepack yarn install --immutable
-corepack pnpm --dir workdsh-web build
-node apps/desktop/scripts/pack-workdsh-profile.mjs workdsh-web
+corepack pnpm --dir apps/web install --frozen-lockfile
+corepack pnpm --dir apps/web build
+node apps/desktop/scripts/pack-workdsh-profile.mjs apps/web
 corepack yarn dev
 ```
 
@@ -54,8 +55,10 @@ corepack yarn check:desktop-dsh-alignment
 
 `corepack yarn release:pack` 构建并打包同一提交的 Web 源码与经过核对的 Desktop 组合，保留干净源码发行门禁。Web 发行目录同时生成 `desktop-release-manifest.json` 与对应哈希命名制品，供已发布 Desktop 打包使用。
 
-先在 WorkDSH 构建四个自有功能、必要支撑包及企业账号包。`pack-workdsh-profile.mjs` 在 `build/workdsh-profile-release` 生成不可变制品与版本/哈希清单；其他候选通过 `WORKDSH_RELEASE_DIRECTORY` 显式选择。运行时准备安装固定官方版本，生成可移植锁文件，并携带 pnpm JavaScript CLI 支持显式插件操作。门禁拒绝额外默认功能包，并验证真实插件管理器恰好展示四个 WorkDSH bundle；企业账号仅企业登录后启用。同一 Profile 保留固定的 SkillHub 0.2.16 和 dshmarket 1.66.8 目录集成，不代表目录内容全部安装或经 WorkDSH 审核。不打包正在使用的用户配置或凭据。
+先构建共享功能及其必要支撑包。`pack-workdsh-profile.mjs` 在 `build/workdsh-profile-release` 生成不可变制品与版本/哈希清单；其他候选通过 `WORKDSH_RELEASE_DIRECTORY` 显式选择。运行时准备安装固定官方版本，生成可移植锁文件，并携带 pnpm JavaScript CLI 支持显式插件操作。`scripts/workdsh-package-boundary.mjs` 中的包清单定义经核对的默认 bundle 与必要支撑包，企业插件不包含在基础安装包中。同一 Profile 保留固定的 SkillHub 0.2.16 和 dshmarket 1.66.8 目录集成，不代表目录内容全部安装或经 WorkDSH 审核。不打包正在使用的用户配置或凭据。
 
-Desktop pin 与共同产品目标均为 **DSH 0.2.0-rc.2**，由用户明确选择。未修改的官方 `dsh-v0.2.0-rc.2` tag 固定提交 `639ed015397290b3745d163aafe02ffee4aa3f84`。既有安装包和 Profile 的实际版本需要单独核验。Desktop alignment、Desktop checks 和 packaged-runtime 验收都通过后才能宣布统一升级完成；Web Docker 证据不能代替。默认选择经过验证的官方稳定版。
+`upstream.json` 按用户明确要求，将 Desktop 与 Web 实际使用的 Host、Client 和 SDK npm 包统一固定为官方 **DSH 0.2.1-rc.2**。产品构建使用已发布包，不导入或编译官方源码。既有应用与 Profile 的实际版本需单独核验；版本一致性、Desktop 检查与打包运行时验收全部通过后才能宣布升级完成，Web 预览证据不能代替。默认选择经过验证的官方稳定版。
 
-上游 checkout 保持只读。外壳源码与打包脚本在本目录，功能包源码属于 WorkDSH，服务器启动器/网关配方由该工程 deploy/member-process 拥有。参见 [Desktop 归属](../../docs/desktop-boundaries.md)。
+官方 Desktop 归档单独提供 Node、pnpm、Python、Office 资源和预编译命令工具，每个目标记录实际归档版本、URL、大小和 SHA-512。上游尚未发布 Intel `rc.2` 归档，因此 Intel 工具明确使用官方 `0.2.1-rc.1` 归档并保留原始运行时元数据。这不会降级 DSH npm 包，也不启用自动回退；Intel 发行仍须通过实际安装包 x64 Resources 的验证。
+
+外壳源码与打包脚本位于本目录，共享 WorkDSH 功能源码位于仓库 `packages/`。官方 DSH 通过已发布包接入，不检出其源码。企业管理与模型转发由独立的 WorkDSH Admin 仓库负责。参见 [Desktop 归属](../../docs/desktop-boundaries.md)。

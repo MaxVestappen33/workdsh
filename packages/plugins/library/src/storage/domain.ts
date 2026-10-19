@@ -29,6 +29,14 @@ const revision = z.object({
 const receipt = z.object({ operationId: id, assetId: id, revisionId: id, nodeId: id, inputSha256: id.optional() });
 const reference = z.object({ sessionId: id, nodeId: id, assetId: id, revisionId: id, selectedAt: iso });
 const draft = z.object({ id, assetId: id, baseRevisionId: id, revision: id, content: z.string().max(8 * 1024 * 1024), createdBy: id, createdAt: iso, updatedAt: iso });
+const contentDraft = z.object({
+  id, revision: id, sha256: z.string().regex(/^[a-f0-9]{64}$/), content: z.string().max(16 * 1024).refine(value => new TextEncoder().encode(value).byteLength <= 16 * 1024),
+  status: z.enum(['active', 'archived']), operationId: id, createdBy: id, createdAt: iso, updatedAt: iso,
+});
+const contentDraftReceipt = z.object({
+  operationId: id, draftId: id, inputSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  revision: id, sha256: z.string().regex(/^[a-f0-9]{64}$/), status: z.enum(['active', 'archived']),
+});
 
 export const libraryStateSchema = z.object({
   schemaVersion: z.literal(1),
@@ -39,7 +47,9 @@ export const libraryStateSchema = z.object({
   receipts: z.record(id, receipt),
   references: z.record(id, z.array(reference)).default({}),
   drafts: z.record(id, draft).default({}),
-});
+  contentDrafts: z.record(id, contentDraft).refine(value => Object.keys(value).length <= 100).default({}),
+  contentDraftReceipts: z.record(id, contentDraftReceipt).refine(value => Object.keys(value).length <= 1000).default({}),
+}).refine(state => new TextEncoder().encode(JSON.stringify({ contentDrafts: state.contentDrafts, contentDraftReceipts: state.contentDraftReceipts })).byteLength <= 2 * 1024 * 1024);
 
 export type LibraryState = z.infer<typeof libraryStateSchema>;
 

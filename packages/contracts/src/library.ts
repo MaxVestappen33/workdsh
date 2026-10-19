@@ -112,7 +112,24 @@ export interface LibraryDraft {
   readonly updatedAt: string;
 }
 
+/** Unpublished bounded content, independent of an existing asset/revision. */
+export interface LibraryContentDraft {
+  readonly id: string;
+  readonly revision: string;
+  readonly sha256: string;
+  readonly content: string;
+  readonly status: 'active' | 'archived';
+  readonly operationId: string;
+  readonly createdBy: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+export interface LibrarySaveContentDraftInput { readonly draftId: string; readonly expectedRevision?: string; readonly operationId: string; readonly content: string; }
+export interface LibraryArchiveContentDraftInput { readonly draftId: string; readonly expectedRevision: string; readonly operationId: string; }
+
 export interface LibraryOriginalPreviewInput {
+  /** Optional explicit Office save; owner authorizes and persists a new revision. */
+  readonly onSaveOriginal?: (bytes:Uint8Array,signal:AbortSignal)=>Promise<void>;
   readonly name: string;
   readonly kind: Extract<LibraryAssetKind, 'docx' | 'pptx' | 'csv' | 'xlsx'>;
   readonly bytes: Uint8Array;
@@ -127,12 +144,19 @@ export interface LibraryOriginalPreviewRegistry {
   getRevision(): number;
 }
 
+export interface LibraryOriginalRevisionInput { readonly assetId:string; readonly expectedRevisionId:string; readonly operationId:string; readonly bytes:Uint8Array; }
+
 export interface LibraryService {
+  readContentDraft?(actor: ActorContext, draftId: string, signal?: AbortSignal, authorizeCurrent?: () => void): Promise<LibraryContentDraft>;
+  saveContentDraft?(actor: ActorContext, input: LibrarySaveContentDraftInput, signal?: AbortSignal, authorizeCurrent?: () => void): Promise<LibraryContentDraft>;
+  archiveContentDraft?(actor: ActorContext, input: LibraryArchiveContentDraftInput, signal?: AbortSignal, authorizeCurrent?: () => void): Promise<LibraryContentDraft>;
+  saveOriginalRevision?(actor:ActorContext,input:LibraryOriginalRevisionInput,signal?:AbortSignal,authorizeCurrent?:()=>void):Promise<LibraryTreeEntry>;
   space(actor: ActorContext, signal?: AbortSignal): Promise<LibrarySpace>;
   list(actor: ActorContext, parentId?: string, signal?: AbortSignal): Promise<readonly LibraryTreeEntry[]>;
   createFolder(actor: ActorContext, name: string, parentId?: string, signal?: AbortSignal): Promise<LibraryNode>;
   importAsset(actor: ActorContext, input: LibraryImportInput, signal?: AbortSignal): Promise<LibraryTreeEntry>;
   readText(actor: ActorContext, assetId: string, revisionId?: string, signal?: AbortSignal): Promise<string>;
+  originalFilePath(actor: ActorContext, assetId: string, revisionId: string, signal?: AbortSignal): Promise<string>;
   readOriginal(actor: ActorContext, assetId: string, revisionId?: string, signal?: AbortSignal): Promise<Uint8Array>;
   search(actor: ActorContext, query: string, filters?: LibrarySearchFilters, signal?: AbortSignal): Promise<readonly LibrarySearchHit[]>;
   setTaskSelection(actor: ActorContext, sessionId: string, nodeIds: readonly string[], signal?: AbortSignal): Promise<readonly LibraryTaskReference[]>;
@@ -154,4 +178,18 @@ export interface LibraryComposerReference {
   readonly name: string;
   readonly kind: string;
   readonly sessionId?: string;
+}
+
+/** Open an immutable Library original in the official Session-owned right panel. */
+export interface LibraryOriginalPanelInput {
+  readonly assetId: string;
+  readonly revisionId: string;
+  readonly name: string;
+  readonly kind: LibraryAssetKind;
+  /** A currently registered main panel; no callbacks or business state enter Tab params. */
+  readonly returnPanel?: { readonly id: string; readonly label: string };
+}
+export interface LibraryOriginalPanelClient {
+  /** Resolves after the official right-panel navigation is committed, not after visual acceptance. */
+  open(input: LibraryOriginalPanelInput, signal?: AbortSignal): Promise<void>;
 }

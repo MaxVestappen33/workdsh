@@ -6,7 +6,6 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DSH_VERSION } from '../apps/desktop/scripts/runtime-version.mjs'
 import { RELEASE_PACKAGES } from '../apps/desktop/scripts/workdsh-package-boundary.mjs'
-import { verifyProfileRelease, verifyReleaseArchives } from '../apps/desktop/scripts/verify-profile-release.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const webRoot = join(root, 'apps/web')
@@ -35,6 +34,8 @@ function run(label, command, commandArgs, { cwd = root, env = process.env } = {}
 }
 
 run('Install Desktop dependencies', corepack, ['yarn', 'install', '--immutable'])
+// Profile validators depend on packages installed by this bootstrap step.
+const { verifyProfileRelease, verifyReleaseArchives } = await import('../apps/desktop/scripts/verify-profile-release.mjs')
 run('Check Desktop packaging', corepack, ['yarn', 'workspace', 'dsh-plugin-desktop', platform === 'win32' ? 'check:win-package' : 'check:mac-package'])
 
 const version = JSON.parse(readFileSync(join(webRoot, 'package.json'), 'utf8')).version

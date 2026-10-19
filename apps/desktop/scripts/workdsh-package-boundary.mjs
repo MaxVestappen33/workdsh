@@ -7,6 +7,7 @@ export const PRODUCT_PACKAGES = Object.freeze([
   'workdsh-plugin-model-market',
   'workdsh-plugin-projects',
   'workdsh-plugin-skills',
+  'workdsh-plugin-workbenches',
 ])
 
 // External enterprise packages: installed explicitly, never included in the base installer.
@@ -39,6 +40,7 @@ export const RELEASE_PACKAGES = Object.freeze([
   'workdsh-bundle',
   'workdsh-plugin-projects',
   'workdsh-plugin-model-market',
+  'workdsh-plugin-workbenches',
 ])
 
 export const PACKAGE_DIRECTORIES = Object.freeze({
@@ -58,6 +60,7 @@ export const PACKAGE_DIRECTORIES = Object.freeze({
   'workdsh-bundle': '../../packages/bundle',
   'workdsh-plugin-projects': '../../packages/plugins/projects',
   'workdsh-plugin-model-market': '../../packages/plugins/model-market',
+  'workdsh-plugin-workbenches': '../../packages/plugins/workbenches',
   'workdsh-provider-identity-enterprise': '../../packages/providers/identity-enterprise',
   'workdsh-plugin-enterprise-collaboration': '../../packages/plugins/enterprise-collaboration',
 })

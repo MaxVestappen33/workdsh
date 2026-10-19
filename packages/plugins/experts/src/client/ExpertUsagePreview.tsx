@@ -21,7 +21,7 @@ export function ExpertUsagePreview({ definition, dependencyLock }: ExpertUsagePr
     <h3>配备技能 · {dependencyLock.length}</h3>
     <p>以下技能将固定为校验通过的版本。</p>
     {dependencyLock.length ? <ul>{dependencyLock.map(skill => <li key={skill.skillId}><strong>{skill.name}</strong><small>固定版本 {skill.revisionId}</small></li>)}</ul> : <p>未显式配备技能，仍受原生任务能力与权限限制。</p>}
-    {definition.futureRequirements.length > 0 && <><h3>扩展能力</h3><p>额外能力声明不代表已接入或可调用。</p><ul>{definition.futureRequirements.map(req => <li key={`${req.kind}:${req.key}`}>{req.kind === 'connector' ? '连接器' : req.kind} · {req.key}<small>{req.required ? '必需' : '可选'} · 暂不支持接入</small></li>)}</ul></>}
+    {definition.futureRequirements.length > 0 && <><h3>扩展能力</h3><p>额外能力声明不代表已接入或可调用。</p><ul>{definition.futureRequirements.map(req => <li key={`${req.kind}:${req.key}`}>{req.kind === 'connector' ? '连接器' : req.kind} · {req.key}<small>{req.required ? '必需' : '可选'} · {req.kind === 'connector' ? '在会话中接入' : '暂不支持接入'}</small></li>)}</ul></>}
     <details className="preview-settings"><summary>专业角色与经验</summary><p>{definition.role}</p></details>
   </section>;
 }

@@ -1,0 +1,3 @@
+# Host activation and executable configuration belong to the WorkDSH composition.
+# This provider is not a client-only plugin and must not be shim-mounted as one.
+[]

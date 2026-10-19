@@ -2,13 +2,13 @@
 
 [中文](README.zh.md)
 
-This package builds the Electron application and contains one bundled personal runtime Profile. Official DeepSeek Harness owns the Host, full Web Client and core execution; WorkDSH feature packages supply shared experts, Skills, Library and MCP/connectors. These are the default owned feature boundary, not a promise that every definition or MCP service is preinstalled. The enterprise account plugin is carried in the immutable runtime and selected only after enterprise login; personal defaults do not activate it. Collaboration and notifications remain explicitly installed external plugins.
+This package builds the Electron application and contains one bundled personal runtime Profile. Official DeepSeek Harness owns the Host, full Web Client and core execution; shared WorkDSH feature packages supply the product capabilities selected by the reviewed Profile. This does not preinstall every expert definition, Skill or MCP service. Enterprise identity and collaboration are installed explicitly as external plugins and are not included in the base installer. Notifications and independent business applications are also optional external plugins.
 
 ## Personal and enterprise connections
 
-The carrier first shows a personal/enterprise chooser. Personal mode starts the personal local Home/Profile. The enterprise administrator fixes the company HTTPS backend origin when packaging; enterprise mode authenticates the verified organization/member in Main; HTTP is allowed only for loopback development. It then runs the same official DSH locally in the member's separate space, rather than opening remote enterprise Web. Enterprise Web continues to run per-account processes on ECS.
+The carrier first shows a personal/enterprise chooser. Personal mode starts the personal local Home/Profile. The enterprise administrator fixes the company HTTPS backend origin when packaging; enterprise mode authenticates the verified organization/member in Main; HTTP is allowed only for loopback development. It then runs the same official DSH locally in the member's separate space, rather than opening remote enterprise Web. Enterprise execution remains on the employee's Desktop; the server provides accounts, authorization, collaboration data and model forwarding.
 
-The enterprise account plugin loads from the packaged official dependency graph without an employee tgz installation step. A missing, incompatible or member-local shadowing package prevents enterprise startup. Personal defaults do not select enterprise identity; collaboration and notifications are not automatically installed. Backend, organization and member determine separate configuration, credentials, skill roots and window storage, while both modes use the same official client, settings and right panel. This change supplies account/body adapters without automatically installing collaboration or notifications.
+Install and activate the Enterprise Connection archive in the personal space before company login. Missing or incompatible enterprise packages prevent enterprise startup. Backend, organization and member determine separate configuration, credentials, skill roots and window storage; both modes use the same official client, settings and right panel. Installing a plugin does not grant membership or business permissions; the backend verifies them.
 
 The backend bearer stays in Main memory; business pages and the DSH CLI never receive it. A controlled loopback interface rechecks the fixed account for each operation and exposes only account, logout and visible-body synchronization. The plugin reuses its account page, showing the organization name, sync status, retry/delete and logout.
 
@@ -23,7 +23,7 @@ The enterprise administrator copies `config/enterprise.example.json`, sets the b
 ```
 
 ```sh
-WORKDSH_DEPLOYMENT_CONFIG=/absolute/path/company.json corepack yarn package:dir
+WORKDSH_DEPLOYMENT_CONFIG=/absolute/path/company.json corepack yarn workspace dsh-plugin-desktop package:dir
 ```
 
 Packaging writes the validated configuration to `workdsh-config.json` in application Resources. Employees see the fixed address and cannot override it. Only `enterprise.backendUrl` is accepted; passwords and Keys are rejected. Personal builds without this environment variable generate empty configuration and cannot inherit a previous company's address. Development uses `corepack yarn dev` with manual setup or `WORKDSH_ENTERPRISE_PORTAL` prefill; this is not the managed deployment configuration.
@@ -36,8 +36,9 @@ Use Node.js `^22.19.0` or `>=24` and Corepack Yarn 4.18.0. At the repository roo
 
 ```sh
 corepack yarn install --immutable
-corepack pnpm --dir workdsh-web build
-node apps/desktop/scripts/pack-workdsh-profile.mjs workdsh-web
+corepack pnpm --dir apps/web install --frozen-lockfile
+corepack pnpm --dir apps/web build
+node apps/desktop/scripts/pack-workdsh-profile.mjs apps/web
 corepack yarn dev
 ```
 
@@ -54,8 +55,10 @@ corepack yarn check:desktop-dsh-alignment
 
 `corepack yarn release:pack` builds and packages the same commit's Web sources and the reviewed Desktop composition, preserving the clean-source release gate. The Web release directory also receives `desktop-release-manifest.json` and its hash-named archives for published Desktop packaging.
 
-Build the four owned features, their required support packages and the enterprise account package in WorkDSH first. `pack-workdsh-profile.mjs` creates immutable archives and a version/hash manifest in `build/workdsh-profile-release`; select another candidate with `WORKDSH_RELEASE_DIRECTORY`. Runtime preparation installs the official version with a portable lockfile and carries pnpm's JavaScript CLI for explicit plugin operations. It rejects additional default feature packages and verifies the real plugin manager exposes exactly four WorkDSH bundles. The same Profile preserves the pinned SkillHub 0.2.16 and dshmarket 1.66.8 catalog integrations. Their catalog entries are not all installed or reviewed by WorkDSH. It does not package a live user's configuration or credentials.
+Build the shared features and their required support packages first. `pack-workdsh-profile.mjs` creates immutable archives and a version/hash manifest in `build/workdsh-profile-release`; select another candidate with `WORKDSH_RELEASE_DIRECTORY`. Runtime preparation installs the official version with a portable lockfile and carries pnpm's JavaScript CLI for explicit plugin operations. The package inventory in `scripts/workdsh-package-boundary.mjs` defines the reviewed default bundles and required support packages; enterprise plugins are excluded from the base installer. The same Profile preserves the pinned SkillHub 0.2.16 and dshmarket 1.66.8 catalog integrations. Their catalog entries are not all installed or reviewed by WorkDSH. It does not package a live user's configuration or credentials.
 
-The Desktop pin and shared product target are **DSH 0.2.0-rc.2**, selected explicitly by the user. The unmodified official `dsh-v0.2.0-rc.2` tag pins commit `639ed015397290b3745d163aafe02ffee4aa3f84`. Existing installed applications and Profiles have their own actual versions. Desktop alignment, Desktop checks and packaged-runtime acceptance must pass before declaring the unified upgrade complete; Web Docker evidence cannot replace those gates. Prefer validated official stable releases by default.
+`upstream.json` locks the actual Desktop and Web Host, Client and SDK npm packages to the same official **DSH 0.2.1-rc.2** release, as explicitly required by the user. Product builds consume published packages without importing or compiling official source. Existing applications and Profiles have their own actual versions. Alignment, Desktop checks and packaged-runtime acceptance must pass before declaring an upgrade complete; Web preview evidence cannot replace them. Prefer validated official stable releases by default.
 
-The upstream checkout remains read-only. The carrier source and packaging scripts live here; feature package source belongs to WorkDSH, and the server launcher/gateway recipe is owned by its deploy/member-process directory. See [Desktop ownership](../../docs/desktop-boundaries.md).
+Official Desktop archives separately supply Node, pnpm, Python, Office assets and prebuilt command helpers. Each target records its actual archive version, URL, size and SHA-512. Intel tools explicitly use the official `0.2.1-rc.1` archive because an Intel `rc.2` archive is not published; the original runtime metadata is preserved. This does not downgrade the DSH npm packages or enable automatic fallback. Intel publication requires verification against its actual packaged x64 Resources.
+
+The carrier source and packaging scripts live here; shared WorkDSH feature sources live under the repository's `packages/`. Official DSH packages are consumed without a source checkout. Enterprise administration and model forwarding belong to the separate WorkDSH Admin repository. See [Desktop ownership](../../docs/desktop-boundaries.md).

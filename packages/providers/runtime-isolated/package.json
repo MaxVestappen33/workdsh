@@ -1,0 +1,28 @@
+{
+  "name": "workdsh-provider-runtime-isolated",
+  "version": "0.1.0-alpha.10",
+  "private": true,
+  "type": "module",
+  "description": "Trusted offline package verification and official-tool execution adapters.",
+  "exports": {
+    "./operation": {
+      "types": "./src/official-operation.d.ts",
+      "default": "./src/official-operation.mjs"
+    },
+    "./locked-package": "./src/locked-package.mjs",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src/*.mjs",
+    "src/*.d.ts",
+    "src/*.py",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.2"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  }
+}

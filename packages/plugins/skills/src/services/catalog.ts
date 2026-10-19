@@ -117,6 +117,7 @@ export class SkillCatalogStore {
     // Product-owned labels; third-party names are never translated automatically.
     const builtinTitles: Readonly<Record<string, string>> = {
       'workdsh-skill-creator': '技能创建与优化',
+      'workdsh-workbench-dev': '工作台制作与持续开发',
       'workdsh-expert-manager': '专家与专家团制作',
       'workdsh-ppt-design': 'PPT 专业设计',
       'workdsh-word-design': 'Word 文档设计',

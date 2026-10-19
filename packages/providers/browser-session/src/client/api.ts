@@ -13,13 +13,13 @@ async function request<T>(sessionId: string, operation: string, payload: object 
     body: JSON.stringify({ sessionId, operation, ...payload }),
     signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
   });
-  if (response.status === 404 && operation === 'status') return { active: false } as T;
+  if (response.status === 404 && operation === 'status') return null as T;
   if (!response.ok) throw new Error(response.status === 404 ? '浏览器会话已结束。' : '浏览器操作失败，请重试。');
   return response.json() as Promise<T>;
 }
 
 export const browserSessionClient = {
-  status: (sessionId: string, signal?: AbortSignal) => request<{ active: boolean }>(sessionId, 'status', {}, signal),
+  status: (sessionId: string, signal?: AbortSignal) => request<{ active: boolean; revision: number } | null>(sessionId, 'status', {}, signal),
   capture: (sessionId: string, signal?: AbortSignal) => request<BrowserFrame>(sessionId, 'capture', {}, signal),
   click: (sessionId: string, x: number, y: number, signal?: AbortSignal) => request<BrowserFrame>(sessionId, 'click', { x, y }, signal),
   type: (sessionId: string, text: string, signal?: AbortSignal) => request<BrowserFrame>(sessionId, 'type', { text }, signal),

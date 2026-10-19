@@ -60,7 +60,7 @@ export interface ConfirmationProof {
   readonly token: string;
 }
 
-/** A future (not-yet-satisfied) capability reference. Holds no credential. */
+/** A capability reference. Connector keys are installed connector IDs; other kinds remain unsupported. Holds no credential. */
 export interface FutureRequirement {
   readonly kind: string;
   readonly key: string;
@@ -86,8 +86,8 @@ export interface SkillRequirement {
 /**
  * The authored expert definition. `role`/`methodology`/`boundaries`/`deliverables`
  * are prose strings compiled into the persona prefix; `examples` seed task drafts;
- * `skillRequirements` are frozen at publish; `futureRequirements` are declared but
- * not yet satisfied capabilities.
+ * `skillRequirements` are frozen at publish; required connector references are
+ * checked at execution and selected through the native MCP service. Other kinds remain unsupported.
  */
 export interface ExpertDefinition {
   /** Complete authored Agent MD; legacy prose fields remain compatible projections. */

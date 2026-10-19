@@ -1,12 +1,59 @@
 import { test } from 'node:test'
 import { strict as assert } from 'node:assert'
-import { verifyBuiltPackageExports, verifyDefaultComposition, verifyDefaultProfile, verifyInstalledDshVersions, verifyPackageDshReferences, verifyProfileRelease, verifyReleaseArchives } from './verify-profile-release.mjs'
+import { requiredRuntimeDependencies, composeProfilePatches, verifyBuiltPackageExports, verifyDefaultComposition, verifyDefaultProfile, verifyInstalledDshVersions, verifyPackageDshReferences, verifyProfileRelease, verifyReleaseArchives } from './verify-profile-release.mjs'
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, delimiter, join } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { DSH_VERSION } from './runtime-version.mjs'
-import { ENTERPRISE_PACKAGES, PRODUCT_PACKAGES, RELEASE_PACKAGES } from './workdsh-package-boundary.mjs'
+import { ENTERPRISE_PACKAGES, PACKAGE_DIRECTORIES, PRODUCT_PACKAGES, RELEASE_PACKAGES } from './workdsh-package-boundary.mjs'
+
+test('release bootstrap installs dependencies before loading package validators', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'workdsh clean release '))
+  const root = fileURLToPath(new URL('../../..', import.meta.url))
+  try {
+    for (const relative of [
+      'scripts/package-desktop-release.mjs',
+      'apps/desktop/scripts/runtime-version.mjs',
+      'apps/desktop/scripts/workdsh-package-boundary.mjs',
+      'apps/desktop/scripts/verify-profile-release.mjs',
+      'upstream.json',
+    ]) {
+      const destination = join(directory, relative)
+      mkdirSync(dirname(destination), { recursive: true })
+      cpSync(join(root, relative), destination)
+    }
+    const shimDirectory = join(directory, 'bin')
+    mkdirSync(shimDirectory)
+    const marker = join(directory, 'install-args.json')
+    const worker = join(directory, 'corepack-worker.mjs')
+    writeFileSync(worker, "import { writeFileSync } from 'node:fs'; writeFileSync(process.env.WORKDSH_TEST_MARKER, JSON.stringify(process.argv.slice(2))); process.exit(42)\n")
+    const shim = join(shimDirectory, process.platform === 'win32' ? 'corepack.cmd' : 'corepack')
+    writeFileSync(shim, process.platform === 'win32'
+      ? '@"%WORKDSH_TEST_NODE%" "%WORKDSH_TEST_COREPACK%" %*\r\n'
+      : '#!/bin/sh\nexec "$WORKDSH_TEST_NODE" "$WORKDSH_TEST_COREPACK" "$@"\n')
+    if (process.platform !== 'win32') chmodSync(shim, 0o755)
+    const preload = join(directory, 'test-platform.mjs')
+    writeFileSync(preload, "if (process.platform === 'linux') Object.defineProperty(process, 'platform', { value: 'darwin' })\n")
+    const result = spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, join(directory, 'scripts/package-desktop-release.mjs'), '--source=local'], {
+      cwd: directory,
+      encoding: 'utf8',
+      timeout: 10_000,
+      env: {
+        ...process.env,
+        PATH: `${shimDirectory}${delimiter}${process.env.PATH ?? ''}`,
+        WORKDSH_TEST_NODE: process.execPath,
+        WORKDSH_TEST_COREPACK: worker,
+        WORKDSH_TEST_MARKER: marker,
+      },
+    })
+    assert.ifError(result.error)
+    assert.match(result.stderr, /Install Desktop dependencies failed with exit code 42/)
+    assert.deepEqual(JSON.parse(readFileSync(marker, 'utf8')), ['yarn', 'install', '--immutable'])
+  } finally { rmSync(directory, { recursive: true, force: true }) }
+})
 
 test('accepts a WorkDSH release aligned with the pinned DSH runtime', () => {
   assert.doesNotThrow(() => verifyProfileRelease({
@@ -53,16 +100,32 @@ function defaultProfile() {
   }
 }
 
-test('Desktop ships six default features, reviewed infrastructure and no preinstalled enterprise package', () => {
-  assert.equal(PRODUCT_PACKAGES.length, 6)
+test('Desktop ships the workbench platform with its default features and keeps business and enterprise plugins external', () => {
+  assert.deepEqual(PRODUCT_PACKAGES, ['workdsh-plugin-connectors', 'workdsh-plugin-experts', 'workdsh-plugin-library', 'workdsh-plugin-model-market', 'workdsh-plugin-projects', 'workdsh-plugin-skills', 'workdsh-plugin-workbenches'])
   assert.deepEqual(ENTERPRISE_PACKAGES, ['workdsh-provider-identity-enterprise', 'workdsh-plugin-enterprise-collaboration', 'workdsh-enterprise-connection'])
-  assert.equal(RELEASE_PACKAGES.length, 16)
+  assert.equal(RELEASE_PACKAGES.length, 17)
   assert.doesNotThrow(() => verifyDefaultProfile(defaultProfile()))
-  for (const name of ['workdsh-plugin-office', 'workdsh-plugin-notifications']) {
+  for (const name of ['workdsh-plugin-office', 'workdsh-plugin-notifications', 'workdsh-plugin-quality-analysis', ...ENTERPRISE_PACKAGES]) {
     const profile = defaultProfile()
     profile.optionalDependencies[name] = 'file:../external.tgz'
     assert.throws(() => verifyDefaultProfile(profile), /owned dependency closure changed/)
   }
+})
+
+test('Desktop archives close every declared owned runtime dependency and include workbench delivery entry points', () => {
+  const desktop = fileURLToPath(new URL('..', import.meta.url))
+  for (const name of RELEASE_PACKAGES) {
+    const manifest = JSON.parse(readFileSync(join(desktop, PACKAGE_DIRECTORIES[name], 'package.json'), 'utf8'))
+    assert.equal(manifest.name, name)
+    for (const dependency of Object.keys(requiredRuntimeDependencies(manifest)).filter(name => name.startsWith('workdsh-'))) {
+      assert.ok(RELEASE_PACKAGES.includes(dependency), `${name} requires an unshipped owned package: ${dependency}`)
+    }
+  }
+  const sdk = JSON.parse(readFileSync(join(desktop, PACKAGE_DIRECTORIES['workdsh-plugin-workbenches'], 'package.json'), 'utf8'))
+  assert.equal(sdk.exports['./delivery'], './scripts/run-delivery.mjs')
+  assert.equal(sdk.exports['./startup-check'], './scripts/check-startup.mjs')
+  assert.ok(sdk.files.includes('scripts/run-delivery.mjs'))
+  assert.ok(sdk.files.includes('scripts/check-startup.mjs'))
 })
 
 test('enterprise delivery cannot activate or expose enterprise identity in the default personal composition', () => {
@@ -146,3 +209,28 @@ test('cross-architecture macOS runtime installs target native dependencies as we
  assert.deepEqual(runtimeArchitecture({},'win32','x64').cpus,['x64']);
  assert.throws(()=>runtimeArchitecture({WORKDSH_MAC_ARCH:'invalid'},'darwin','arm64'),/Unsupported/);
 });
+
+test('composes populated and empty owned overlays into one valid patch document', () => {
+  const result = composeProfilePatches(['- insert:\n    - id: first\n      name: fixture-first\n', '# client-only provider\n[]\n', '', '- insert:\n    - id: last\n      name: fixture-last\n'])
+  assert.match(result, /id: first/)
+  assert.match(result, /id: last/)
+  assert.doesNotMatch(result, /^\[\]$/m)
+  assert.equal(composeProfilePatches(['[]', '# empty']), '[]\n')
+  assert.throws(() => composeProfilePatches(['insert: {}']), /must be an array/)
+})
+
+test('preserves official executable-expression tags without executing them while composing', () => {
+  const expression = 'process.env.DSH_ELECTRON_EXECUTABLE'
+  const result = composeProfilePatches(['[]', '- insert:\n    - id: browser\n      disabled: !!js "' + expression + '"\n'])
+  assert.match(result, /(?:!!js|!<tag:yaml.org,2002:js>)/)
+  assert.match(result, /process\.env\.DSH_ELECTRON_EXECUTABLE/)
+  assert.equal(composeProfilePatches([result]), result)
+})
+
+test('includes packages loaded from owned patches even when declared as dependencies', () => {
+ const result = requiredRuntimeDependencies({dependencies:{'@deepseek-ai/dsh-computer-use':DSH_VERSION},peerDependencies:{'@deepseek-ai/cordis':'4.0.5',optional:'1.0.0'},peerDependenciesMeta:{optional:{optional:true}},devDependencies:{buildOnly:'1.0.0'}})
+ assert.equal(result['@deepseek-ai/dsh-computer-use'],DSH_VERSION)
+ assert.equal(result['@deepseek-ai/cordis'],'4.0.5')
+ assert.equal(result.optional,undefined)
+ assert.equal(result.buildOnly,undefined)
+})

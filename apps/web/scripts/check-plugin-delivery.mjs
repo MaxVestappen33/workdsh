@@ -4,14 +4,14 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 export const root=new URL('../',import.meta.url).pathname;
 export async function readOwnedManifests(base=root){
-const directories=['../../packages/bundle','../../packages/contracts','../../packages/ui'];
+const directories=['../../packages/bundle','../../packages/contracts','../../packages/ui','../../packages/tabular'];
 for(const group of ['plugins','providers'])for(const entry of await readdir(join(base,'../../packages',group),{withFileTypes:true}))if(entry.isDirectory())directories.push('../../packages/'+group+'/'+entry.name);
 const manifests=new Map();
 for(const directory of directories){try{const manifest=JSON.parse(await readFile(join(base,directory,'package.json'),'utf8'));manifests.set(manifest.name,{manifest,directory});}catch(error){if(error.code!=='ENOENT')throw error;}}
 return manifests;
 }
-export const defaults=['workdsh-provider-identity-local','workdsh-provider-browser-session','workdsh-plugin-audit','workdsh-plugin-access','workdsh-plugin-skills','workdsh-plugin-experts','workdsh-plugin-connectors','workdsh-plugin-library','workdsh-bundle'];
-const allowed=new Set([...defaults,'workdsh-contracts','workdsh-ui','workdsh-plugin-workbench','workdsh-provider-backend-channel']);
+export const defaults=['workdsh-provider-identity-local','workdsh-provider-browser-session','workdsh-plugin-audit','workdsh-plugin-access','workdsh-plugin-skills','workdsh-plugin-experts','workdsh-plugin-connectors','workdsh-plugin-library','workdsh-plugin-workbenches','workdsh-bundle'];
+const allowed=new Set([...defaults,'workdsh-contracts','workdsh-ui','workdsh-plugin-workbench','workdsh-tabular','workdsh-provider-backend-channel']);
 /**
  * 构建期复用：默认包可以把某个独立安装功能的公开模块编译进自己的产物，只要该功能不成为运行期依赖。
  * 每条边必须逐条登记（消费方 -> 被复用功能），运行期字段 dependencies/optionalDependencies/peerDependencies
@@ -29,11 +29,11 @@ assert.ok(packedDefaults,'Release packer must declare the default installation p
 assert.deepEqual([...packedDefaults[1].matchAll(/'([^']+)'/g)].map(match=>match[1]),defaults);
 const packedOptional=packer.match(/optionalPackages:\s*\[([^\]]+)\]/);
 assert.ok(packedOptional,'Release packer must declare optional packages');
-assert.deepEqual([...packedOptional[1].matchAll(/'([^']+)'/g)].map(match=>match[1]),['workdsh-plugin-office','workdsh-plugin-projects','workdsh-plugin-activity']);
+assert.deepEqual([...packedOptional[1].matchAll(/'([^']+)'/g)].map(match=>match[1]),['workdsh-plugin-office','workdsh-plugin-projects','workdsh-plugin-activity','workdsh-plugin-quality-analysis']);
 const {visited,edges}=assertDefaultOwnedClosure(manifests);
 const proof={scope:'Unreleased Web personal installer/source package closure; not Desktop or published artifacts',defaultPackages:defaults,
  ownedClosure:[...visited].sort(),edges,externalEnterprisePackagesAbsent:true,
- optionalPersonalFeatures:['office','projects','activity'],developmentPreview:'Explicit full development composition retained',
+ optionalPersonalFeatures:['office','projects','activity','quality-analysis'],developmentPreview:'Explicit full development composition retained',
  publishedReleaseArtifactsAudited:false,cleanInstalledProfileVerified:false};
 return proof;
 }

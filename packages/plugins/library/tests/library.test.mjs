@@ -242,7 +242,7 @@ test('CSV and XLSX import preserve originals, search cells and supply task conte
 });
 
 test('tabular extraction reports truncation and never evaluates formulas', async () => {
-  const { extractTabularText } = await import('workdsh-plugin-office/tabular');
+  const { extractTabularText } = await import('workdsh-tabular');
   const text = '名称,备注\n客户,"换行\n含|<script>"\n';
   const utf16 = new Uint8Array(Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, 'utf16le')]));
   const decoded = await extractTabularText('csv', utf16);
@@ -259,6 +259,118 @@ test('tabular extraction reports truncation and never evaluates formulas', async
 test('Library release imports tabular extraction without an unpublished Office runtime dependency', async () => {
   const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
   assert.equal(manifest.dependencies['workdsh-plugin-office'], undefined);
+  assert.equal(manifest.devDependencies['workdsh-plugin-office'], undefined);
+  assert.equal(manifest.devDependencies['workdsh-tabular'], 'workspace:*');
   const host = await readFile(new URL('../dist/index.js', import.meta.url), 'utf8');
-  assert.doesNotMatch(host, /(?:from\s*|import\s*\()\s*["']workdsh-plugin-office/);
+  assert.doesNotMatch(host, /(?:from\s*|import\s*\()\s*["'](?:workdsh-plugin-office|workdsh-tabular)/);
+});
+
+test('original revision save preserves history, rejects stale writes and restores exact retry receipts',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'workdsh-original-revision-'));
+ let ctx;
+ try{
+  ctx=await boot(join(root,'state'),join(root,'library'));
+  const library=ctx.workdshLibrary;
+  const firstBytes=new TextEncoder().encode('id,total,bad\n001,100,2\n');
+  const first=await library.importAsset(actor,{name:'quality.csv',bytes:firstBytes,operationId:'initial-original'});
+  const secondBytes=new TextEncoder().encode('id,total,bad\n001,100,4\n');
+  const request={assetId:first.asset.id,expectedRevisionId:first.revision.id,operationId:'save-original-1',bytes:secondBytes};
+  const second=await library.saveOriginalRevision(actor,request);
+  assert.equal(second.asset.id,first.asset.id);assert.equal(second.revision.number,2);assert.notEqual(second.revision.id,first.revision.id);
+  assert.deepEqual(await library.readOriginal(actor,first.asset.id,first.revision.id),firstBytes);
+  assert.deepEqual(await library.readOriginal(actor,first.asset.id,second.revision.id),secondBytes);
+  assert.equal((await library.saveOriginalRevision(actor,request)).revision.id,second.revision.id);
+  await assert.rejects(library.saveOriginalRevision(actor,{...request,operationId:'stale-save'}),/base-revision-conflict/);
+  await assert.rejects(library.saveOriginalRevision(actor,{...request,bytes:firstBytes}),/operation-conflict/);
+  await assert.rejects(library.saveOriginalRevision({...actor,principalId:'other-owner'},request));
+  const third=await library.saveOriginalRevision(actor,{assetId:first.asset.id,expectedRevisionId:second.revision.id,operationId:'save-original-2',bytes:firstBytes});
+  assert.equal(third.revision.number,3);
+  assert.equal((await library.saveOriginalRevision(actor,request)).revision.id,second.revision.id,'retry returns original saved generation even after another save');
+  await ctx.fiber.dispose();ctx=await boot(join(root,'state'),join(root,'library'));
+  assert.equal((await ctx.workdshLibrary.saveOriginalRevision(actor,request)).revision.id,second.revision.id);
+  assert.deepEqual(await ctx.workdshLibrary.readOriginal(actor,first.asset.id,first.revision.id),firstBytes);
+ }finally{await ctx?.fiber.dispose();await rm(root,{recursive:true,force:true});}
+});
+test('XLSX revision uses existing converter and rejects invalid workbook without replacing baseline',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'library-xlsx-revision-'));const ctx=await boot(join(root,'state'),join(root,'library'));
+ try{
+  const {createRequire}=await import('node:module');const ExcelJS=createRequire(new URL('../../office/package.json',import.meta.url))('exceljs');
+  const workbook=new ExcelJS.Workbook();const sheet=workbook.addWorksheet('检验');sheet.addRow(['id','total','bad']);sheet.addRow(['001',100,2]);
+  const oldBytes=new Uint8Array(await workbook.xlsx.writeBuffer());const first=await ctx.workdshLibrary.importAsset(actor,{name:'检验.xlsx',bytes:oldBytes,operationId:'xlsx-first'});
+  await assert.rejects(ctx.workdshLibrary.saveOriginalRevision(actor,{assetId:first.asset.id,expectedRevisionId:first.revision.id,operationId:'invalid-xlsx',bytes:new TextEncoder().encode('not a workbook')}),/library\/invalid-office-file/);
+  assert.equal((await ctx.workdshLibrary.list(actor))[0].revision.id,first.revision.id);
+  sheet.getCell('C2').value=4;const newBytes=new Uint8Array(await workbook.xlsx.writeBuffer());
+  const saved=await ctx.workdshLibrary.saveOriginalRevision(actor,{assetId:first.asset.id,expectedRevisionId:first.revision.id,operationId:'xlsx-save',bytes:newBytes});
+  assert.equal(saved.revision.number,2);assert.deepEqual(await ctx.workdshLibrary.readOriginal(actor,first.asset.id,first.revision.id),oldBytes);
+  assert.deepEqual(await ctx.workdshLibrary.readOriginal(actor,first.asset.id,saved.revision.id),newBytes);
+ }finally{await ctx.fiber.dispose();await rm(root,{recursive:true,force:true});}
+});
+test('original revision RPC rejects identity fields, stale baseline and noncanonical bytes',async()=>{
+ const {registerLibraryConnection}=await import('../dist/remote/connection-api.js');
+ const root=await mkdtemp(join(tmpdir(),'library-revision-rpc-'));const ctx=await boot(join(root,'state'),join(root,'library'));
+ try{
+  const initial=await ctx.workdshLibrary.importAsset(actor,{name:'rpc.csv',bytes:new TextEncoder().encode('id,bad\n001,2\n'),operationId:'rpc-source'});
+  let handler;
+  registerLibraryConnection({connection:{fetch:{register:value=>{handler=value.fetch;return()=>{};}}},workdshLibrary:ctx.workdshLibrary,workdshIdentity:{resolve:async()=>actor,profile:()=>({principalId:actor.principalId,organization:{id:actor.organizationId},resolvedBy:actor.resolvedBy}),membership:()=>({state:'active'})},fiber:{assertActive(){}},effect(){}});
+  const payload={assetId:initial.asset.id,expectedRevisionId:initial.revision.id,operationId:'rpc-save',base64:Buffer.from('id,bad\n001,4\n').toString('base64')};
+  const call=body=>handler(new Request('http://fixture/api/workdsh-library',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({endpoint:'save-original-revision',payload:body})}));
+  assert.equal((await call({...payload,principalId:'forged'})).status,400);
+  assert.equal((await call({...payload,base64:'!!!!'})).status,400);
+  const savedResponse=await call(payload);assert.equal(savedResponse.status,200);const saved=(await savedResponse.json()).value;
+  assert.equal(saved.asset.id,initial.asset.id);assert.equal(saved.revision.number,2);
+  assert.equal((await (await call(payload)).json()).value.revision.id,saved.revision.id);
+  assert.equal((await call({...payload,operationId:'stale-rpc-save'})).status,409);
+  assert.equal((await call({...payload,base64:Buffer.from('id,bad\n001,8\n').toString('base64')})).status,409);
+  assert.deepEqual(await ctx.workdshLibrary.readOriginal(actor,initial.asset.id,initial.revision.id),new TextEncoder().encode('id,bad\n001,2\n'));
+ }finally{await ctx.fiber.dispose();await rm(root,{recursive:true,force:true});}
+});
+test('revoked save authorization after conversion cannot commit a new revision',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'library-revision-revoke-'));const ctx=await boot(join(root,'state'),join(root,'library'));
+ try{
+  const source=await ctx.workdshLibrary.importAsset(actor,{name:'revoke.csv',bytes:new TextEncoder().encode('id,bad\n001,2\n'),operationId:'revoke-source'});
+  let checks=0;
+  await assert.rejects(ctx.workdshLibrary.saveOriginalRevision(actor,{assetId:source.asset.id,expectedRevisionId:source.revision.id,operationId:'revoked-save',bytes:new TextEncoder().encode('id,bad\n001,4\n')},undefined,()=>{if(++checks>=3)throw new Error('permission-revoked');}),/permission-revoked/);
+  assert.equal((await ctx.workdshLibrary.list(actor))[0].revision.id,source.revision.id);
+ }finally{await ctx.fiber.dispose();await rm(root,{recursive:true,force:true});}
+});
+
+
+test('original save retains committed files when the storage acknowledgement is lost',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'workdsh-original-lost-ack-'));let ctx;
+ try{
+  ctx=await boot(join(root,'storage'),join(root,'library'));const library=ctx.workdshLibrary;
+  const source=await library.importAsset(actor,{name:'source.txt',bytes:new TextEncoder().encode('old'),operationId:'create'});
+  const request={assetId:source.asset.id,expectedRevisionId:source.revision.id,operationId:'lost-ack',bytes:new TextEncoder().encode('new')};
+  // Inject after the real StorageDomain commit, at its acknowledgement boundary.
+  const table=library.states(),put=table.put.bind(table);let committed=0;
+  table.put=async(...args)=>{await put(...args);committed++;throw Error('lost-storage-ack');};
+  await assert.rejects(library.saveOriginalRevision(actor,request),/lost-storage-ack/);table.put=put;
+  assert.equal(committed,1);assert.equal(new TextDecoder().decode(await library.readOriginal(actor,source.asset.id)),'new');
+  const retried=await library.saveOriginalRevision(actor,request);assert.equal(retried.revision.number,2);
+  await ctx.fiber.dispose();ctx=await boot(join(root,'storage'),join(root,'library'));
+  const cold=await ctx.workdshLibrary.saveOriginalRevision(actor,request);assert.equal(cold.revision.id,retried.revision.id);
+  assert.equal(new TextDecoder().decode(await ctx.workdshLibrary.readOriginal(actor,source.asset.id,source.revision.id)),'old');
+  assert.equal(new TextDecoder().decode(await ctx.workdshLibrary.readOriginal(actor,source.asset.id,cold.revision.id)),'new');
+ }finally{await ctx?.fiber.dispose();await rm(root,{recursive:true,force:true});}
+});
+
+
+test('import and draft publication preserve committed originals after lost acknowledgements',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'workdsh-library-lost-acks-'));let ctx;
+ try{
+  ctx=await boot(join(root,'storage'),join(root,'library'));const library=ctx.workdshLibrary;
+  await library.space(actor);const table=library.states(),put=table.put.bind(table);
+  const loseAck=()=>{table.put=async(...args)=>{await put(...args);throw Error('lost-storage-ack');};};
+  const input={name:'import.txt',bytes:new TextEncoder().encode('first'),operationId:'import-lost-ack'};
+  loseAck();await assert.rejects(library.importAsset(actor,input),/lost-storage-ack/);table.put=put;
+  const original=await library.importAsset(actor,input);assert.equal(new TextDecoder().decode(await library.readOriginal(actor,original.asset.id)),'first');
+  const draft=await library.createDraft(actor,original.asset.id,original.revision.id);
+  const edited=await library.updateDraft(actor,draft.id,'second',draft.revision);
+  loseAck();await assert.rejects(library.publishDraft(actor,edited.id,edited.revision),/lost-storage-ack/);table.put=put;
+  assert.equal(new TextDecoder().decode(await library.readOriginal(actor,original.asset.id)),'second');
+  await ctx.fiber.dispose();ctx=await boot(join(root,'storage'),join(root,'library'));
+  assert.equal(new TextDecoder().decode(await ctx.workdshLibrary.readOriginal(actor,original.asset.id)),'second');
+  assert.equal(new TextDecoder().decode(await ctx.workdshLibrary.readOriginal(actor,original.asset.id,original.revision.id)),'first');
+  assert.equal((await ctx.workdshLibrary.importAsset(actor,input)).revision.id,original.revision.id);
+ }finally{await ctx?.fiber.dispose();await rm(root,{recursive:true,force:true});}
 });

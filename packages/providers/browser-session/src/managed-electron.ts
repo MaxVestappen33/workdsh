@@ -4,7 +4,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { chromium, type Browser, type BrowserContext } from 'playwright-core';
 import type { ManagedChromium } from './managed-chromium.js';
@@ -72,8 +72,17 @@ async function readyEndpoint(port: number, child: ChildProcess, workerOutput: ()
   throw new Error(`Electron browser worker did not publish a page${workerDetail(workerOutput())}`);
 }
 
+export function electronWorkerArguments(port: number, profileDir: string, applicationPath?: string): string[] {
+  if (applicationPath !== undefined && !isAbsolute(applicationPath)) throw new Error('Electron application path must be absolute');
+  return [
+    ...(applicationPath === undefined ? [] : [applicationPath]),
+    `--workdsh-browser-worker-port=${port}`,
+    `--workdsh-browser-worker-profile=${profileDir}`,
+  ];
+}
+
 /** Start one hidden Electron instance whose CDP exposes no WorkDSH app page. */
-export async function launchManagedElectron(executable: string, appPath?: string, signal?: AbortSignal): Promise<ManagedChromium> {
+export async function launchManagedElectron(executable: string, signal?: AbortSignal, applicationPath?: string): Promise<ManagedChromium> {
   if (!executable.trim()) throw new Error('Desktop Electron executable is required');
   signal?.throwIfAborted();
   const profileDir = await mkdtemp(join(tmpdir(), 'workdsh-electron-browser-'));
@@ -84,18 +93,9 @@ export async function launchManagedElectron(executable: string, appPath?: string
     const port = await vacantPort();
     const env = { ...process.env };
     delete env.ELECTRON_RUN_AS_NODE;
-    // A packaged carrier embeds the WorkDSH entry point, but a development
-    // Electron binary only loads `workdsh-main.js` when its application
-    // directory is passed. Chromium only recognises a positional path after the
-    // switches, so the directory must come last. Without it Electron prints its
-    // usage text and never applies `--remote-debugging-port`, which means no CDP
-    // page is ever published.
-    const appArguments = appPath?.trim() ? [appPath] : [];
-    child = spawn(executable, [
-      `--workdsh-browser-worker-port=${port}`,
-      `--workdsh-browser-worker-profile=${profileDir}`,
-      ...appArguments,
-    ], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    // WorkDSH 定制：保留 worker 输出捕获用于启动失败诊断；应用路径位置跟随
+    // upstream 的 electronWorkerArguments（位置路径在开关之前，与 DSH 0.2.1 配套）。
+    child = spawn(executable, electronWorkerArguments(port, profileDir, applicationPath), { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     const captureWorkerOutput = (chunk: Buffer): void => {
       workerOutput = `${workerOutput}${chunk.toString('utf8')}`.slice(-2_048);
     };

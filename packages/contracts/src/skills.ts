@@ -1,5 +1,12 @@
 import type { SkillRevisionProvider } from './skill-revisions.js';
 
+/** Presentation only: English name remains the official execution identity. */
+export interface SkillDisplayMetadata {
+  readonly name: string;
+  readonly title: string;
+  readonly localizedDescription?: string;
+}
+
 /** Local Host skill management contract. Not an enterprise authorization API. */
 export type ManagedSkillState = 'enabled' | 'disabled' | 'invalid' | 'readonly';
 
@@ -198,6 +205,10 @@ export interface SkillManagementService extends SkillRevisionProvider {
   catalog(signal?: AbortSignal): Promise<SkillCatalogSummary>;
   /** Installs one catalog payload through the shared import verification path. */
   installFromCatalog(name: string, scope?: SkillInstallScope, signal?: AbortSignal): Promise<SkillMutationReceipt>;
+  /** Scoped title contribution; release with the registering plugin's effect.
+   * Existing catalog/user metadata takes precedence. No Skill installation occurs.
+   */
+  registerDisplayMetadata(namespace: string, entries: readonly SkillDisplayMetadata[]): () => void;
   readCatalogIcon(name: string): Promise<SkillCatalogIcon | undefined>;
   readonly imports: {
     stage(fileName: string, body: ReadableStream<Uint8Array> | null, signal: AbortSignal): Promise<StagedSkillImport>;

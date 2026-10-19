@@ -4,20 +4,34 @@ import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { extractFile, listPackage } from '@electron/asar'
-import { DSH_VERSION } from './runtime-version.mjs'
+import { DSH_VERSION, OFFICIAL_PNPM_VERSION } from './runtime-version.mjs'
 import { ENTERPRISE_PACKAGES, PRODUCT_PACKAGES, RELEASE_PACKAGES } from './workdsh-package-boundary.mjs'
-import { verifyDefaultComposition, verifyDefaultProfile, verifyInstalledDshVersions, verifyOfficialWebPackages, verifyProfileRelease, verifyReleaseArchives } from './verify-profile-release.mjs'
+import { verifyBuiltPackageExports, verifyDefaultComposition, verifyDefaultProfile, verifyInstalledDshVersions, verifyOfficialWebPackages, verifyProfileRelease, verifyReleaseArchives } from './verify-profile-release.mjs'
 import { parseDeploymentConfig } from '../src/deployment-config.ts'
 import { MODEL_CREDENTIALS_FILENAME, parseModelCredentials } from '../src/model-credentials.ts'
+import { verifyNativeWorkbenchFrame } from '../../../scripts/native-workbench-frame-patch.mjs'
+import {verifyOfficialRuntimeProvenance} from './official-runtime-provenance.mjs'
 
 interface PackContext {
   appOutDir: string
   electronPlatformName: string
+  arch: number
   packager: { appInfo: { productFilename: string } }
 }
 
 export function normalizeAsarEntry(entry: string): string {
   return entry.replaceAll('\\', '/').replace(/^\//u, '')
+}
+
+/** Read final copied package entries, including public SDK declarations. A
+ * valid source archive cannot prove that extraResources retained its exports. */
+export function verifyPackagedOwnedExports(profile: string, names: readonly string[] = RELEASE_PACKAGES): void {
+  for (const name of names) {
+    const directory = join(profile, 'node_modules', name)
+    const manifest = JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8')) as { name?: string; exports?: unknown }
+    if (manifest.name !== name) throw new Error('Packaged export inventory names another package: ' + name)
+    verifyBuiltPackageExports(manifest, directory)
+  }
 }
 
 export async function afterPack(context: PackContext): Promise<void> {
@@ -60,16 +74,22 @@ export async function afterPack(context: PackContext): Promise<void> {
   const primary = JSON.parse(readFileSync(join(runtime, 'primary-runtime', 'runtime.json'), 'utf8')) as {
     desktopVersion?: string
     pnpm?: string
+    arch?: string
   }
-  if (primary.desktopVersion !== DSH_VERSION) {
-    throw new Error(`Bundled primary runtime is ${String(primary.desktopVersion)}, expected ${DSH_VERSION}`)
-  }
+  const expectedArch=context.arch===1?'x64':context.arch===3?'arm64':undefined
+  if(!expectedArch||!['darwin','win32'].includes(context.electronPlatformName))throw Error('Unsupported packaged binary resource target')
+  const binaryTarget=`${context.electronPlatformName==='darwin'?'mac':'win'}-${expectedArch}`
+  verifyOfficialRuntimeProvenance(join(runtime,'primary-runtime'),binaryTarget)
   const profile = join(runtime, 'profiles', 'workdsh')
+  // Inspect copied Resources bytes: a preparation log or receipt cannot prove
+  // that the official Conversation frame actually reached this installer.
+  await verifyNativeWorkbenchFrame(profile)
   const cache = join(runtime, 'package-cache')
   const release = JSON.parse(readFileSync(join(cache, 'release-manifest.json'), 'utf8')) as {
     packages: Array<{ name: string; version: string; filename: string; sha256: string }>
   }
   verifyProfileRelease(release, DSH_VERSION, RELEASE_PACKAGES)
+  verifyPackagedOwnedExports(profile, release.packages.map(item => item.name))
   verifyReleaseArchives(release, cache)
   verifyOfficialWebPackages(release, profile)
   const profileManifest = JSON.parse(readFileSync(join(profile, 'package.json'), 'utf8')) as {
@@ -91,10 +111,10 @@ export async function afterPack(context: PackContext): Promise<void> {
   const selectedWorkdsh = selected.filter(name => name.startsWith('workdsh-'))
   const directWorkdsh = Object.keys(profileManifest.dependencies ?? {}).filter(name => name.startsWith('workdsh-'))
   if (selectedWorkdsh.length !== productPackages.size || selectedWorkdsh.some(name => !productPackages.has(name))) {
-    throw new Error(`Desktop must select exactly five WorkDSH product bundles, found ${selectedWorkdsh.join(', ')}`)
+    throw new Error(`Desktop must select exactly ${productPackages.size} WorkDSH product bundles, found ${selectedWorkdsh.join(', ')}`)
   }
   if (directWorkdsh.length !== productPackages.size || directWorkdsh.some(name => !productPackages.has(name))) {
-    throw new Error(`Desktop must directly install exactly five WorkDSH product bundles, found ${directWorkdsh.join(', ')}`)
+    throw new Error(`Desktop must directly install exactly ${productPackages.size} WorkDSH product bundles, found ${directWorkdsh.join(', ')}`)
   }
   const lockfile = readFileSync(join(profile, 'pnpm-lock.yaml'), 'utf8')
   for (const item of release.packages) {
@@ -143,7 +163,7 @@ export async function afterPack(context: PackContext): Promise<void> {
   if (native.error || native.status !== 0) throw new Error('Packaged Node cannot load the official native plugin dependency: ' + String(native.error ?? native.stderr))
   process.stdout.write(native.stdout)
   const pnpm = join(runtime, 'primary-runtime', 'dependencies', 'pnpm', 'bin', 'pnpm.cjs')
-  if (primary.pnpm !== '11.7.0' || !existsSync(pnpm)) throw new Error('Packaged official pnpm CLI is missing or has another version')
+  if (primary.pnpm !== OFFICIAL_PNPM_VERSION || !existsSync(pnpm)) throw new Error('Packaged official pnpm CLI is missing or has another version')
   const packageManager = spawnSync(node, [pnpm, '--version'], { encoding: 'utf8', timeout: 30_000 })
   if (packageManager.error || packageManager.status !== 0 || packageManager.stdout.trim() !== primary.pnpm) {
     throw new Error('Packaged official pnpm JavaScript CLI cannot run with its bundled Node')
@@ -157,6 +177,10 @@ export async function afterPack(context: PackContext): Promise<void> {
     throw new Error(`Packaged WorkDSH plugin inventory check failed: ${String(inventory.error ?? inventory.stderr)}`)
   }
   process.stdout.write(inventory.stdout)
+  const hostCheck = fileURLToPath(new URL('./verify-installation-anchor.mjs', import.meta.url))
+  const host = spawnSync(node, [hostCheck, runtime], { encoding: 'utf8', timeout: 150_000, maxBuffer: 1024 * 1024 })
+  if (host.error || host.status !== 0) throw new Error('Packaged full Host startup check failed: ' + String(host.error ?? host.stderr + host.stdout))
+  process.stdout.write(host.stdout)
   console.log(`Verified thin Electron carrier and ${names.length} root / ${instances} total Harness ${DSH_VERSION} package instances`)
 }
 

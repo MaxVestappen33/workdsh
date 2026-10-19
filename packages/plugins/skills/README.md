@@ -95,3 +95,8 @@ export function apply(ctx: Context) {
 可信 Host 装配可以使用 `new SkillManager(ctx, { dshHome, agentsHome, catalogRoot })`，并给官方 `dsh-skill-filesystem` 配置相同的 `dshHome` 和 `agentsHome`。未指定 catalogRoot 时默认不读取任何推荐目录；只有未指定 agentsHome 的个人运行可显式使用 WORKDSH_SKILL_CATALOG。指定 agentsHome 的账号运行不继承进程级目录配置。目录不能来自未验证的浏览器或模型输入。
 
 省略 options 保留个人版环境变量和 Home 解析。当前企业路线为独立账号进程，同一技能包使用该进程的独立 Home、Agents home 和官方 Skill provider；配置目录本身不提供执行沙箱。旧共享 Host 的成员 selector 与 scoped registry 装配已删除。管理 HTTP 端点与草稿工具使用本进程服务，按实际 Session/Agent 归属授权。账号进程、文件及工具边界的实际验证范围见[验收要求](../../../apps/web/docs/ACCEPTANCE.md)。
+
+
+### 第三方 Skill 展示名称（alpha.35候选）
+
+领域插件通过依赖注入`workdshSkills`，在自己的`ctx.effect`内调用`registerDisplayMetadata(namespace, entries)`。entries包含name、title和可选localizedDescription；name必须以namespace加连字符开头，保留官方英文标识。返回释放函数，停用/卸载时由调用者释放。注册不会安装技能，不创建文件、不修改SKILL.md；已有宿主目录标题优先。`workdsh`命名空间保留，重复或重叠声明拒绝。旧宿主未提供此方法时消费者应明确提示兼容限制。

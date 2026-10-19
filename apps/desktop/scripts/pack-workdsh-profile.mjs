@@ -7,8 +7,8 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { DSH_VERSION } from './runtime-version.mjs'
-import { RELEASE_PACKAGES, PACKAGE_DIRECTORIES } from './workdsh-package-boundary.mjs'
-import { verifyBuiltPackageExports, verifyBuiltPackageFreshness, verifyPackageDshReferences, verifyProfileRelease } from './verify-profile-release.mjs'
+import { PRODUCT_PACKAGES, RELEASE_PACKAGES, PACKAGE_DIRECTORIES } from './workdsh-package-boundary.mjs'
+import { requiredRuntimeDependencies, verifyBuiltPackageExports, verifyBuiltPackageFreshness, verifyPackageDshReferences, verifyProfileRelease } from './verify-profile-release.mjs'
 const source = process.argv[2] && resolve(process.argv[2])
 const output = resolve(process.argv[3] ?? fileURLToPath(new URL('../build/workdsh-profile-release', import.meta.url)))
 if (!source) throw new Error('Usage: node scripts/pack-workdsh-profile.mjs <built-workdsh-source> [output]')
@@ -30,8 +30,7 @@ for (const name of RELEASE_PACKAGES) {
   verifyPackageDshReferences(pkg, DSH_VERSION)
   verifyBuiltPackageExports(pkg, directory)
   verifyBuiltPackageFreshness(pkg, directory)
-  for (const [peer, range] of Object.entries(pkg.peerDependencies ?? {})) {
-    if (pkg.peerDependenciesMeta?.[peer]?.optional) continue
+  for (const [peer, range] of Object.entries(requiredRuntimeDependencies(pkg))) {
     if (peer.startsWith('workdsh-')) {
       if (!RELEASE_PACKAGES.includes(peer)) throw new Error('Missing owned runtime dependency: ' + name + ' requires ' + peer)
       continue
@@ -55,4 +54,4 @@ const manifest = { kind: 'workdsh-desktop-source-candidate', version: project.ve
   runtimeOverrides: project.pnpm?.overrides ?? {}, requiredPeers, packages, officialWeb }
 verifyProfileRelease(manifest, DSH_VERSION, RELEASE_PACKAGES)
 writeFileSync(join(output, 'release-manifest.json'), JSON.stringify(manifest, null, 2) + '\n')
-console.log(`Packed ${packages.length} owned packages for DSH ${DSH_VERSION}; six default features selected, enterprise plugins are distributed separately`)
+console.log(`Packed ${packages.length} owned packages for DSH ${DSH_VERSION}; ${PRODUCT_PACKAGES.length} default features selected, enterprise plugins are distributed separately`)

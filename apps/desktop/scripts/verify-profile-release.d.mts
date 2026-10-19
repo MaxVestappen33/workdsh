@@ -22,3 +22,4 @@ export function verifyPackageDshReferences(manifest: PackageReferences, expected
 export function verifyReleaseArchives(manifest: { packages?: ReadonlyArray<{ name: string; filename: string; sha256: string }> }, directory: string): void
 export function verifyOfficialWebPackages(manifest: unknown, profile: string, config?: string): void
 export function verifyInstalledDshVersions(profile: string, expectedDshVersion: string): number
+export function verifyBuiltPackageExports(manifest: { name?: string; exports?: unknown }, directory: string): void

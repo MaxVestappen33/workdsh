@@ -66,7 +66,7 @@ Earlier local preview showing the artifact workflow; it is not an alpha.8 accept
 
 ## Quick start
 
-Requirements: Node.js `^22.19.0 || >=24.0.0`, Corepack/pnpm and the official `dsh` CLI **0.2.0-rc.2**.
+Requirements: Node.js `^22.19.0 || >=24.0.0`, Corepack/pnpm and the official `dsh` CLI matching the downloaded release manifest’s `harness` field exactly. The source target version does not override a published release manifest.
 
 1. Download all 12 `.tgz` packages, `release-manifest.json`, `SHA256SUMS` and `install-workdsh.mjs` from the [alpha.14 release](https://github.com/techflag/workdsh/releases/tag/v0.1.0-alpha.14) into one directory.
 2. For an upgrade, stop the target Profile and keep a recoverable backup of its configuration and data.
@@ -93,6 +93,8 @@ corepack pnpm build
 corepack pnpm preview:install
 corepack pnpm preview
 ```
+
+Preview startup uses the workspace-pinned pnpm for native plugin management as well as local installation. It scopes PATH to the preview process and rejects missing or mismatched workspace dependencies; it does not change global pnpm configuration or migrate the Profile store.
 
 ## Architecture and development
 
@@ -154,3 +156,12 @@ The current build inventory additionally includes the following package versions
 | [pptx-viewer-mcp](https://github.com/ChristopherVR/pptx-viewer) | 2.5.1 | Apache-2.0 |
 | [react-remove-scroll-bar](https://github.com/theKashey/react-remove-scroll-bar) | 2.3.8 | MIT |
 | [unicount](https://github.com/josephg/unicount) | 1.1.0 | ISC |
+
+
+### Self-hosted storage and execution permissions
+
+This checkout does not include the older `deploy/docker` recipe. For your own container deployment, persist all of `DSH_HOME` and set `DSH_AGENTS_HOME` to an `agents` directory on the same persistent volume. The experts service also defaults to `$DSH_HOME/agents` when no explicit agents directory is configured.
+
+`SANDBOX_UNAVAILABLE` means the host has no usable isolation backend. Check container and host support first. Unrestricted execution requires an explicit choice in native permission settings; WorkDSH does not silently fall back to it. Environment variables mentioned by an older recipe do not replace checking the current official runtime settings.
+
+Personal Web is a single-user local runtime. Sharing one Profile does not isolate users’ data. Enterprise features do not constitute a multi-tenant Web Host.

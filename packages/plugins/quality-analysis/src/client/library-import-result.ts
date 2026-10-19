@@ -1,0 +1,12 @@
+export interface QualityLibraryImportRequest {readonly recordId:string;readonly reference:{readonly assetId:string;readonly revisionId:string};readonly format:'csv'|'xlsx';readonly tableKind:'inspections'|'defects';readonly headerRow:number;readonly worksheet?:string;readonly baseSourceSnapshotId?:string;readonly expectedGeneration:number;}
+export type QualityLibraryImportResult={readonly status:'worksheet_required';readonly worksheets:readonly string[]}|{readonly status:'ready';readonly sourceSnapshotId:string;readonly inspectionRows:number;readonly defectRows:number|null;readonly inspectionHeaders:readonly string[];readonly defectHeaders?:readonly string[];};
+function headers(value:unknown):readonly string[]{if(!Array.isArray(value)||!value.length||value.length>50||value.some(item=>typeof item!=='string'||!item.trim())||new Set(value).size!==value.length)throw new Error('invalid-headers');return Object.freeze([...value]);}
+export function parseQualityLibraryImportResult(value:unknown):QualityLibraryImportResult{
+ if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('invalid-import-result');const row=value as Record<string,unknown>;
+ if(row.status==='worksheet_required'){
+  if(Object.keys(row).length!==2||!Array.isArray(row.worksheets)||!row.worksheets.length||row.worksheets.length>1000||row.worksheets.some(item=>typeof item!=='string'||!item.trim()||item.length>256)||new Set(row.worksheets).size!==row.worksheets.length)throw new Error('invalid-worksheets');
+  return Object.freeze({status:'worksheet_required',worksheets:Object.freeze([...row.worksheets])});
+ }
+ if(row.status!=='ready'||Object.keys(row).some(key=>!['status','sourceSnapshotId','inspectionRows','defectRows','inspectionHeaders','defectHeaders'].includes(key))||typeof row.sourceSnapshotId!=='string'||! /^[a-f0-9]{64}$/.test(row.sourceSnapshotId)||!Number.isSafeInteger(row.inspectionRows)||(row.inspectionRows as number)<0||(row.inspectionRows as number)>10000||(row.defectRows!==null&&(!Number.isSafeInteger(row.defectRows)||(row.defectRows as number)<0||(row.defectRows as number)>10000))||(row.defectRows===null)!==(row.defectHeaders===undefined))throw new Error('invalid-import-result');
+ return Object.freeze({status:'ready',sourceSnapshotId:row.sourceSnapshotId,inspectionRows:row.inspectionRows as number,defectRows:row.defectRows as number|null,inspectionHeaders:headers(row.inspectionHeaders),...(row.defectHeaders!==undefined?{defectHeaders:headers(row.defectHeaders)}:{})});
+}

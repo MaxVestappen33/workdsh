@@ -21,10 +21,12 @@ const packageDirectories = [
   '../../packages/plugins/library',
   '../../packages/plugins/projects',
   '../../packages/plugins/activity',
+  '../../packages/plugins/workbenches',
+  '../../packages/plugins/quality-analysis',
   '../../packages/bundle',
 ];
 
-await rm(destination, { recursive: true, force: true });
+// Preserve earlier version assets: existing Profiles may still reference them.
 await mkdir(destination, { recursive: true });
 
 for (const directory of packageDirectories) {
@@ -57,6 +59,7 @@ for (const directory of packageDirectories) {
     filename,
     bytes: bytes.length,
     sha256: createHash('sha256').update(bytes).digest('hex'),
+    ...(manifest.workdsh?.workbench ? { workbenchId: manifest.workdsh.workbench.id } : {}),
   });
 }
 
@@ -75,8 +78,8 @@ await writeFile(join(destination, 'release-manifest.json'), JSON.stringify({
   runtimeOverrides: Object.fromEntries(Object.entries(project.pnpm.overrides).filter(([name]) => name.startsWith('@deepseek-ai/'))),
   packages,
   installation: {
-    defaultPackages: ['workdsh-provider-identity-local','workdsh-provider-browser-session','workdsh-plugin-audit','workdsh-plugin-access','workdsh-plugin-skills','workdsh-plugin-experts','workdsh-plugin-connectors','workdsh-plugin-library','workdsh-bundle'],
-    optionalPackages: ['workdsh-plugin-office','workdsh-plugin-projects','workdsh-plugin-activity'],
+    defaultPackages: ['workdsh-provider-identity-local','workdsh-provider-browser-session','workdsh-plugin-audit','workdsh-plugin-access','workdsh-plugin-skills','workdsh-plugin-experts','workdsh-plugin-connectors','workdsh-plugin-library','workdsh-plugin-workbenches','workdsh-bundle'],
+    optionalPackages: ['workdsh-plugin-office','workdsh-plugin-projects','workdsh-plugin-activity','workdsh-plugin-quality-analysis'],
     enterprisePackages: 'Separate artifacts; not included in this personal collection',
     preservesPreviouslyInstalledOptionalPackages: true,
   },
@@ -90,6 +93,7 @@ await writeFile(join(destination, 'release-manifest.json'), JSON.stringify({
   ],
 }, null, 2) + '\n');
 await copyFile(join(root, 'scripts/install-project-release.mjs'), join(destination, 'install-workdsh.mjs'));
+await copyFile(join(root, 'scripts/retain-workbench-archives.mjs'), join(destination, 'retain-workbench-archives.mjs'));
 await copyFile(releaseNotes, join(destination, 'RELEASE-NOTES.md'));
 
 const files = (await readdir(destination)).sort();

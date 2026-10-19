@@ -2,14 +2,6 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { Context } from '@deepseek-ai/cordis';
-import Sessions from '@deepseek-ai/dsh-session';
-import Projections from '@deepseek-ai/dsh-session-projection';
-import SystemPrompt from '@deepseek-ai/dsh-system-prompt';
-import Tools from '@deepseek-ai/dsh-tools';
-import Llm from '@deepseek-ai/dsh-llm';
-import Agents from '@deepseek-ai/dsh-agent';
-import AgentLoop from '@deepseek-ai/dsh-agent-loop';
-import BrowserUse from '@deepseek-ai/dsh-browser-use';
 import * as BrowserSession from '../dist/index.js';
 
 const TOOL = 'mcp__workdsh-playwright__browser_navigate';
@@ -18,6 +10,9 @@ test('official Agent Sessions receive isolated managed Playwright tools', {
   skip: !process.env.DSH_BROWSER_EXECUTABLE && !process.env.DSH_ELECTRON_TEST_EXECUTABLE,
   timeout: 60_000,
 }, async () => {
+  const runtime = await import('../../../../apps/web/tests/helpers/skill-runtime.mjs');
+  const {Sessions, Projections, SystemPrompt, Tools, Llm, Agents, AgentLoop} = runtime;
+  const {default: BrowserUse} = await import('@deepseek-ai/dsh-browser-use');
   const ctx = new Context();
   const handles = [];
   let route;
@@ -35,7 +30,7 @@ test('official Agent Sessions receive isolated managed Playwright tools', {
     await ctx.plugin(BrowserSession, process.env.DSH_ELECTRON_TEST_EXECUTABLE
       ? {
         electronExecutable: process.env.DSH_ELECTRON_TEST_EXECUTABLE,
-        electronAppPath: process.env.DSH_ELECTRON_TEST_APP_PATH,
+        electronApplication: process.env.DSH_ELECTRON_TEST_APP_PATH,
       }
       : { executablePath: process.env.DSH_BROWSER_EXECUTABLE });
     assert.equal(route?.path, '/api/workdsh-browser-session');
@@ -50,6 +45,31 @@ test('official Agent Sessions receive isolated managed Playwright tools', {
       assert.ok(ctx.tools.schemas(agent).some(schema => schema.name === TOOL));
     }
     assert.equal(ctx.workdshBrowserSession.active(first.agent), false);
+
+    const close = agent => ctx.tools.execute({
+      agent,
+      name: 'mcp__workdsh-playwright__browser_close',
+      arguments: {},
+      callId: `close-${randomUUID()}`,
+      signal: new AbortController().signal,
+    });
+    for (let repeat = 0; repeat < 2; repeat++) {
+      const result = await close(first.agent);
+      assert.equal(result.isError, false, JSON.stringify(result));
+      assert.equal(ctx.workdshBrowserSession.active(first.agent), false, 'closing an untouched browser never activates its blank view');
+    }
+    const tabs = (agent, action, extra = {}) => ctx.tools.execute({
+      agent, name: 'mcp__workdsh-playwright__browser_tabs', arguments: { action, ...extra },
+      callId: `tabs-${randomUUID()}`, signal: new AbortController().signal,
+    });
+    assert.equal((await tabs(first.agent, 'list')).isError, false);
+    assert.equal(ctx.workdshBrowserSession.active(first.agent), false, 'listing browser tabs is not page use');
+    const failedNavigation = await ctx.tools.execute({
+      agent: first.agent, name: TOOL, arguments: { url: 42 },
+      callId: 'invalid-navigation', signal: new AbortController().signal,
+    });
+    assert.equal(failedNavigation.isError, true);
+    assert.equal(ctx.workdshBrowserSession.active(first.agent), false, 'failed tools do not announce browser activity');
 
     const execute = (agent, label) => ctx.tools.execute({
       agent,
@@ -77,7 +97,7 @@ test('official Agent Sessions receive isolated managed Playwright tools', {
       }));
       return { status: result.status, body: await result.json() };
     };
-    assert.deepEqual(await callRoute(first.agent.id, 'status'), { status: 200, body: { active: true } });
+    assert.deepEqual(await callRoute(first.agent.id, 'status'), { status: 200, body: { active: true, revision: ctx.workdshBrowserSession.revision(first.agent) } });
     assert.equal((await callRoute('unknown-session', 'capture')).status, 404);
     assert.equal((await callRoute(second.agent.id, 'capture')).body.url.includes('FIRST_SESSION'), false);
     profile.organization.kind = 'shared';
@@ -99,6 +119,21 @@ test('official Agent Sessions receive isolated managed Playwright tools', {
     assert.equal(observed.isError, false, JSON.stringify(observed));
     assert.match(JSON.stringify(observed), /CLICKED_FIRST_SESSION/);
     await assert.rejects(ctx.workdshBrowserSession.capture({ ...first.agent }, new AbortController().signal));
+
+    const closed = await close(first.agent);
+    assert.equal(closed.isError, false, JSON.stringify(closed));
+    const closedRevision = ctx.workdshBrowserSession.revision(first.agent);
+    assert.deepEqual(await callRoute(first.agent.id, 'status'), { status: 200, body: { active: false, revision: closedRevision } });
+    const reopened = await execute(first.agent, 'FIRST_REOPENED');
+    assert.equal(reopened.isError, false, JSON.stringify(reopened));
+    assert.ok(ctx.workdshBrowserSession.revision(first.agent) > closedRevision);
+    assert.deepEqual(await callRoute(first.agent.id, 'status'), { status: 200, body: { active: true, revision: ctx.workdshBrowserSession.revision(first.agent) } });
+    const beforeFailedClose = ctx.workdshBrowserSession.revision(first.agent);
+    assert.equal((await tabs(first.agent, 'close', { index: 999 })).isError, true);
+    assert.equal(ctx.workdshBrowserSession.active(first.agent), true, 'a failed close does not claim the live view was closed');
+    assert.equal(ctx.workdshBrowserSession.revision(first.agent), beforeFailedClose);
+    assert.equal((await tabs(first.agent, 'close')).isError, false);
+    assert.equal(ctx.workdshBrowserSession.active(first.agent), false, 'closing a tab withdraws automatic display');
 
     await first.dispose();
     handles.splice(handles.indexOf(first), 1);

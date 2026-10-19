@@ -5,7 +5,7 @@ import { mkdir, readFile, rename as renameFile, rm, writeFile } from 'node:fs/pr
 import { Context, Service } from '@deepseek-ai/cordis';
 import type { KvTable } from '@deepseek-ai/dsh-storage-domain';
 import type {
-  ActorContext, IdentityService, LibraryAsset, LibraryAssetKind, LibraryAssetStatus, LibraryDraft, LibraryImportInput, LibraryNode, LibraryRevision,
+  ActorContext, IdentityService, LibraryAsset, LibraryAssetKind, LibraryAssetStatus, LibraryDraft, LibraryContentDraft, LibrarySaveContentDraftInput, LibraryArchiveContentDraftInput, LibraryImportInput, LibraryOriginalRevisionInput, LibraryNode, LibraryRevision,
   LibrarySearchFilters, LibrarySearchHit, LibraryService, LibrarySpace, LibraryTaskReference, LibraryTreeEntry, ResourceOwner,
 } from 'workdsh-contracts';
 import { convertToMarkdown, type ConversionResult } from './converters.js';
@@ -16,6 +16,10 @@ declare module '@deepseek-ai/cordis' { interface Context { workdshLibrary: Libra
 const MAX_BYTES = 50 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 5 * 1024 * 1024 * 1024;
 const MAX_SELECTION_BYTES = 32 * 1024 * 1024;
+const MAX_CONTENT_DRAFT_BYTES = 16 * 1024;
+const MAX_CONTENT_DRAFTS = 100;
+const MAX_CONTENT_DRAFT_RECEIPTS = 1000;
+const MAX_CONTENT_DRAFT_STATE_BYTES = 2 * 1024 * 1024;
 const sha256 = (value: Uint8Array | string): string => createHash('sha256').update(value).digest('hex');
 const now = (): string => new Date().toISOString();
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -99,7 +103,7 @@ export class LibraryManager extends Service implements LibraryService {
       const state = await this.ensureState(actor, signal);
       const prior = state.receipts[input.operationId];
       const inputSha256 = sha256(`${input.parentId ?? ''}\u0000${input.name}\u0000${sha256(input.bytes)}`);
-      if (prior) { if (prior.inputSha256 && prior.inputSha256 !== inputSha256) throw new Error('library/operation-conflict'); return this.entry(state, this.requireNode(state, prior.nodeId)); }
+      if (prior) { if (prior.inputSha256 && prior.inputSha256 !== inputSha256) throw new Error('library/operation-conflict'); return { ...this.entry(state, this.requireNode(state, prior.nodeId)), revision: this.resolveRevision(state, prior.assetId, prior.revisionId) }; }
       const name = cleanName(input.name); this.assertFolder(state, input.parentId); this.assertUniqueName(state, input.parentId, name);
       if (!input.operationId.trim() || input.operationId.length > 256) throw new Error('library/invalid-operation');
       if (!input.bytes.byteLength || input.bytes.byteLength > this.maxBytes) throw new Error('library/file-size');
@@ -134,14 +138,58 @@ export class LibraryManager extends Service implements LibraryService {
       const asset: LibraryState['assets'][string] = { id: assetId, spaceId: state.space.id, nodeId, kind, mediaType: input.mediaType?.trim() || defaultMediaTypes[kind], byteLength: input.bytes.byteLength, owner, status: 'active', currentRevisionId: revisionId, source: input.source ?? 'upload', ...(input.sourceTaskId ? { sourceTaskId: input.sourceTaskId } : {}), createdAt: timestamp, updatedAt: timestamp };
       const revision: LibraryState['revisions'][string] = { id: revisionId, assetId, number: 1, originalSha256: sha256(originalBytes), contentSha256: sha256(converted.markdown), originalByteLength: originalBytes.byteLength, originalRelativePath, contentRelativePath, conversionStatus, conversionWarnings: [...converted.warnings], createdBy: actor.principalId, createdAt: timestamp };
       const next: LibraryState = { ...state, space: { ...state.space, updatedAt: timestamp }, nodes: { ...state.nodes, [nodeId]: node }, assets: { ...state.assets, [assetId]: asset }, revisions: { ...state.revisions, [revisionId]: revision }, receipts: { ...state.receipts, [input.operationId]: { operationId: input.operationId, assetId, revisionId, nodeId, inputSha256 } } };
-      try { await this.states().put(this.key(actor), next); }
-      catch (cause) { await rm(finalDirectory, { recursive: true, force: true }); throw cause; }
+      // Preserve immutable files if the storage commit acknowledgement is lost.
+      await this.states().put(this.key(actor), next);
       return { ...node, asset, revision };
     });
   }
 
+
+  saveOriginalRevision(actor:ActorContext,input:LibraryOriginalRevisionInput,signal?:AbortSignal,authorizeCurrent?:()=>void):Promise<LibraryTreeEntry> {
+    const captured={...actor},bytes=Uint8Array.from(input.bytes),request={...input,bytes};
+    const guard=()=>{signal?.throwIfAborted();this.ctx.fiber.assertActive();authorizeCurrent?.();};
+    return this.enqueue(async()=>{
+      guard();const state=await this.ensureState(captured,signal);guard();this.assertActive(state,request.assetId);
+      if(!request.operationId.trim()||request.operationId.length>256||!request.expectedRevisionId.trim())throw new Error('library/invalid-operation');
+      if(!bytes.byteLength||bytes.byteLength>this.maxBytes)throw new Error('library/file-size');
+      const asset=state.assets[request.assetId]!;
+      const fingerprint=sha256(JSON.stringify(['original-revision',request.assetId,request.expectedRevisionId,sha256(bytes)]));
+      const prior=state.receipts[request.operationId];
+      if(prior){if(prior.inputSha256!==fingerprint||prior.assetId!==asset.id)throw new Error('library/operation-conflict');return {...this.entry(state,this.requireNode(state,prior.nodeId)),revision:this.requireRevision(state,prior.revisionId)};}
+      if(asset.currentRevisionId!==request.expectedRevisionId)throw new Error('library/base-revision-conflict');
+      const previous=this.resolveRevision(state,asset.id,request.expectedRevisionId);
+      if(Object.values(state.revisions).reduce((total,item)=>total+item.originalByteLength,0)+bytes.byteLength>this.maxTotalBytes)throw new Error('library/quota-exceeded');
+      // Reuse Library conversion and immutable original storage; Office owns editing.
+      const converted=await this.converter(asset.kind,Uint8Array.from(bytes),signal);
+      await this.ensureState(captured,signal);guard();
+      const revisionId=randomUUID(),relativeBase=join('objects',asset.id,revisionId),finalDirectory=this.safePath(relativeBase),temporaryDirectory=this.safePath(join('.tmp',randomUUID()));
+      const originalName='original'+extname(previous.originalRelativePath),timestamp=now();
+      await mkdir(temporaryDirectory,{recursive:false,mode:0o700});
+      try{
+        await writeFile(join(temporaryDirectory,originalName),bytes,{flag:'wx',mode:0o600});
+        await writeFile(join(temporaryDirectory,'content.md'),converted.markdown,{flag:'wx',mode:0o600});
+        await writeFile(join(temporaryDirectory,'conversion.json'),JSON.stringify({version:1,kind:asset.kind,originalSha256:sha256(bytes),warnings:converted.warnings,locations:converted.locations}),{flag:'wx',mode:0o600});
+        signal?.throwIfAborted();await renameFile(temporaryDirectory,finalDirectory);
+      }catch(cause){await rm(temporaryDirectory,{recursive:true,force:true});throw cause;}
+      const revision:LibraryState['revisions'][string]={id:revisionId,assetId:asset.id,number:previous.number+1,originalSha256:sha256(bytes),contentSha256:sha256(converted.markdown),originalByteLength:bytes.byteLength,originalRelativePath:join(relativeBase,originalName),contentRelativePath:join(relativeBase,'content.md'),conversionStatus:'ready',conversionWarnings:[...converted.warnings],createdBy:captured.principalId,createdAt:timestamp};
+      const node={...this.requireNode(state,asset.nodeId),updatedAt:timestamp},nextAsset={...asset,currentRevisionId:revisionId,byteLength:bytes.byteLength,updatedAt:timestamp};
+      const next:LibraryState={...state,assets:{...state.assets,[asset.id]:nextAsset},nodes:{...state.nodes,[node.id]:node},revisions:{...state.revisions,[revisionId]:revision},receipts:{...state.receipts,[request.operationId]:{operationId:request.operationId,assetId:asset.id,nodeId:node.id,revisionId,inputSha256:fingerprint}}};
+      // Before submission, a failed authorization check is known not to have committed.
+      try{await this.ensureState(captured,signal);guard();}catch(cause){await rm(finalDirectory,{recursive:true,force:true});throw cause;}
+      // A rejected storage write can already have committed. Preserve the immutable
+      // files; retry with the same operationId reconciles the durable receipt.
+      // An uncommitted write may leave an orphan, but must never delete a live revision.
+      await this.states().put(this.key(captured),next);
+      return {...node,asset:nextAsset,revision};
+    });
+  }
   readText(actor: ActorContext, assetId: string, revisionId?: string, signal?: AbortSignal): Promise<string> {
     return this.enqueue(async () => { const state = await this.ensureState(actor, signal); this.assertActive(state, assetId); const revision = this.resolveRevision(state, assetId, revisionId); if (revision.conversionStatus !== 'ready') throw new Error(revision.conversionStatus === 'failed' ? 'library/conversion-failed' : 'library/conversion-pending'); return readFile(this.safePath(revision.contentRelativePath), 'utf8'); });
+  }
+
+  /** Resolve only an authorized immutable revision for the native file owner. */
+  originalFilePath(actor: ActorContext, assetId: string, revisionId: string, signal?: AbortSignal): Promise<string> {
+    return this.enqueue(async () => { const state = await this.ensureState(actor, signal); this.assertActive(state, assetId); const revision = this.resolveRevision(state, assetId, revisionId); const path = this.safePath(revision.originalRelativePath); await readFile(path); signal?.throwIfAborted(); return path; });
   }
 
   readOriginal(actor: ActorContext, assetId: string, revisionId?: string, signal?: AbortSignal): Promise<Uint8Array> {
@@ -195,6 +243,89 @@ export class LibraryManager extends Service implements LibraryService {
     });
   }
 
+  /** Detached content is unpublished and never creates a formal asset revision. */
+  readContentDraft(actor: ActorContext, draftId: string, signal?: AbortSignal, authorizeCurrent?: () => void): Promise<LibraryContentDraft> {
+    const captured = { ...actor };
+    const guard = () => { signal?.throwIfAborted(); this.ctx.fiber.assertActive(); authorizeCurrent?.(); };
+    return this.enqueue(async () => {
+      guard(); this.assertContentDraftId(draftId);
+      const state = await this.ensureState(captured, signal); guard();
+      const draft = state.contentDrafts[draftId]; if (!draft) throw new Error('library/content-draft-not-found');
+      this.assertContentDraftIntegrity(draft); guard(); return { ...draft };
+    });
+  }
+
+  saveContentDraft(actor: ActorContext, input: LibrarySaveContentDraftInput, signal?: AbortSignal, authorizeCurrent?: () => void): Promise<LibraryContentDraft> {
+    const captured = { ...actor }, request = { ...input };
+    const guard = () => { signal?.throwIfAborted(); this.ctx.fiber.assertActive(); authorizeCurrent?.(); };
+    return this.enqueue(async () => {
+      guard(); this.assertContentDraftId(request.draftId); this.assertContentDraftId(request.operationId);
+      if (request.expectedRevision !== undefined) this.assertContentDraftId(request.expectedRevision);
+      if (typeof request.content !== 'string' || [...request.content].some(character => character.length === 1 && /[\ud800-\udfff]/.test(character))) throw new Error('library/content-draft-invalid-content');
+      if (Buffer.byteLength(request.content, 'utf8') > MAX_CONTENT_DRAFT_BYTES) throw new Error('library/content-draft-size-limit');
+      const state = await this.ensureState(captured, signal); guard();
+      const contentHash = sha256(request.content);
+      const fingerprint = sha256(JSON.stringify(['content-draft/save', request.draftId, request.expectedRevision ?? null, contentHash]));
+      const replay = this.replayContentDraft(state, request.operationId, request.draftId, fingerprint);
+      if (replay) { guard(); return replay; }
+      const previous = state.contentDrafts[request.draftId];
+      if (previous) {
+        this.assertContentDraftIntegrity(previous);
+        if (request.expectedRevision === undefined || previous.revision !== request.expectedRevision) throw new Error('library/content-draft-revision-conflict');
+        if (previous.status !== 'active') throw new Error('library/content-draft-archived');
+      } else if (request.expectedRevision !== undefined) throw new Error('library/content-draft-not-found');
+      const timestamp = now(), unchanged = previous?.sha256 === contentHash;
+      const draft: LibraryContentDraft = { id: request.draftId, revision: unchanged ? previous!.revision : randomUUID(),
+        sha256: contentHash, content: request.content, status: 'active', operationId: request.operationId,
+        createdBy: previous?.createdBy ?? captured.principalId, createdAt: previous?.createdAt ?? timestamp,
+        updatedAt: unchanged ? previous!.updatedAt : timestamp };
+      const next = this.withContentDraftReceipt(state, draft, fingerprint);
+      guard(); await this.states().put(this.key(captured), next); guard(); return { ...draft };
+    });
+  }
+
+  archiveContentDraft(actor: ActorContext, input: LibraryArchiveContentDraftInput, signal?: AbortSignal, authorizeCurrent?: () => void): Promise<LibraryContentDraft> {
+    const captured = { ...actor }, request = { ...input };
+    const guard = () => { signal?.throwIfAborted(); this.ctx.fiber.assertActive(); authorizeCurrent?.(); };
+    return this.enqueue(async () => {
+      guard(); this.assertContentDraftId(request.draftId); this.assertContentDraftId(request.operationId); this.assertContentDraftId(request.expectedRevision);
+      const state = await this.ensureState(captured, signal); guard();
+      const fingerprint = sha256(JSON.stringify(['content-draft/archive', request.draftId, request.expectedRevision]));
+      const replay = this.replayContentDraft(state, request.operationId, request.draftId, fingerprint);
+      if (replay) { guard(); return replay; }
+      const previous = state.contentDrafts[request.draftId]; if (!previous) throw new Error('library/content-draft-not-found');
+      this.assertContentDraftIntegrity(previous);
+      if (previous.revision !== request.expectedRevision) throw new Error('library/content-draft-revision-conflict');
+      const unchanged = previous.status === 'archived';
+      const draft: LibraryContentDraft = { ...previous, status: 'archived', operationId: request.operationId,
+        revision: unchanged ? previous.revision : randomUUID(), updatedAt: unchanged ? previous.updatedAt : now() };
+      const next = this.withContentDraftReceipt(state, draft, fingerprint);
+      guard(); await this.states().put(this.key(captured), next); guard(); return { ...draft };
+    });
+  }
+
+  private assertContentDraftId(value: string): void {
+    if (typeof value !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(value) || ['__proto__', 'constructor', 'prototype'].includes(value)) throw new Error('library/content-draft-invalid-input');
+  }
+  private assertContentDraftIntegrity(draft: LibraryContentDraft): void {
+    if (Buffer.byteLength(draft.content, 'utf8') > MAX_CONTENT_DRAFT_BYTES || sha256(draft.content) !== draft.sha256) throw new Error('library/content-draft-content-mismatch');
+  }
+  private replayContentDraft(state: LibraryState, operationId: string, draftId: string, fingerprint: string): LibraryContentDraft | undefined {
+    const receipt = state.contentDraftReceipts[operationId]; if (!receipt) return;
+    if (receipt.draftId !== draftId || receipt.inputSha256 !== fingerprint) throw new Error('library/content-draft-operation-conflict');
+    const current = state.contentDrafts[draftId];
+    if (!current || current.revision !== receipt.revision || current.sha256 !== receipt.sha256 || current.status !== receipt.status || current.operationId !== operationId) throw new Error('library/content-draft-operation-superseded');
+    this.assertContentDraftIntegrity(current); return { ...current };
+  }
+  private withContentDraftReceipt(state: LibraryState, draft: LibraryContentDraft, inputSha256: string): LibraryState {
+    const contentDrafts = { ...state.contentDrafts, [draft.id]: draft };
+    const contentDraftReceipts = { ...state.contentDraftReceipts, [draft.operationId]: { operationId: draft.operationId, draftId: draft.id,
+      inputSha256, revision: draft.revision, sha256: draft.sha256, status: draft.status } };
+    if (Object.keys(contentDrafts).length > MAX_CONTENT_DRAFTS || Object.keys(contentDraftReceipts).length > MAX_CONTENT_DRAFT_RECEIPTS ||
+      Buffer.byteLength(JSON.stringify({ contentDrafts, contentDraftReceipts }), 'utf8') > MAX_CONTENT_DRAFT_STATE_BYTES) throw new Error('library/content-draft-budget-exceeded');
+    return { ...state, contentDrafts, contentDraftReceipts };
+  }
+
   createDraft(actor: ActorContext, assetId: string, baseRevisionId?: string, signal?: AbortSignal): Promise<LibraryDraft> {
     return this.enqueue(async () => {
       const state = await this.ensureState(actor, signal); const asset = state.assets[assetId]; if (!asset) throw new Error('library/not-found'); this.assertActive(state, assetId);
@@ -232,7 +363,8 @@ export class LibraryManager extends Service implements LibraryService {
       const nextAsset: LibraryState['assets'][string] = { ...asset, currentRevisionId: revisionId, byteLength: bytes.byteLength, updatedAt: timestamp };
       const drafts = { ...state.drafts }; delete drafts[draftId];
       const next = { ...state, assets: { ...state.assets, [asset.id]: nextAsset }, revisions: { ...state.revisions, [revisionId]: revision }, drafts, nodes: { ...state.nodes, [asset.nodeId]: { ...this.requireNode(state, asset.nodeId), updatedAt: timestamp } } };
-      try { await this.states().put(this.key(actor), next); } catch (cause) { await rm(finalDirectory, { recursive: true, force: true }); throw cause; }
+      // A rejected put does not prove that the revision was not committed.
+      await this.states().put(this.key(actor), next);
       return this.entry(next, next.nodes[asset.nodeId]!);
     });
   }
@@ -277,12 +409,27 @@ export class LibraryManager extends Service implements LibraryService {
     return this.enqueue(async () => { const state = await this.ensureState(actor, signal); const next = mutate(state, this.requireNode(state, nodeId)); await this.states().put(this.key(actor), { ...state, nodes: { ...state.nodes, [nodeId]: next }, space: { ...state.space, updatedAt: now() } }); return next; });
   }
   private async ensureState(actor: ActorContext, signal?: AbortSignal): Promise<LibraryState> {
-    signal?.throwIfAborted(); this.validateActor(actor); const key = this.key(actor); const current = this.states().get(key); if (current) return current;
-    const timestamp = now(); const state: LibraryState = { schemaVersion: 1, space: { id: randomUUID(), title: '我的资料', owner: this.owner(actor), createdAt: timestamp, updatedAt: timestamp }, nodes: {}, assets: {}, revisions: {}, receipts: {}, references: {}, drafts: {} };
+    signal?.throwIfAborted(); this.validateActor(actor); const key = this.key(actor); const current = this.states().get(key);
+    if (current) {
+      // Legacy keys normalize punctuation and truncate identifiers. A matching
+      // key is therefore not proof that this state belongs to the caller.
+      if (current.space.owner.organizationId !== actor.organizationId || current.space.owner.ownerPrincipalId !== actor.principalId) throw new Error('library/owner-mismatch');
+      return current;
+    }
+    const timestamp = now(); const state: LibraryState = { schemaVersion: 1, space: { id: randomUUID(), title: '我的资料', owner: this.owner(actor), createdAt: timestamp, updatedAt: timestamp }, nodes: {}, assets: {}, revisions: {}, receipts: {}, references: {}, drafts: {}, contentDrafts: {}, contentDraftReceipts: {} };
     await this.states().put(key, state); return state;
   }
   private entry(state: LibraryState, node: LibraryNode): LibraryTreeEntry { const asset = node.assetId ? state.assets[node.assetId] : undefined; const revision = asset ? state.revisions[asset.currentRevisionId] : undefined; return { ...node, ...(asset ? { asset } : {}), ...(revision ? { revision } : {}) }; }
-  private resolveRevision(state: LibraryState, assetId: string, revisionId?: string): LibraryRevision { const asset = state.assets[assetId]; if (!asset) throw new Error('library/not-found'); return this.requireRevision(state, revisionId ?? asset.currentRevisionId); }
+  private resolveRevision(state: LibraryState, assetId: string, revisionId?: string): LibraryRevision {
+    const asset = state.assets[assetId];
+    if (!asset) throw new Error('library/not-found');
+    const node = this.requireNode(state, asset.nodeId);
+    if (asset.spaceId !== state.space.id || node.spaceId !== state.space.id || node.assetId !== asset.id || node.kind !== 'asset'
+      || asset.owner.organizationId !== state.space.owner.organizationId || asset.owner.ownerPrincipalId !== state.space.owner.ownerPrincipalId) throw new Error('library/asset-binding-mismatch');
+    const revision = this.requireRevision(state, revisionId ?? asset.currentRevisionId);
+    if (revision.assetId !== asset.id) throw new Error('library/revision-asset-mismatch');
+    return revision;
+  }
   private assertActive(state: LibraryState, assetId: string): void { const asset = state.assets[assetId]; if (!asset) throw new Error('library/not-found'); if (asset.status !== 'active') throw new Error('library/disabled'); }
   private requireNode(state: LibraryState, id: string): LibraryNode { const node = state.nodes[id]; if (!node) throw new Error('library/not-found'); return node; }
   private requireRevision(state: LibraryState, id: string): LibraryRevision { const revision = state.revisions[id]; if (!revision) throw new Error('library/not-found'); return revision; }

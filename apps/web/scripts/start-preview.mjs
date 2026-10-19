@@ -1,12 +1,15 @@
 import { spawn } from 'node:child_process';
+import {ensureNativeWorkbenchFrame} from './native-workbench-frame-patch.mjs';
+import { previewProcessEnvironment } from './preview-process-environment.mjs';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { withoutRedundantAgentTeamProfile } from './preview-agent-team.mjs';
+import { previewHome as resolvePreviewHome } from './preview-home.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const previewHome = process.env.WORKDSH_PREVIEW_HOME ?? resolve(root, '.test-runtime/preview');
+const previewHome = resolvePreviewHome();
 const agentsHome = process.env.DSH_AGENTS_HOME ?? join(previewHome, 'agents');
 const port = process.env.WORKDSH_PREVIEW_PORT ?? '18989';
 // Preview currently needs a larger startup heap; this does not fix the underlying growth.
@@ -38,9 +41,11 @@ if (bootFor('@deepseek-ai/dsh') !== bootFor('@deepseek-ai/dsh-config-editor')) {
 }
 
 mkdirSync(previewHome, { recursive: true });
+// User-authorized local-preview outer frame only; exact version and byte guards.
+await ensureNativeWorkbenchFrame(profile);
 const child = spawn(process.execPath, [`--max-old-space-size=${heapMb}`, dsh, '--profile', 'preview', '--host', '127.0.0.1', '--port', port, '--no-open'], {
   cwd: root,
-  env: { ...process.env, DSH_HOME: previewHome, DSH_AGENTS_HOME: agentsHome },
+  env: { ...previewProcessEnvironment(root), DSH_HOME: previewHome, DSH_AGENTS_HOME: agentsHome },
   stdio: 'inherit',
 });
 
