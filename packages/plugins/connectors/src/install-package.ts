@@ -33,7 +33,7 @@ export interface NodePackageInstallation {
 const DEFAULT_INSTALL_TIMEOUT_MS = 300_000;
 /** 保留的安装日志尾部长度：失败时用它说明真实原因，又不至于把日志灌进界面。 */
 const LOG_TAIL_LIMIT = 4_000;
-/** 服务标识已被定义 schema 限制为 [A-Za-z0-9_-]{1,32}，直接当目录名不会出现路径逃逸。 */
+/** 服务标识已被定义 schema 限制为 [A-Za-z0-9_-]{1,32}（与官方 MCP 客户端一致），直接当目录名不会出现路径逃逸。 */
 const serverNamePattern = /^[A-Za-z0-9_-]{1,32}$/u;
 
 /** 从包说明符里取包名：`chrome-devtools-mcp@latest` 与 `@scope/name@1.2.3` 都按最后一个 `@` 切分。 */

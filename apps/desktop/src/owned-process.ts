@@ -64,8 +64,16 @@ async function windowsSnapshot(pids: number[], timeoutMs: number): Promise<Windo
   const filter = [...new Set(pids)].map(pid => `(ProcessId = ${pid} OR ParentProcessId = ${pid})`).join(' OR ')
   const output = await windowsCommand(`$ErrorActionPreference='Stop'; $rows=@(Get-CimInstance Win32_Process -Filter '${filter}' -Property ProcessId,ParentProcessId,CreationDate | ForEach-Object { [pscustomobject]@{pid=[int]$_.ProcessId;ppid=[int]$_.ParentProcessId;createdAt=([DateTimeOffset]$_.CreationDate).ToUnixTimeMilliseconds()} }); ConvertTo-Json -InputObject $rows -Compress`, timeoutMs)
   const rows: unknown = JSON.parse(output)
-  if (!Array.isArray(rows) || rows.some(row => !row || !Number.isInteger(row.pid) || !Number.isInteger(row.ppid) || !Number.isSafeInteger(row.createdAt) || row.pid <= 0)) throw new Error('Windows 本机进程清理查询结果无效')
-  return rows as WindowsProcessIdentity[]
+  if (!Array.isArray(rows)) throw new Error('Windows 本机进程清理查询结果无效')
+  // 读不到创建时间的行（保护区/其它用户进程，常见于 PID 被复用的情形）无法证明归属：
+  // 直接丢弃，既不会被误认成本次启动的进程，也不会被结束。
+  const valid: WindowsProcessIdentity[] = []
+  for (const value of rows) {
+    const row = value as Partial<WindowsProcessIdentity> | null
+    if (!row || !Number.isInteger(row.pid) || !Number.isInteger(row.ppid) || !Number.isSafeInteger(row.createdAt) || row.pid! <= 0) continue
+    valid.push(row as WindowsProcessIdentity)
+  }
+  return valid
 }
 async function windowsTaskkill(row: WindowsProcessIdentity, timeoutMs: number): Promise<{ status: string, code?: number, output?: string }> {
   // Recheck CreationDate in the same public OS command that invokes taskkill.
@@ -76,6 +84,11 @@ async function windowsTaskkill(row: WindowsProcessIdentity, timeoutMs: number): 
 }
 function processMissing(pid: number): boolean {
   try { process.kill(pid, 0); return false } catch (error) { return (error as NodeJS.ErrnoException).code === 'ESRCH' }
+}
+/** 直接调用系统 taskkill 结束整棵进程树（不经过 PowerShell）；只在已确认归属后作为最后手段使用。 */
+function windowsDirectTreeKill(pid: number): void {
+  const executable = process.env.SystemRoot ? join(process.env.SystemRoot, 'System32/taskkill.exe') : 'taskkill.exe'
+  try { spawnSync(executable, ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', timeout: 15_000 }) } catch { /* 已退出或不可用 */ }
 }
 async function cleanWindowsTree(child: ChildProcess): Promise<void> {
   const state = ownership.get(child)
@@ -92,6 +105,9 @@ async function cleanWindowsTree(child: ChildProcess): Promise<void> {
       const current = rows.find(row => row.pid === state.pid)
       if (current && (current.createdAt < state.startedAt || current.createdAt > state.registeredAt)) return // New generation, never ours.
       if (processMissing(state.pid)) return
+      // 根进程已经退出且没有发现任何属于本次启动的后代：此时操作系统仍能探测到的同名 PID
+      // 只可能是被复用的其它进程（或读不到创建时间的受保护进程），不能据此判定清理失败。
+      if (state.exitedAt !== undefined) return
       throw new Error('Windows 本机进程树清理未确认')
     }
     // Discover nested descendants before removing their only visible parent.
@@ -103,6 +119,10 @@ async function cleanWindowsTree(child: ChildProcess): Promise<void> {
       }
     }
   }
+  // 快照自查始终没能收敛时，最后用系统 taskkill 结束已确认归属的根进程树；
+  // 以“根进程从系统视角消失”作为完成条件，残余后代留给下次启动按启动器路径回收。
+  windowsDirectTreeKill(state.pid)
+  if (processMissing(state.pid)) return
   throw new Error('Windows 本机进程树清理未确认')
 }
 

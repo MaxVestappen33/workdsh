@@ -22,6 +22,12 @@
     "skillMarketCategoriesPath": "/desktop-client/skill/querySkillBizSceneList",
     "skillMarketInstallPath": "/desktop-client/skill/installSkill",
     "skillMarketUninstallPath": "/desktop-client/skill/unInstallSkill",
+    "skillListingSubmitPath": "/desktop-client/skill/listingRequest",
+    "skillListingListPath": "/desktop-client/skill/queryMyListingSkillList",
+    "skillListingNodePath": "/desktop-client/queryAiNodeList",
+    "skillListingScenePath": "/desktop-client/queryAiBizSceneList",
+    "skillDictPath": "/desktop-client/getDictItems",
+    "skillUploadPath": "/desktop-client/upload",
     "modelMarketListPath": "/desktop-client/model/queryAuthorizedModelList",
     "modelMarketUsePath": "/desktop-client/model/useModel",
     "modelMarketUnusePath": "/desktop-client/model/unUseModel"

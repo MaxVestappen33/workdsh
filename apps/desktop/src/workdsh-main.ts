@@ -83,6 +83,17 @@ function markStartup(label: string): void {
   flushStartupTiming()
 }
 
+/** 进程回收失败的落盘记录：现场只能看到弹窗，底层原因需要留在 userData/logs 里可查。 */
+let cleanupLog: DebugLog | undefined
+function recordCleanupFailure(scope: string, error: unknown): void {
+  const detail = error instanceof Error ? error.message : String(error)
+  process.stderr.write(`[cleanup] ${scope}: ${detail}\n`)
+  try {
+    cleanupLog ??= createDebugLog(join(app.getPath('userData'), 'logs'), 'process-cleanup')
+    cleanupLog.write(`[${new Date().toISOString()}] ${scope}: ${detail}\n`)
+  } catch { /* 记录失败不影响退出 */ }
+}
+
 function bundledProfileDirectory(): string {
   const overridden = process.env.WORKDSH_BUNDLED_PROFILE
   if (overridden !== undefined && overridden.length > 0) return overridden
@@ -439,13 +450,14 @@ async function startRuntime(home: string, connection: DesktopConnection, patches
   const executable = bundledNodeExecutable()
   if (!existsSync(executable)) throw new Error(`Bundled Node.js runtime is missing: ${executable}`)
   const basePatch = join(bundledProfileDirectory(), 'cordis.patch.yml')
+  // 兜底回收必须早于端口探测：上次被强杀（任务管理器 / 系统终止）遗留的 Host 仍占着
+  // Home 记录的地址时，端口检查会判定“被其它应用占用”而直接拒绝启动，看起来就是永远卡在过场页。
+  reclaimOrphanedToolProcesses(join(home, '.workdsh-host.mjs'))
   // upstream 的端口管理：把空闲端口作为补丁层交给官方 Web 内核，替代原来的 --port 0。
   const port = await prepareRuntimePort(home, [join(home, 'profiles', PROFILE_NAME, 'cordis.yml'), join(home, 'profiles', PROFILE_NAME, 'cordis.patch.yml'), join(home, 'cordis.yml'), join(home, 'cordis.patch.yml'), ...patches], { existingHome })
   if (quitRequested) throw new Error('启动已取消')
   const layers = [...(existsSync(basePatch) ? [basePatch] : []), ...patches, ...marketPatchLayers(home), ...(port.managed ? [port.patch] : [])]
   const launcher = officialHostLauncher(bundledProfileDirectory(), home, executable, join(bundledPrimaryRuntime(), 'dependencies', 'pnpm', 'bin', 'pnpm.cjs'), layers)
-  // 兜底：回收上次异常退出（终端 Ctrl+C / 被强杀）遗留的同一启动器进程，避免端口/资源冲突导致本次启动失败。
-  reclaimOrphanedToolProcesses(launcher)
   const hostSpawnedAt = Date.now()
   const child = spawn(executable, [launcher, '--no-open'], {
     env: runtimeEnvironment(home),
@@ -513,9 +525,14 @@ async function startRuntime(home: string, connection: DesktopConnection, patches
         dialog.showErrorBox('本机运行已停止', failureDetail(code))
         void returnToEntry()
       }
-    }).catch(() => {
+    }).catch(error => {
+      // 回收未确认不能让应用停在“启动中”：记录原因、提示一次后照常回到入口页，用户仍可重试或退出。
+      recordCleanupFailure('startup-exit', error)
+      runtime = undefined
       runtimeStarting = false
-      dialog.showErrorBox('本机运行失败，进程清理未确认', failureDetail(code, true))
+      if (quitting || switching) return
+      dialog.showErrorBox('本机运行已停止', failureDetail(code, true))
+      void returnToEntry()
     })
   })
   const readyTimeout = setTimeout(() => { if (!ready && runtime === child) { dialog.showErrorBox('启动超时', '官方 DSH 尚未就绪，已停止本机进程'); void returnToEntry() } }, 90_000)
@@ -537,7 +554,8 @@ async function leaveWorkspace(): Promise<void> {
   await session?.authority?.close()
   session?.login.cancelRequests()
   const child = runtime
-  if (child) { await stopOwnedProcess(child); if (runtime === child) { runtime = undefined; runtimeStarting = false } }
+  // 回收未确认不能阻断切换/退出：记录原因后继续清理状态，遗留进程由下次启动按启动器路径回收。
+  if (child) { await stopOwnedProcess(child).catch(error => recordCleanupFailure('leave-workspace', error)); if (runtime === child) { runtime = undefined; runtimeStarting = false } }
   enterprise = undefined
   rememberCommandSpace()
   if (session) {
@@ -564,7 +582,8 @@ async function leaveAccountWorkspace(): Promise<void> {
   await session?.authority?.close()
   session?.login.cancelRequests()
   const child = runtime
-  if (child) { await stopOwnedProcess(child); if (runtime === child) { runtime = undefined; runtimeStarting = false } }
+  // 同 leaveWorkspace：账号切换/退出登录也不能被进程回收卡死。
+  if (child) { await stopOwnedProcess(child).catch(error => recordCleanupFailure('leave-account-workspace', error)); if (runtime === child) { runtime = undefined; runtimeStarting = false } }
   account = undefined
   rememberCommandSpace()
   if (session) {
@@ -594,7 +613,8 @@ async function stopAccountForQuit(): Promise<void> {
   await session?.authority?.close()
   session?.login.cancelRequests()
   const child = runtime
-  if (child) { await stopOwnedProcess(child); if (runtime === child) { runtime = undefined; runtimeStarting = false } }
+  // 关软件的回收失败只记录、不阻断：退出后由下次启动回收遗留进程。
+  if (child) { await stopOwnedProcess(child).catch(error => recordCleanupFailure('quit-account', error)); if (runtime === child) { runtime = undefined; runtimeStarting = false } }
   account = undefined
   rememberCommandSpace()
   entrySurface = false
@@ -605,7 +625,7 @@ async function returnToEntry(): Promise<void> {
   if (switching) { returnRequested = true; return }
   switching = true
   try { await leaveWorkspace(); showConnectionEntry() }
-  catch (error) { dialog.showErrorBox('暂时无法切换', error instanceof Error ? error.message : '请稍后重试') }
+  catch (error) { recordCleanupFailure('switch', error); dialog.showErrorBox('暂时无法切换', error instanceof Error ? error.message : '请稍后重试') }
   finally { endSwitch() }
 }
 
@@ -1136,7 +1156,12 @@ if (!app.requestSingleInstanceLock()) {
       quitting = true
       app.quit()
     }).catch(error => {
-      dialog.showErrorBox('暂时无法退出', error instanceof Error ? error.message : '请稍后重试')
+      // 退出绝不能因为进程回收未确认而卡死：记录原因、提示一次后强制退出。
+      // 残留的本机进程由下次启动的 reclaimOrphanedToolProcesses 按启动器路径兜底回收。
+      recordCleanupFailure('quit', error)
+      dialog.showErrorBox('退出时未能确认本机进程已停止', `${error instanceof Error ? error.message : '请稍后重试'}\n\n软件将直接退出；残留的本机进程会在下次启动时自动回收。`)
+      quitting = true
+      app.exit(0)
     }).finally(() => { switching = false })
   })
   app.on('window-all-closed', () => {

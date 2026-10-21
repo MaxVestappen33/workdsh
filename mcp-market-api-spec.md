@@ -116,12 +116,12 @@ JSON 字段使用 **lowerCamelCase**（如 `serviceId`、`toolCount`），对应
 | --- | --- | --- |
 | `id` | `originId` | 用于「已安装」判定与卸载 |
 | `name` | `title` | 显示名称 |
-| `service_id` | `serverName` | **唯一键判重**；表上已有唯一索引 `uk_ai_mcp_tool_service_id`，正好对应 |
+| `service_id` | `serverName` | **唯一键判重**；表上已有唯一索引 `uk_ai_mcp_tool_service_id`，正好对应。建议只使用字母、数字、`-`、`_`：客户端会把 `serverName` 交给官方 MCP 客户端，其限制为 `[A-Za-z0-9_-]{1,32}`；**超过 32 字符或含其它字符时，桌面端会换算成本机标识（截断 + 8 位短哈希），安装不受影响，卸载上报仍回传原始 `service_id`** |
 | `description` | `description` | 说明 |
 | `transport` | `transport` | `http` 与 `sse` 都按 `streamable-http` 处理，`stdio` 按 `stdio`（见 §5 决策 3） |
 | `command` + `args` | `command` + `args` | `args` 表里是「每行一个」，连接器侧是字符串数组。`transport = stdio` 且 `command` 是包管理器（`npx` / `npm` / `pnpm` / `yarn` / `bunx` 等）时，客户端认定这是「需要从内网仓库装到本机的 npm 包」，`args` 第一行是包说明符，见 §2.7 |
 | `endpoint` | `url` | `transport = http` 或 `sse` 时使用 |
-| `token` | 暂不使用 | 列表接口**永不返回** token；返回 token 的「取连接配置」接口本轮推迟（见 §2.3） |
+| `token` | `authorization` | 列表接口会返回该字段；桌面端安装时把它**原样**作为 `Authorization` 请求头写入官方凭据服务，连接器定义里只保留引用，界面（本机列表 / 详情 / 诊断）永不回传明文。为空表示该 MCP 不需要授权头 |
 | `biz_scene` | `categories` | **已确认**：分类取 `biz_scene`；该字段是**逗号分隔的多值**，桌面端拆成值的数组，仅用于分类筛选取值与安装时判重（见 §2.2 实测补充） |
 | `biz_scene_list`（新） | `categoryLabels` | **已确认**：后台按 `biz_scene` 逐项展开的 DictModel 数组（`value` / `text` / `label` / `title` / `color`）。桌面端**只取名称字段**（`text` → `label` → `title`）作为卡片与详情的标签文案，多值全部展示、按后台顺序去重，**不再回查分类字典**；字段缺失时才退回用分类字典映射 `biz_scene` |
 | `source_node` + `source_node_list`（新） | 暂不使用 | 来源节点，本轮界面不展示，仅确认字段已下发 |
@@ -229,7 +229,7 @@ GET  {server.baseUrl}/desktop-client/mcptool/queryAuthorizedMcpToolList
 
 **硬性要求：**
 
-1. **`token` 不在此接口返回**（表中注释已明确「列表/详情不回显」）。token 只在 §2.3 返回。
+1. **`token` 会在此接口返回**（实测由后台下发，形如 `Bearer sk-...`）。桌面端安装时把它原样作为 `Authorization` 头写进官方凭据服务，连接器定义只保存引用，本机列表 / 详情 / 诊断都不回传明文；不需要授权的条目返回空值即可。
 2. `tools` 结构见 §3；如果你们的 `tools` 已经是另一种结构，请给一份样例，前端做映射即可。
 3. `transport` 与 `command`/`args`/`endpoint` 需要能支撑「预览」展示（列表页详情要显示连接方式）。
 
@@ -294,8 +294,8 @@ POST {baseUrl}{mcpMarketUninstallPath}
 原先设计的「安装配置」接口（`POST .../subscribe`，返回 `serviceId` / `name` / `transport` / `endpoint` / `command` / `args` / `token`）**本轮不接入**：
 
 - 列表接口已返回安装所需的全部连接字段，安装流程不再依赖该接口；
-- `token` 的流转路径（宿主写入官方凭据服务、连接器定义只存引用、列表/详情/诊断永不回传）保持原有设计不变，待该接口就绪后再接；
-- 在那之前，需要令牌的 MCP 由用户在本机「＋ 添加 MCP」里手工填写授权令牌。
+- 列表返回的 `token` 由安装流程写入官方凭据服务，连接器定义只存引用，本机列表 / 详情 / 诊断永不回传，见 §1 与 §2.2；
+- 仍需要人工粘贴令牌的场景只剩「本机自建 MCP」：市场条目未下发 `token` 时不做任何猜测。
 
 ### 2.6 收藏（可选，暂不阻塞）
 
@@ -419,7 +419,7 @@ ORDER BY builtin DESC, subscribers DESC, update_time DESC
 | 1 | 分类字段 | 取 **`biz_scene`**；分类字典接口、列表 `bizScene` 筛选参数都按它。该字段是**逗号分隔的多值**，服务端筛选按多值包含匹配（§0.4） |
 | 2 | 字典对象字段名 | 用 **`value` / `text` / `color`**（照 `DictModel` 实际字段，§2.1 示例已按此编写） |
 | 3 | `transport = sse` | **按 `streamable-http` 处理**（风险见 5.2 决策 3） |
-| 4 | token 下发 | **本轮推迟**：不再有「取连接配置」接口调用，安装字段全部来自列表；`token` 的写入与回显约束保持原设计（见 §2.5） |
+| 4 | token 下发 | **列表接口下发**：安装时原样作为 `Authorization` 头写入官方凭据服务，定义只存引用、界面不回传（见 §1、§2.2、§2.5）；「取连接配置」接口本轮仍不接入 |
 | 5 | `X-Sign` | 后台**不校验**，宿主请求不带此头；`X-TIMESTAMP` 发当前毫秒，`X-Tenant-Id: 0` 与 `X-Version: v3` 固定 |
 | 6 | 员工令牌权限 | 员工令牌（`/sys/pcClientLogin` 签发）**可访问**这些接口，无需额外授权 |
 | 7 | 分类数据来源 | 后台**新建业务场景字典**，`biz_scene` 改存字典 `value`；分类接口返回该字典（此后 `biz_scene` 不再是自由文本） |
@@ -530,7 +530,7 @@ Jeecg 默认序列化输出的是 `value` / `text` / `color`（另有派生的 `
 | 连接器定义新增 `categories`（市场分类名称，取 `bizSceneList` 全部名称，用于本地卡片/详情展示与分类筛选） | 已完成 |
 | 按 `service_id` → `serverName` 判重（冲突报错） | 已完成 |
 | stdio / streamable-http 两种传输的连接与断线重连 | 已完成 |
-| token 写入官方凭据服务，定义只存引用，不回显（待「取连接配置」接口就绪后启用） | 已完成 |
+| 市场条目 `token` 写入官方凭据服务，定义只存引用，界面不回传 | 已完成（取列表 `token` → 安装时设为 `Authorization` 头） |
 | 本地 MCP 工具详情（名称 + 说明 + 入参，含「必填」标记） | 已完成 |
 | 市场 Tab 界面（双 Tab、分类胶囊、卡片统计、已安装态、详情工具清单、滚动加载更多） | 已完成 |
 | 宿主代理端点 + 市场服务客户端（列表 / 分类字典 / 安装上报 / 卸载上报） | 已完成 |

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Service } from '@deepseek-ai/cordis';
 import type { Context } from '@deepseek-ai/cordis';
 import type { BackendChannel } from 'workdsh-provider-backend-channel';
@@ -32,6 +33,23 @@ export interface ConnectorMarketOptions {
 export interface ConnectorMarketUninstall {
   readonly originId?: string;
   readonly id?: string;
+}
+
+/** 官方 MCP 客户端与本地连接器定义都要求 serverName 为 `[A-Za-z0-9_-]{1,32}`。 */
+const SERVER_NAME_LIMIT = 32;
+
+/**
+ * 把市场 serviceId 换算成本机可用的 serverName。
+ * 原值就合规时原样使用；超长或含其它字符时清洗后截断并追加 serviceId 的短哈希，
+ * 保证同一 serviceId 每次都得到同一个（≤32 且不冲突的）本地标识。
+ */
+function localServerNameOf(serviceId: string): string {
+  const service = serviceId.trim();
+  const clean = service.replace(/[^A-Za-z0-9_-]+/gu, '-').replace(/^[-_]+|[-_]+$/gu, '');
+  if (clean === service && clean.length <= SERVER_NAME_LIMIT) return clean;
+  const digest = createHash('sha256').update(service).digest('hex').slice(0, 8);
+  const head = clean.slice(0, SERVER_NAME_LIMIT - digest.length - 1).replace(/[-_]+$/u, '');
+  return `${head || 'mcp'}-${digest}`;
 }
 
 /** 卸载结果：`reported` 表示后台卸载上报是否成功（上报失败不阻断本地卸载）。 */
@@ -94,16 +112,18 @@ export class ConnectorMarketService extends Service implements ConnectorMarket {
     if (this.tasks.get(item.originId)?.state === 'installing')
       return { originId: item.originId, title: item.title, state: 'installing' };
     await client.reportInstall(item.originId, item.serverName, signal);
+    // 市场 serviceId 可能超出官方 serverName 约束，这里换算成本机标识后再落盘；上报仍用原始 serviceId。
+    const serverName = localServerNameOf(item.serverName);
     if (item.launch === 'direct') {
       await this.createFrom(item, item.transport === 'stdio'
         ? { kind: 'stdio', command: item.command, args: item.args }
-        : { kind: 'http', url: item.url });
+        : { kind: 'http', url: item.url }, serverName);
       this.record(item, 'ready');
       return { originId: item.originId, title: item.title, state: 'ready' };
     }
     // 装包耗时无法在一次请求里等完：先落任务态再进后台，超时/失败都留在任务里可见、可重试。
     this.record(item, 'installing');
-    void this.installPackage(item);
+    void this.installPackage(item, serverName);
     return { originId: item.originId, title: item.title, state: 'installing' };
   }
 
@@ -126,7 +146,7 @@ export class ConnectorMarketService extends Service implements ConnectorMarket {
     const matched = local ?? rows.find(row => row.originId === originId);
     let reported = true;
     try {
-      await (await this.client_()).reportUninstall(originId, matched?.serverName, signal);
+      await (await this.client_()).reportUninstall(originId, matched?.marketServiceId ?? matched?.serverName, signal);
     } catch {
       reported = false;
     }
@@ -146,13 +166,13 @@ export class ConnectorMarketService extends Service implements ConnectorMarket {
    * 需要依赖的条目：先用随包 pnpm 从内网仓库把包（含全部依赖）装到本机目录，
    * 再用「随包 Node + 包内入口」建连。整个过程在后台跑，状态写进安装任务供界面轮询。
    */
-  private async installPackage(item: MarketItem): Promise<void> {
+  private async installPackage(item: MarketItem, serverName: string): Promise<void> {
     try {
       const install = this.options.install;
       if (!install) throw new MarketRequestError('connector/package-install-unsupported', '当前环境未配置内网包仓库，无法安装依赖 npm 包的 MCP。');
       if (!item.packageSpec) throw new MarketRequestError('connector/package-spec-missing', '市场条目没有提供要安装的包名。');
-      const installed = await installNodePackage({ ...install, serverName: item.serverName, spec: item.packageSpec });
-      await this.createFrom(item, { kind: 'stdio', command: install.node, args: [installed.entry, ...(item.packageArgs ?? [])] });
+      const installed = await installNodePackage({ ...install, serverName, spec: item.packageSpec });
+      await this.createFrom(item, { kind: 'stdio', command: install.node, args: [installed.entry, ...(item.packageArgs ?? [])] }, serverName);
       this.record(item, 'ready');
       this.ctx.logger.info(`连接器：已从内网仓库安装 ${installed.packageName}@${installed.version}（${installed.directory}）。`);
     } catch (cause) {
@@ -176,16 +196,21 @@ export class ConnectorMarketService extends Service implements ConnectorMarket {
    * 而不是新建同名连接器（serverName 唯一，重复 create 会被拒）；
    * 只有同来源（originId 相同）的实例才会被改写，避免覆盖用户自建的连接器。
    */
-  private async createFrom(item: MarketItem, launch: { kind: 'stdio'; command?: string; args?: readonly string[] } | { kind: 'http'; url?: string }): Promise<ConnectorSummary> {
+  private async createFrom(item: MarketItem, launch: { kind: 'stdio'; command?: string; args?: readonly string[] } | { kind: 'http'; url?: string }, serverName: string): Promise<ConnectorSummary> {
     const manager = this.ctx.workdshConnectors;
     // 连接器定义对名称与说明有长度上限，超长时截断，避免市场文案过长导致安装失败。
     const input = {
       title: item.title.slice(0, 80),
       description: item.description.slice(0, 240),
-      serverName: item.serverName,
+      serverName,
       transport: item.transport,
       ...(launch.kind === 'stdio' ? { command: launch.command, args: [...(launch.args ?? [])] } : { url: launch.url }),
+      // 市场条目自带的令牌原样作为 Authorization 头：由连接器管理器写入官方凭据服务，
+      // 定义里只落引用，界面的列表与详情都不会回传明文。
+      ...(item.authorization ? { authorizationToken: item.authorization } : {}),
       originId: item.originId,
+      // 本地标识被换算过时保留原始 serviceId，卸载上报仍回传后台的原值。
+      ...(serverName === item.serverName ? {} : { marketServiceId: item.serverName }),
       // 本机实例的分类取后台展开后的 bizSceneList 名称（多值全部保留）：本地卡片、详情与分类筛选
       // 直接用这份文案，不再回查分类字典，也就不会出现「编码没被翻译」的情况。
       ...(item.categoryLabels.length ? { categories: [...item.categoryLabels] } : {}),

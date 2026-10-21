@@ -220,6 +220,7 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
       transport: definition.transport, scope: 'shared', enabled: definition.enabled, state: health.state, toolNames: health.toolNames,
       tools: health.tools, resourceCount: health.resourceCount, resourceTemplateCount: health.resourceTemplateCount, lastCheckedAt: new Date().toISOString(),
       ...(definition.originId ? { originId: definition.originId } : {}), categories: definition.categories ?? [],
+      ...(definition.marketServiceId ? { marketServiceId: definition.marketServiceId } : {}),
       ...(health.diagnostic ? { diagnostic: health.diagnostic } : {}) };
   }
 
@@ -267,6 +268,7 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
       // 仅市场安装流程会传入来源与分类；用户自建实例两者皆为空，界面按「内置」呈现。
       ...(categories.length ? { categories } : {}),
       ...(input.originId?.trim() ? { originId: input.originId.trim() } : {}),
+      ...(input.marketServiceId?.trim() ? { marketServiceId: input.marketServiceId.trim() } : {}),
     });
     if (value.transport === 'stdio' && !value.command) throw new Error('connector/command-required');
     if (value.transport === 'streamable-http' && !value.url) throw new Error('connector/url-required');

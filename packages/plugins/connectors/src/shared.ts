@@ -25,6 +25,8 @@ export interface ConnectorSummary {
   readonly originId?: string;
   /** 市场分类名称（安装时取市场 bizSceneList 文案，多值全部保留）；自建实例为空。 */
   readonly categories: readonly string[];
+  /** 市场原始 serviceId：只有本地 serverName 被换算过时才有值，供卸载上报回传后台。 */
+  readonly marketServiceId?: string;
   readonly enabled: boolean;
   readonly state: ConnectorState;
   readonly toolNames: readonly string[];
@@ -62,6 +64,8 @@ export interface ConnectorInput {
   readonly authorizationToken?: string;
   /** 来源市场条目 id；仅市场安装流程写入，用于「已安装」判定与卸载。 */
   readonly originId?: string;
+  /** 市场原始 serviceId：当它超出官方 serverName 约束时，本地标识会被换算，卸载上报仍需要原始值。 */
+  readonly marketServiceId?: string;
   /** 市场分类名称（市场 bizSceneList 文案，多值全部保留）；仅市场安装流程写入，供本地展示与按分类筛选。 */
   readonly categories?: readonly string[];
 }

@@ -1,16 +1,17 @@
 import { Button, Input, Textarea } from 'workdsh-ui';
-import { Icon, Modal, type IconName } from 'workdsh-ui';
+import { Icon, Modal, Select, type IconName } from 'workdsh-ui';
 import * as React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots';
 import type { SkillMarketAuthorized, SkillMarketDocument, SkillMarketItem, SkillScene } from '../market.js';
-import type { ManagedSkillDetail, ManagedSkillResource, ManagedSkillSummary, SkillDependencyImpact, TrashedSkillSummary } from '../shared.js';
+import type { ManagedSkillDetail, ManagedSkillResource, ManagedSkillSummary, SkillDependencyImpact, SkillListingItem, SkillListingOptions, TrashedSkillSummary } from '../shared.js';
 import type { SkillTaskKind } from './drafts.js';
 import type { SkillManagementClient } from './management.js';
 import { CategoryBar } from './components/CategoryBar.js';
-import { ImportSkillModal } from './ImportSkillModal.js';
+import { SkillListingModal } from './SkillListingModal.js';
+import { appendSkillListingList, emptySkillListingList, startSkillListingList, SKILL_LISTING_PAGE_SIZE, type SkillListingListState } from './listing-list.js';
 import { appendSkillMarketList, emptySkillMarketList, skillMarketQuery, skillMarketSceneText, startSkillMarketList, type SkillMarketFilter, type SkillMarketListState } from './market-list.js';
-import { skillsActionsCss, skillsCss, skillsMarketCss } from './styles.js';
+import { skillsActionsCss, skillsCss, skillsListingCss, skillsMarketCss } from './styles.js';
 
 type SkillsPanelInjected = {
   toggleNavigation: () => void;
@@ -32,6 +33,14 @@ function icon(kind: string) { return <Icon name={kind as IconName} />; }
 function messageOf(cause: unknown): string { return cause instanceof Error ? cause.message : '技能操作失败，请重试。'; }
 /** 附件大小展示：与导入预检里的口径一致。 */
 function sizeOf(bytes: number): string { return bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KiB` : `${(bytes / 1024 / 1024).toFixed(1)} MiB`; }
+/** 审批状态徽标配色：按文案关键词归类，后台新增或改名状态时不会丢配色。 */
+function statusToneOf(text: string): string {
+  if (/驳回|拒绝|不通过/u.test(text)) return 'error';
+  if (/通过/u.test(text)) return 'success';
+  if (/撤销|撤回|取消/u.test(text)) return 'neutral';
+  if (/审批|审核/u.test(text)) return 'pending';
+  return 'neutral';
+}
 
 /** Stable brand tone for skills without a bundled marketplace icon. */
 function toneOf(name: string): { background: string; color: string } {
@@ -51,8 +60,8 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  /** 页签：本地技能＝本机发现结果，技能市场＝后台已授权技能。 */
-  const [tab, setTab] = useState<'local' | 'market'>('local');
+  /** 页签：本地技能＝本机发现结果，技能市场＝后台已授权技能，我的申请＝上架审批记录。 */
+  const [tab, setTab] = useState<'local' | 'market' | 'applications'>('local');
   const [query, setQuery] = useState('');
   /** 已选业务场景（多选，数组顺序即用户选择顺序）；空数组等价于「全部」。 */
   const [scenes, setScenes] = useState<readonly string[]>([]);
@@ -87,8 +96,21 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
   const [trashOpen, setTrashOpen] = useState(false);
   const [confirmUninstall, setConfirmUninstall] = useState<{ skill: ManagedSkillSummary; impact: SkillDependencyImpact; market?: { reported: boolean } }>();
   const [creating, setCreating] = useState(false);
-  const [importOpen, setImportOpen] = useState(false);
+  const [listingOpen, setListingOpen] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
+  // 上架申请：表单字典（技能类型 / 审批状态 / 来源节点 / 业务场景树）与我的申请列表。
+  const [listingOptions, setListingOptions] = useState<SkillListingOptions>();
+  const [listingOptionsBusy, setListingOptionsBusy] = useState(false);
+  const [listingOptionsError, setListingOptionsError] = useState('');
+  const [applications, setApplications] = useState<SkillListingListState>(emptySkillListingList);
+  const [applicationBusy, setApplicationBusy] = useState(false);
+  const [applicationMore, setApplicationMore] = useState(false);
+  const [applicationError, setApplicationError] = useState('');
+  const [applicationMoreError, setApplicationMoreError] = useState('');
+  /** 审批状态筛选：空串表示全部；选项来自 ai_status 字典（已剔除草稿）。 */
+  const [applicationStatus, setApplicationStatus] = useState('');
+  /** 打开详情的申请单 id：列表刷新后仍按 id 定位。 */
+  const [applicationId, setApplicationId] = useState<string>();
   const [actionMenu, setActionMenu] = useState<string>();
   const [batchMode, setBatchMode] = useState(false);
   const [selectedNames, setSelectedNames] = useState<readonly string[]>([]);
@@ -99,6 +121,8 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
   const dictionaryRef = useRef<readonly SkillScene[]>([]);
   /** 请求代号：筛选变化时递增，用于丢弃过期响应，避免旧结果覆盖新筛选。 */
   const generationRef = useRef(0);
+  /** 我的申请请求代号：与市场分开，两个页签互不影响。 */
+  const applicationGenerationRef = useRef(0);
   /** 关键词防抖计时器：市场关键词由服务端筛选，输入停顿后才发请求。 */
   const queryTimerRef = useRef<number>(undefined);
 
@@ -165,8 +189,50 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
     return () => { active = false; };
   }, [management, loadMarket]);
   useEffect(() => {
-    if (!marketOn && tab === 'market') setTab('local');
+    if (!marketOn && (tab === 'market' || tab === 'applications')) setTab('local');
   }, [marketOn, tab]);
+
+  /** 表单字典：技能类型 / 审批状态 / 来源节点 / 业务场景树。后台不可用时保持空，入口照常展示但表单会提示。 */
+  const loadListingOptions = useCallback(async () => {
+    if (!marketOn) return;
+    setListingOptionsBusy(true); setListingOptionsError('');
+    try { setListingOptions(await management.listingOptions()); }
+    catch (cause) { console.error('[workdsh:skills:listing-options]', cause); setListingOptionsError(messageOf(cause)); }
+    finally { setListingOptionsBusy(false); }
+  }, [management, marketOn]);
+  useEffect(() => { void loadListingOptions(); }, [loadListingOptions]);
+
+  /**
+   * 我的申请首屏与筛选变化：关键词与审批状态都交给服务端，一律从第 1 页重新取。
+   * 页签上的数字跟着当前查询条件走（服务端返回的 total）。
+   */
+  const loadApplications = useCallback(async (next: { keyword: string; status: string }) => {
+    const generation = ++applicationGenerationRef.current;
+    setApplicationBusy(true);
+    setApplicationError('');
+    setApplicationMoreError('');
+    setApplicationMore(false);
+    try {
+      const keyword = next.keyword.trim();
+      const listed = await management.listingList({
+        page: 1,
+        pageSize: SKILL_LISTING_PAGE_SIZE,
+        ...(next.status ? { status: next.status } : {}),
+        ...(keyword ? { keyword } : {}),
+      });
+      if (applicationGenerationRef.current !== generation) return;
+      setApplications(startSkillListingList(listed));
+    } catch (cause) {
+      if (applicationGenerationRef.current !== generation) return;
+      console.error('[workdsh:skills:applications]', cause);
+      setApplicationError(messageOf(cause));
+    } finally {
+      if (applicationGenerationRef.current === generation) setApplicationBusy(false);
+    }
+  }, [management]);
+
+  // 首屏同时取一页申请：页签上的数量不必等用户点开才是准确值。
+  useEffect(() => { if (marketOn) void loadApplications({ keyword: '', status: '' }); }, [marketOn, loadApplications]);
 
   /** 授权技能索引：本地技能的业务场景标签来自它；失败时保持为空，本地技能就不显示标签。 */
   const loadAuthorized = useCallback(async () => {
@@ -181,6 +247,7 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
     await refresh();
     await loadAuthorized();
     if (marketOn) await loadMarket(filter);
+    if (marketOn && tab === 'applications') await loadApplications({ keyword: query, status: applicationStatus });
   };
   // 加载更多：滚动接近底部时按当前筛选追加下一页；失败只影响加载更多，不清空已有列表。
   const loadMoreMarket = async () => {
@@ -197,6 +264,29 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
       setMarketMoreError(messageOf(cause));
     } finally {
       if (generationRef.current === generation) setMarketMore(false);
+    }
+  };
+  /** 我的申请加载更多：与市场同款滚动加载。 */
+  const loadMoreApplications = async () => {
+    if (applicationBusy || applicationMore || !applications.hasMore) return;
+    const generation = applicationGenerationRef.current;
+    setApplicationMore(true);
+    setApplicationMoreError('');
+    try {
+      const keyword = query.trim();
+      const listed = await management.listingList({
+        page: applications.page + 1,
+        pageSize: SKILL_LISTING_PAGE_SIZE,
+        ...(applicationStatus ? { status: applicationStatus } : {}),
+        ...(keyword ? { keyword } : {}),
+      });
+      if (applicationGenerationRef.current !== generation) return;
+      setApplications(current => appendSkillListingList(current, listed));
+    } catch (cause) {
+      if (applicationGenerationRef.current !== generation) return;
+      setApplicationMoreError(messageOf(cause));
+    } finally {
+      if (applicationGenerationRef.current === generation) setApplicationMore(false);
     }
   };
 
@@ -348,7 +438,7 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
     catch (cause) { setError(messageOf(cause)); }
   };
 
-  const switchTab = (next: 'local' | 'market') => {
+  const switchTab = (next: 'local' | 'market' | 'applications') => {
     setTab(next);
     setQuery('');
     setScenes([]);
@@ -360,6 +450,7 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
     window.clearTimeout(queryTimerRef.current);
     // 进入市场：清空筛选后按服务端最新数据重新取第一页。
     if (next === 'market' && marketOn) void loadMarket({ scenes: [], keyword: '' });
+    if (next === 'applications' && marketOn) void loadApplications({ keyword: '', status: applicationStatus });
   };
   const changeScene = (next: readonly string[]) => {
     setScenes(next);
@@ -370,12 +461,34 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
   };
   const changeQuery = (next: string) => {
     setQuery(next);
-    // 本地页签的关键词是即时本地过滤；市场页签的关键词交给服务端，等输入停顿后再发一次请求。
-    if (tab !== 'market' || !marketOn) return;
+    // 本地页签的关键词是即时本地过滤；市场与我的申请的关键词交给服务端，等输入停顿后再发一次请求。
+    if (tab === 'local' || (!marketOn && tab !== 'applications')) return;
     window.clearTimeout(queryTimerRef.current);
     queryTimerRef.current = window.setTimeout(() => {
-      void loadMarket({ scenes: activeScenes, keyword: next });
+      if (tab === 'market') void loadMarket({ scenes: activeScenes, keyword: next });
+      else if (tab === 'applications') void loadApplications({ keyword: next, status: applicationStatus });
     }, MARKET_QUERY_DEBOUNCE_MS);
+  };
+  /** 审批状态是明确的一次点击，立即取数，并让页签数字跟着新的查询条件更新。 */
+  const changeApplicationStatus = (next: string) => {
+    setApplicationStatus(next);
+    setNotice('');
+    setError('');
+    window.clearTimeout(queryTimerRef.current);
+    void loadApplications({ keyword: query, status: next });
+  };
+  /** 提交申请成功后：回到「我的申请」全量第一页，确保刚提交的记录可见。 */
+  const focusApplications = () => {
+    setTab('applications');
+    setQuery('');
+    setScenes([]);
+    setBatchMode(false);
+    setSelectedNames([]);
+    setApplicationStatus('');
+    setError('');
+    setNotice('');
+    window.clearTimeout(queryTimerRef.current);
+    if (marketOn) void loadApplications({ keyword: '', status: '' });
   };
 
   /** 授权技能索引：标识（skillNameEn）优先、名称（skillName）兜底，用于本地技能的业务场景匹配。 */
@@ -417,12 +530,24 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
    */
   const marketVisible = !marketError && market.items.length > 0;
   const marketEmpty = !marketBusy && !marketError && market.items.length === 0;
+  /** 我的申请：详情按申请单 id 定位；状态文案优先字典，字典缺失时回退后台下发的 status_dictText。 */
+  const applicationEntry = applicationId ? applications.items.find(item => item.id === applicationId) : undefined;
+  // 列表刷新后申请单不再存在（被筛掉或已删除）时关掉详情，避免下次加载时意外弹出。
+  useEffect(() => {
+    if (applicationId && !applications.items.some(item => item.id === applicationId)) setApplicationId(undefined);
+  }, [applicationId, applications]);
+  const applicationStatusOptions = listingOptions?.statuses ?? [];
+  const statusTextOf = (item: SkillListingItem) => applicationStatusOptions.find(option => option.value === item.status)?.label ?? item.statusText ?? item.status;
+  const applicationVisible = !applicationError && applications.items.length > 0;
+  const applicationEmpty = !applicationBusy && !applicationError && applications.items.length === 0;
   const capabilityTabs = [['experts', '专家'], ['skills', '技能'], ['connectors', '连接器']] as const;
   const capabilityKey: Record<string, string> = { experts: 'workdsh-experts', skills: 'workdsh-skills', connectors: 'workdsh-connectors' };
   const counts = tab === 'local'
     ? `共 ${skills.length} 个已安装技能 · 当前显示 ${visibleLocal.length} 个`
-    : `共 ${market.total} 个授权技能 · 当前显示 ${market.items.length} 个`;
-  const countsLine = <div role="status" aria-live="polite" className={error ? 'error counts' : notice ? 'notice counts' : 'muted counts'}>{(tab === 'local' ? busy : marketBusy) ? '正在读取…' : error || notice || counts}</div>;
+    : tab === 'market'
+      ? `共 ${market.total} 个授权技能 · 当前显示 ${market.items.length} 个`
+      : `共 ${applications.total} 条上架申请 · 当前显示 ${applications.items.length} 条`;
+  const countsLine = <div role="status" aria-live="polite" className={error ? 'error counts' : notice ? 'notice counts' : 'muted counts'}>{(tab === 'local' ? busy : tab === 'market' ? marketBusy : applicationBusy) ? '正在读取…' : error || notice || counts}</div>;
   const batchBar = <div className="batch-bar" role="toolbar" aria-label="批量管理技能"><span>已选择 {selectedNames.length} 项</span><Button disabled={!selectedNames.length || busy} onClick={() => void runBatch('enable')}>启用</Button><Button disabled={!selectedNames.length || busy} onClick={() => void runBatch('disable')}>停用</Button><Button tone="danger" className="danger" disabled={!selectedNames.length || busy} onClick={() => setConfirmBatchUninstall(true)}>卸载</Button></div>;
   const renderSkillCard = (skill: ManagedSkillSummary) => {
     const sceneText = scenesOf(skill).join(' · ');
@@ -452,12 +577,30 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
       {failure && !isInstalled(entry) ? <p className="card-error" role="alert">{failure}</p> : null}
     </article>;
   };
+  /** 我的一条上架申请：卡片右上角与详情都放「撤销申请」占位按钮。 */
+  const renderApplicationCard = (item: SkillListingItem) => {
+    const sceneText = item.sceneLabels.join(' · ');
+    const statusText = statusTextOf(item);
+    return <article className="card application-card" key={item.id}>
+      <div className="card-top">
+        <button className="card-open" aria-label={`查看申请 ${item.title}`} onClick={() => setApplicationId(item.id)}><SkillMark name={item.slug} title={item.title} iconUrl={item.icon} /><span className="card-title"><strong title={item.title}>{item.title}</strong><small className="slug">{item.slug}</small>{sceneText ? <small className="tag" title={sceneText}>{sceneText}</small> : null}</span></button>
+        <Button className="withdraw" aria-label={`撤销申请 ${item.title}`} onClick={() => setNotice('撤销申请功能暂未开放。')}>撤销申请</Button>
+      </div>
+      <p className="muted">{item.description}</p>
+      <div className="application-meta">
+        <span className={`status-badge ${statusToneOf(statusText)}`}>{statusText}</span>
+        {item.version ? <small>版本 {item.version}</small> : null}
+        {item.createdAt ? <small>{item.createdAt}</small> : null}
+      </div>
+    </article>;
+  };
   return <section className="wd-skills" data-testid="workdsh-skills" onScroll={event => {
-    if (tab !== 'market' || !marketOn || marketBusy || marketMore || !market.hasMore) return;
     const node = event.currentTarget;
-    if (node.scrollHeight - node.scrollTop - node.clientHeight < MARKET_SCROLL_THRESHOLD) void loadMoreMarket();
+    if (node.scrollHeight - node.scrollTop - node.clientHeight >= MARKET_SCROLL_THRESHOLD) return;
+    if (tab === 'market' && marketOn && !marketBusy && !marketMore && market.hasMore) void loadMoreMarket();
+    if (tab === 'applications' && marketOn && !applicationBusy && !applicationMore && applications.hasMore) void loadMoreApplications();
   }}>
-    <style>{skillsCss + skillsActionsCss + skillsMarketCss}</style>
+    <style>{skillsCss + skillsActionsCss + skillsMarketCss + skillsListingCss}</style>
     <header className="cap-header">
       <button className="nav-toggle" onClick={toggleNavigation} aria-label="切换导航">导航</button>
       {capabilityTabs.map(([key, label]) => {
@@ -471,21 +614,24 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
       <Input ref={search} className="search" aria-label="搜索技能" placeholder="搜索技能" value={query} onChange={event => changeQuery(event.currentTarget.value)} />
       <Button className={batchMode ? 'batch-toggle active' : 'batch-toggle'} onClick={toggleBatch}>{batchMode ? '退出批量' : '批量管理'}</Button>
       <Button className="trash-button" onClick={() => void openTrash()}>最近卸载</Button>
-      <div className="add-menu-wrap" ref={addMenu}><Button variant="primary" className="add-skill" disabled={creating} aria-haspopup="menu" aria-expanded={addMenuOpen} onClick={() => setAddMenuOpen(open => !open)}>＋ 添加技能</Button>{addMenuOpen && <div className="add-menu" role="menu"><button role="menuitem" onClick={() => { setAddMenuOpen(false); setImportOpen(true); }}>上传技能</button><button role="menuitem" onClick={() => void beginSkillTask('create')}>创建技能</button></div>}</div>
+      <div className="add-menu-wrap" ref={addMenu}><Button variant="primary" className="add-skill" disabled={creating} aria-haspopup="menu" aria-expanded={addMenuOpen} onClick={() => setAddMenuOpen(open => !open)}>＋ 添加技能</Button>{addMenuOpen && <div className="add-menu" role="menu"><button role="menuitem" onClick={() => { setAddMenuOpen(false); setListingOpen(true); }}>技能上架申请</button><button role="menuitem" onClick={() => void beginSkillTask('create')}>创建技能</button></div>}</div>
     </header>
     <div className="section-head"><h1>技能管理</h1><Button className="refresh" onClick={() => void reloadAll()} disabled={busy}>刷新</Button></div>
     <nav className="source-tabs" aria-label="技能来源">
       <button className={tab === 'local' ? 'active' : ''} aria-current={tab === 'local' ? 'page' : undefined} onClick={() => switchTab('local')}>本地技能<i className="count" title="本机已安装技能数量">{skills.length}</i></button>
       {marketOn ? <button className={tab === 'market' ? 'active' : ''} aria-current={tab === 'market' ? 'page' : undefined} onClick={() => switchTab('market')}>技能市场{/* 数量恒取后台授权总数，首次加载完成前不显示 0 */}{marketBusy && !market.total ? null : <i className="count" title="后台已授权技能数量">{market.total}</i>}</button> : null}
+      {marketOn ? <button className={tab === 'applications' ? 'active' : ''} aria-current={tab === 'applications' ? 'page' : undefined} onClick={() => switchTab('applications')}>我的申请{/* 数量跟着当前查询条件走 */}{applicationBusy && !applications.total ? null : <i className="count" title="上架申请数量（随查询条件更新）">{applications.total}</i>}</button> : null}
     </nav>
-    <CategoryBar categories={options} values={activeScenes} onChange={changeScene} />
+    {tab === 'applications'
+      ? <div className="listing-toolbar"><label className="listing-status-filter"><span>审批状态</span><Select aria-label="审批状态" value={applicationStatus} disabled={listingOptionsBusy} onChange={event => changeApplicationStatus(event.currentTarget.value)}><option value="">全部</option>{applicationStatusOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</Select></label>{listingOptionsError ? <span className="muted">状态字典读取失败，可按「刷新」重试。</span> : null}</div>
+      : <CategoryBar categories={options} values={activeScenes} onChange={changeScene} />}
     {tab === 'local' && batchMode ? batchBar : null}
     {countsLine}
 
     {tab === 'local' ? <>
-      {!busy && !visibleLocal.length ? <div className="empty"><strong>{skills.length ? '没有匹配的技能' : '尚未发现已安装技能'}</strong><span className="muted">{skills.length ? '换个关键词，或点「全部」清空筛选。' : '点「＋ 添加技能」上传或创建技能。'}</span></div> : null}
+      {!busy && !visibleLocal.length ? <div className="empty"><strong>{skills.length ? '没有匹配的技能' : '尚未发现已安装技能'}</strong><span className="muted">{skills.length ? '换个关键词，或点「全部」清空筛选。' : '点「＋ 添加技能」提交上架申请或创建技能。'}</span></div> : null}
       {visibleLocal.length ? <div className="grid">{visibleLocal.map(renderSkillCard)}</div> : null}
-    </> : <>
+    </> : tab === 'market' ? <>
       {marketError ? <p className="error" role="alert">{marketError}<Button className="secondary" disabled={marketBusy} onClick={() => void loadMarket(filter)}>重试</Button></p> : null}
       {marketMoreError ? <p className="error" role="alert">{marketMoreError}<Button className="secondary" disabled={marketMore} onClick={() => void loadMoreMarket()}>重试</Button></p> : null}
       {/* 首次加载才显示读取提示；已有卡片时后台静默重取，列表原地保留直到新结果替换它。 */}
@@ -493,6 +639,13 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
       {marketVisible ? <div className="grid">{market.items.map(renderMarketCard)}</div> : null}
       {marketVisible && !marketBusy ? <div className="market-foot" role="status">{marketMore ? <span className="muted">正在加载更多…</span> : market.hasMore ? <span className="muted">继续向下滚动加载更多</span> : <span className="muted">已加载全部 {market.total} 个技能</span>}</div> : null}
       {marketEmpty ? <div className="empty"><strong>{market.total ? '没有匹配的技能' : '市场暂无可用的技能'}</strong><span className="muted">{market.total ? '换个关键词，或点「全部」清空筛选。' : '可以稍后重试，或联系管理员确认技能授权情况。'}</span></div> : null}
+    </> : <>
+      {applicationError ? <p className="error" role="alert">{applicationError}<Button className="secondary" disabled={applicationBusy} onClick={() => void loadApplications({ keyword: query, status: applicationStatus })}>重试</Button></p> : null}
+      {applicationMoreError ? <p className="error" role="alert">{applicationMoreError}<Button className="secondary" disabled={applicationMore} onClick={() => void loadMoreApplications()}>重试</Button></p> : null}
+      {applicationBusy && !applications.items.length ? <div className="market-foot" role="status"><span className="muted">正在读取我的申请…</span></div> : null}
+      {applicationVisible ? <div className="grid">{applications.items.map(renderApplicationCard)}</div> : null}
+      {applicationVisible && !applicationBusy ? <div className="market-foot" role="status">{applicationMore ? <span className="muted">正在加载更多…</span> : applications.hasMore ? <span className="muted">继续向下滚动加载更多</span> : <span className="muted">已加载全部 {applications.total} 条申请</span>}</div> : null}
+      {applicationEmpty ? <div className="empty"><strong>{applications.total ? '没有匹配的申请' : '还没有上架申请'}</strong><span className="muted">{applications.total ? '换个关键词或审批状态再试。' : '点「＋ 添加技能 → 技能上架申请」提交，审批通过后可在技能市场安装。'}</span></div> : null}
     </>}
 
     <Modal open={Boolean(marketEntry)} label={marketEntry ? `${marketEntry.title} 技能详情` : '技能详情'} className="skill-detail-dialog" onClose={() => { setMarketDetailId(undefined); setMarketDoc(undefined); setMarketDocError(''); }}>
@@ -516,9 +669,16 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
         <div className="detail-body">{resource ? <><div className="resource-editor-head"><Button onClick={() => setResource(undefined)}>返回概述</Button><strong>{resource.path}</strong></div><label className="editor-label" htmlFor="resource-document">资源文件</label><Textarea id="resource-document" className="skill-editor" value={resourceDocument} onChange={event => setResourceDocument(event.currentTarget.value)} spellCheck={false} /><div className="editor-actions"><Button onClick={() => { setResourceDocument(resource.document); setResource(undefined); }}>取消</Button><Button variant="primary" className="save" disabled={busy || (!resource.isNew && resourceDocument === resource.document)} onClick={() => void saveResource()}>保存资源</Button></div></> : editing ? <><label className="editor-label" htmlFor="skill-document">SKILL.md</label><Textarea id="skill-document" className="skill-editor" value={skillDocument} onChange={event => setSkillDocument(event.currentTarget.value)} spellCheck={false} /><div className="editor-actions"><Button onClick={() => { setSkillDocument(selected.document ?? ''); setEditing(false); }}>取消</Button><Button variant="primary" className="save" disabled={busy || skillDocument === selected.document} onClick={() => void save()}>保存并重新发现</Button></div></> : <><dl><dt>名称</dt><dd>{selected.name}</dd><dt>业务场景</dt><dd>{scenesOf(selected).join(' · ') || '未标注'}</dd><dt>状态</dt><dd>{selected.state === 'enabled' ? '已启用' : selected.state === 'disabled' ? '已停用' : selected.state === 'invalid' ? '需要修复' : '只读'}</dd><dt>调用方式</dt><dd><code className="command">/{selected.name}</code></dd></dl>{selected.diagnostics?.length ? <section className="validation-errors"><h3>校验问题</h3><ul>{selected.diagnostics.map(item => <li key={`${item.code}-${item.path ?? ''}`}>{item.message}</li>)}</ul><Button onClick={() => setEditing(true)}>修复 SKILL.md</Button></section> : null}{selected.manageable && <section className="resource-section"><h3>资源文件</h3>{selected.resources.length ? <div className="resource-list">{selected.resources.map(path => <Button key={path} onClick={() => void openResource(path)}>{path}</Button>)}</div> : <p className="muted">暂无附加资源</p>}<div className="new-resource"><Input aria-label="新资源路径" placeholder="例如 references/guide.md" value={newResourcePath} onChange={event => setNewResourcePath(event.currentTarget.value)} /><Button disabled={!newResourcePath.trim()} onClick={beginResource}>新建资源</Button></div></section>}<pre className="skill-document">{selected.document ?? selected.whenToUse ?? selected.description}</pre></>}{error && <p className="error" role="alert">{error}</p>}</div>
       </article>}
     </Modal>
+    <Modal open={Boolean(applicationEntry)} label={applicationEntry ? `${applicationEntry.title} 上架申请` : '上架申请详情'} className="skill-detail-dialog" onClose={() => setApplicationId(undefined)}>
+      {applicationEntry && <article data-testid="skill-listing-detail"><div className="detail-hero"><SkillMark large name={applicationEntry.slug} title={applicationEntry.title} iconUrl={applicationEntry.icon} /><div className="detail-title"><h1>{applicationEntry.title}</h1><p className="slug">{applicationEntry.slug}</p><div className="detail-actions"><span className={`status-badge ${statusToneOf(statusTextOf(applicationEntry))}`}>{statusTextOf(applicationEntry)}</span><Button className="withdraw" onClick={() => setNotice('撤销申请功能暂未开放。')}>撤销申请</Button></div></div></div>
+        <p className="detail-summary">{applicationEntry.description}</p>
+        <h2 className="detail-section-title">{icon('library')}申请信息</h2>
+        <div className="detail-body"><dl><dt>名称</dt><dd>{applicationEntry.title}</dd><dt>英文名称</dt><dd>{applicationEntry.slug}</dd><dt>版本</dt><dd>{applicationEntry.version ?? '未标注'}</dd><dt>Skill 类型</dt><dd>{applicationEntry.skillTypeText ?? applicationEntry.skillType ?? '未标注'}</dd><dt>业务场景</dt><dd>{applicationEntry.sceneLabels.join(' · ') || '未标注'}</dd><dt>来源节点</dt><dd>{applicationEntry.sourceNodeText ?? applicationEntry.sourceNode ?? '未标注'}</dd><dt>自定义标签</dt><dd>{applicationEntry.tags.join(' · ') || '未标注'}</dd><dt>审批状态</dt><dd>{statusTextOf(applicationEntry)}</dd><dt>提交时间</dt><dd>{applicationEntry.createdAt ?? '未标注'}</dd><dt>上架原因</dt><dd>{applicationEntry.reason ?? '未填写'}</dd><dt>审批意见</dt><dd>{applicationEntry.comments ?? '暂无'}</dd><dt>附件</dt><dd>{applicationEntry.files.length ? applicationEntry.files.map(file => `${file.fileName}${file.size ? `（${sizeOf(file.size)}）` : ''}`).join('、') : '无'}</dd></dl></div>
+      </article>}
+    </Modal>
     <Modal open={Boolean(confirmUninstall)} label="确认卸载技能" className="confirm-dialog" onClose={() => setConfirmUninstall(undefined)}>{confirmUninstall && <div><h2>卸载 {confirmUninstall.skill.name}？</h2><p>技能将移入回收目录，并从所有任务的可调用技能中移除。</p>{confirmUninstall.impact.dependents.length ? <div className="dependency-impact"><strong>依赖影响</strong><ul>{confirmUninstall.impact.dependents.map(item => <li key={`${item.kind}-${item.id}`}>{item.label}{item.blocking ? '（需先解除）' : ''}</li>)}</ul></div> : <p className="dependency-clear">未发现依赖此技能的对象。</p>}<div className="confirm-actions"><Button onClick={() => setConfirmUninstall(undefined)}>取消</Button><Button tone="danger" className="danger solid" disabled={confirmUninstall.impact.dependents.some(item => item.blocking)} onClick={() => void uninstall()}>确认卸载</Button></div></div>}</Modal>
     <Modal open={confirmBatchUninstall} label="确认批量卸载技能" className="confirm-dialog" onClose={() => setConfirmBatchUninstall(false)}><div><h2>卸载所选 {selectedNames.length} 个技能？</h2><p>每个成功卸载的技能会分别进入可恢复目录；失败项会保留选择并显示原因。</p><div className="confirm-actions"><Button onClick={() => setConfirmBatchUninstall(false)}>取消</Button><Button tone="danger" className="danger solid" onClick={() => void runBatch('uninstall')}>确认卸载</Button></div></div></Modal>
     <Modal open={trashOpen} label="最近卸载的技能" className="trash-dialog" onClose={() => setTrashOpen(false)}><h2>最近卸载</h2>{trash.length ? <div className="trash-list">{trash.map(entry => <div key={entry.id}><div><strong>{entry.name}</strong><small>{new Date(entry.removedAt).toLocaleString()} · {entry.previousState === 'enabled' ? '原为启用' : '原为停用'}</small></div><Button disabled={busy} onClick={() => void restore(entry)}>恢复</Button></div>)}</div> : <p className="muted">没有可恢复的技能。</p>}{error && <p className="error" role="alert">{error}</p>}</Modal>
-    <ImportSkillModal open={importOpen} management={management} onClose={() => setImportOpen(false)} onInstalled={async name => { await refresh(); await openDetail(name); }} />
+    <SkillListingModal open={listingOpen} management={management} options={listingOptions} optionsError={listingOptionsError} onReloadOptions={() => void loadListingOptions()} onClose={() => setListingOpen(false)} onSubmitted={focusApplications} />
   </section>;
 }

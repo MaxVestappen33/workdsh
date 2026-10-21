@@ -5,6 +5,7 @@ export const connectorDefinitionSchema = z.object({
   id: z.string().min(1).max(64),
   title: z.string().min(1).max(80),
   description: z.string().max(240),
+  /** 官方 MCP 客户端要求 `[A-Za-z0-9_-]{1,32}`（见 dsh-mcp-client 的 Config schema），这里保持同一约束。 */
   serverName: z.string().regex(/^[A-Za-z0-9_-]{1,32}$/),
   transport: z.enum(['stdio', 'streamable-http']),
   command: z.string().max(1024).optional(),
@@ -15,6 +16,11 @@ export const connectorDefinitionSchema = z.object({
   categories: z.array(z.string().min(1).max(64)).max(8).optional(),
   /** 来源市场条目 id。存在即表示该实例由市场安装而来，用于「已安装」判定与卸载。 */
   originId: z.string().max(128).optional(),
+  /**
+   * 市场原始 serviceId。仅当市场值超出本地 serverName 约束（[A-Za-z0-9_-]{1,32}）时落盘，
+   * 卸载上报仍回传原始值；两者一致时不写。
+   */
+  marketServiceId: z.string().max(128).optional(),
   enabled: z.boolean(),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),

@@ -62,6 +62,19 @@ async function availablePort(port: number): Promise<number | undefined> {
   })
 }
 
+/**
+ * 刚被回收的遗留 Host 可能还没释放监听套接字：给系统一点时间再判定“地址被占用”。
+ * 只用于已有 Home 的既有地址，避免把“刚结束”误判成“被其它应用占用”而拒绝启动。
+ */
+async function availablePortSoon(port: number, timeoutMs = 800): Promise<number | undefined> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const selected = await availablePort(port)
+    if (selected !== undefined || Date.now() >= deadline) return selected
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+}
+
 /** Existing Homes keep their origin; a conflicting owner is never stopped. */
 export async function prepareRuntimePort(home: string, userPatchFiles: string[], options: { preferredPort?: number, existingHome?: boolean } = {}): Promise<RuntimePort> {
   const preferredPort = options.preferredPort ?? 3080
@@ -73,11 +86,12 @@ export async function prepareRuntimePort(home: string, userPatchFiles: string[],
   const state = join(home, STATE_FILE)
   let port = await savedPort(state)
   if (port !== undefined) {
-    if (await availablePort(port) === undefined) throw new Error(`此工作区原有地址 ${HOST}:${port} 正被占用。请先关闭占用该地址的应用后重试；为保留页面数据，本次未切换地址，也未停止其他进程。`)
+    if (await availablePortSoon(port) === undefined) throw new Error(`此工作区原有地址 ${HOST}:${port} 正被占用。请先关闭占用该地址的应用后重试；为保留页面数据，本次未切换地址，也未停止其他进程。`)
   } else {
     port = await availablePort(preferredPort)
     // Before Home-owned records existed, this Desktop used 3080. Preserve
     // that origin for an existing Profile instead of hiding its localStorage.
+    if (port === undefined && options.existingHome) port = await availablePortSoon(preferredPort)
     if (port === undefined && options.existingHome) throw new Error(`已有工作区原地址 ${HOST}:${preferredPort} 正被占用。为保留页面数据，本次未切换地址，也未停止其他进程；请关闭占用该地址的应用后重试。`)
     port ??= await availablePort(0)
     if (port === undefined) throw new Error('无法为工作区分配本机端口，请稍后重试。')

@@ -6,7 +6,7 @@ import { cleanOwnedProcessTree, stopOwnedProcess, trackOwnedProcess, selectOwned
 vi.mock('node:child_process', () => ({ spawn: vi.fn(), spawnSync: vi.fn() }))
 const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
 afterEach(() => { Object.defineProperty(process, 'platform', platform); vi.restoreAllMocks() })
-function fixture(rows: WindowsProcessIdentity[], options: { exited?: boolean, taskkillCode?: number, queryFails?: boolean, osPresent?: boolean } = {}) {
+function fixture(rows: WindowsProcessIdentity[], options: { exited?: boolean, taskkillCode?: number, queryFails?: boolean, osPresent?: boolean, unreadable?: boolean } = {}) {
   Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
   vi.spyOn(Date, 'now').mockReturnValue(1000)
   const missing = Object.assign(new Error('missing'), { code: 'ESRCH' })
@@ -28,7 +28,9 @@ function fixture(rows: WindowsProcessIdentity[], options: { exited?: boolean, ta
       } else if (options.queryFails) {
         task.stderr.emit('data', Buffer.from('Access denied')); task.emit('close', 1)
       } else {
-        task.stdout.emit('data', Buffer.from(JSON.stringify(rows))); task.emit('close', 0)
+        // unreadable：模拟保护区/其它用户进程（创建时间读不到），这类行不能参与归属判定。
+        const payload = options.unreadable ? [...rows, { pid: 424242, ppid: 1, createdAt: null }] : rows
+        task.stdout.emit('data', Buffer.from(JSON.stringify(payload))); task.emit('close', 0)
       }
     })
     return task as unknown as ChildProcess
@@ -104,6 +106,21 @@ it('does not signal a Windows process without a carrier ownership record', async
   fixture([])
   const child = { pid: 999999 } as ChildProcess
   await expect(stopOwnedProcess(child)).rejects.toThrow('缺少所有权记录')
+})
+
+it('accepts an exited root whose PID is now held by a process we cannot identify', async () => {
+  // 现场回归：本机 Host 已经退出，快照里没有任何本次启动的进程，但系统探测到同名 PID
+  // （被复用的其它进程）。此前会判定「清理未确认」，把退出流程卡死。
+  const { child, killed } = fixture([], { exited: true, osPresent: true })
+  await expect(cleanOwnedProcessTree(child)).resolves.toBeUndefined()
+  expect(killed).toEqual([])
+})
+
+it('ignores process rows without a readable creation time instead of failing the cleanup', async () => {
+  // 创建时间读不到的行无法证明归属：跳过它，而不是让整次清理失败。
+  const { child, killed } = fixture([], { exited: true, osPresent: true, unreadable: true })
+  await expect(cleanOwnedProcessTree(child)).resolves.toBeUndefined()
+  expect(killed).toEqual([])
 })
 
 it('keeps old orphaned descendants while excluding children created by a reused parent generation', () => {

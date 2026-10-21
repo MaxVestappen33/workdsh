@@ -200,3 +200,108 @@ export const skillsMarketCss = `${modalCss}
 }
 ${controlsCss}
 `;
+
+/**
+ * 技能上架申请：表单弹窗、「我的申请」页签的状态筛选与审批状态徽标。
+ * 表单沿用技能详情弹窗的视觉语言（圆角卡片 + 紧凑字段），只新增结构类名。
+ */
+export const skillsListingCss = `${modalCss}
+@layer workdsh-business {
+
+/* 弹窗外壳：固定头尾，只有内容区滚动（外壳规则与公共 Modal 冲突，必须放在 @layer 之外）。 */
+.skill-listing-dialog *{box-sizing:border-box}
+.skill-listing-dialog:focus-visible{outline:none}
+.skill-listing-dialog .wd-dialog-close{top:16px;right:16px;width:32px;height:32px;min-height:0;padding:0;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-tertiary)}
+.skill-listing-dialog .wd-dialog-close span{font-size:25px;line-height:1}
+.skill-listing-dialog .wd-dialog-close:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.skill-listing-dialog .listing-header{flex:none;padding:24px 64px 16px 24px}
+.skill-listing-dialog .listing-header h2{margin:0 0 4px;font-size:20px;line-height:28px;font-weight:600}
+.skill-listing-dialog .listing-header p{margin:0;font-size:13px;color:var(--dsw-alias-label-tertiary)}
+.skill-listing-dialog .listing-content{flex:1 1 auto;min-height:0;overflow:auto;display:grid;gap:16px;padding:0 24px 24px;scrollbar-width:thin;scrollbar-color:var(--dsw-alias-border-l2) transparent}
+/* 分区卡片：左侧色条标题 + 两列字段。 */
+.skill-listing-dialog .listing-section{padding:16px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-2)}
+.skill-listing-dialog .listing-section h3{display:flex;align-items:center;gap:8px;margin:0 0 16px;font-size:14px;font-weight:600}
+.skill-listing-dialog .listing-section h3 i{width:3px;height:14px;border-radius:2px;background:var(--dsw-alias-brand-primary)}
+.skill-listing-dialog .listing-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.skill-listing-dialog .listing-field{display:flex;flex-direction:column;gap:6px;min-width:0}
+.skill-listing-dialog .listing-field>span{font-size:13px;color:var(--dsw-alias-label-secondary)}
+.skill-listing-dialog .listing-field em{font-style:normal;color:var(--dsw-alias-state-error-primary)}
+.skill-listing-dialog .listing-field small{font-size:11px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
+.skill-listing-dialog .listing-field-wide{grid-column:1/-1}
+.skill-listing-dialog .listing-textarea{min-height:84px;resize:vertical}
+.skill-listing-dialog .listing-counter{align-self:flex-end}
+/* 图标：圆形预览 + 上传/清除；未上传时显示名称首字。 */
+.skill-listing-dialog .listing-icon-field{display:flex;gap:14px;align-items:flex-start;margin-bottom:16px}
+.skill-listing-dialog .listing-icon{display:grid;place-items:center;width:64px;height:64px;flex:none;overflow:hidden;border:1px dashed var(--dsw-alias-border-l2);border-radius:50%;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-brand-text);font-size:22px;font-weight:700}
+.skill-listing-dialog .listing-icon img{width:100%;height:100%;object-fit:cover}
+/* 自定义标签：整块是一行输入框，标签在行内换行排列。 */
+.skill-listing-dialog .listing-icon-actions{display:flex;flex-direction:column;gap:6px;min-width:0}
+.skill-listing-dialog .listing-icon-buttons{display:flex;gap:8px}
+/* 业务场景多选树：触发器 + 内联展开的树（内联而非浮层，避免被弹窗滚动区裁切）。 */
+.skill-listing-dialog .scene-select{position:relative}
+.skill-listing-dialog .scene-trigger{display:flex;align-items:center;gap:8px;width:100%;min-height:36px;padding:6px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-1);text-align:left}
+.skill-listing-dialog .scene-trigger span:first-child{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.skill-listing-dialog .scene-trigger .placeholder{color:var(--dsw-alias-label-tertiary)}
+.skill-listing-dialog .scene-panel{margin-top:6px;max-height:280px;overflow:auto;padding:8px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-1)}
+.skill-listing-dialog .scene-row{display:flex;align-items:center;gap:6px;min-height:32px}
+.skill-listing-dialog .scene-expand{display:grid;place-items:center;width:20px;height:20px;min-height:0;padding:0;border:0;background:transparent;color:var(--dsw-alias-label-tertiary)}
+.skill-listing-dialog .scene-expand.placeholder{visibility:hidden}
+.skill-listing-dialog .scene-expand svg{transition:transform .12s ease}
+.skill-listing-dialog .scene-expand.open svg{transform:rotate(90deg)}
+.skill-listing-dialog .scene-label{display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px}
+.skill-listing-dialog .scene-label input{width:15px;height:15px;min-height:0;padding:0;margin:0}
+/* 技能文件：拖拽区与预检结果二选一。 */
+.skill-listing-dialog .listing-dropzone{display:grid;place-content:center;justify-items:center;gap:6px;width:100%;min-height:132px;border:1px dashed var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-1);cursor:pointer}
+.skill-listing-dialog .listing-dropzone.dragging{border-color:var(--dsw-alias-brand-primary)}
+.skill-listing-dialog .listing-dropzone .upload-glyph{font-size:24px;color:var(--dsw-alias-label-tertiary)}
+.skill-listing-dialog .listing-dropzone strong{font-size:15px;font-weight:500}
+.skill-listing-dialog .listing-file{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 14px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-1)}
+.skill-listing-dialog .listing-file-main{display:flex;flex-direction:column;gap:2px;min-width:0}
+.skill-listing-dialog .listing-file-main strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.skill-listing-dialog .listing-file-main small{font-size:11px;color:var(--dsw-alias-label-tertiary)}
+.skill-listing-dialog .listing-file-main .slug{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.skill-listing-dialog .listing-file-actions{margin-top:10px}
+.skill-listing-dialog .visually-hidden{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.skill-listing-dialog .listing-footer{flex:none;display:flex;justify-content:flex-end;gap:8px;padding:16px 24px;border-top:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1)}
+.skill-listing-dialog .listing-submit{background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-inverted);border-color:var(--dsw-alias-border-l2);font-weight:600}
+.skill-listing-dialog button:disabled{opacity:.5;cursor:default}
+.skill-listing-dialog .error{margin:0;color:var(--dsw-alias-state-error-primary);font-size:13px}
+.skill-listing-dialog .error button{margin-left:10px}
+/* 我的申请：状态筛选、审批状态徽标与卡片底部信息。 */
+.wd-skills .listing-toolbar{display:flex;align-items:center;gap:12px;margin:0 0 18px;min-height:36px}
+.wd-skills .listing-status-filter{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--dsw-alias-label-secondary)}
+.wd-skills .listing-status-filter select{min-height:34px;padding:4px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font:inherit}
+.wd-skills .status-badge,.skill-detail-dialog .status-badge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:500;white-space:nowrap}
+.wd-skills .status-badge.pending,.skill-detail-dialog .status-badge.pending{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 18%,transparent);color:var(--dsw-alias-state-warn-primary)}
+.wd-skills .status-badge.success,.skill-detail-dialog .status-badge.success{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 16%,transparent);color:var(--dsw-alias-state-success-primary)}
+.wd-skills .status-badge.error,.skill-detail-dialog .status-badge.error{background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 14%,transparent);color:var(--dsw-alias-state-error-primary)}
+.wd-skills .status-badge.neutral,.skill-detail-dialog .status-badge.neutral{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary)}
+.wd-skills .application-card .application-meta{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-top:10px}
+.wd-skills .application-card .application-meta small{color:var(--dsw-alias-label-tertiary);font-size:11px}
+.wd-skills .application-card .withdraw{flex:none;min-height:30px;height:30px;padding:0 10px;font-size:12px;color:var(--dsw-alias-label-secondary)}
+.wd-skills .application-card .withdraw:hover{color:var(--dsw-alias-label-primary)}
+@media(max-width:640px){.wd-dialog.skill-listing-dialog{width:calc(100vw - 24px);max-height:calc(100dvh - 24px)}.skill-listing-dialog .listing-header{padding:20px 60px 14px 20px}.skill-listing-dialog .listing-content{padding:0 20px 20px}.skill-listing-dialog .listing-footer{padding:14px 20px}.skill-listing-dialog .listing-grid{grid-template-columns:1fr}}
+
+}
+${controlsCss}
+/*
+ * 表单控件与标签容器必须写在 @layer 之外：controlsCss 不分层，未分层的声明优先于层内样式，
+ * 否则 .wd-form-textarea 的 elevation 阴影会把文本框渲染成粗黑边。
+ */
+.wd-dialog.skill-listing-dialog{width:min(760px,calc(100vw - 40px));height:auto;max-height:calc(100dvh - 48px);padding:0;border-radius:16px;display:flex;flex-direction:column;overflow:hidden;background:var(--dsw-alias-bg-layer-1);font:14px/22px "PingFang SC","Microsoft YaHei",sans-serif}
+.skill-listing-dialog :is(select,textarea){width:100%;min-height:36px;padding:6px 10px;border:1px solid var(--dsw-alias-border-l4);border-radius:12px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;box-shadow:none}
+.skill-listing-dialog :is(select,textarea):focus-visible{border-color:var(--dsw-alias-state-business-primary);outline:none}
+/* Input 组件是「外层 span(.wd-form-input) + 内层 input」：边框只画在外层，内层保持透明，避免出现双框。 */
+.skill-listing-dialog .wd-form-input{display:flex;align-items:center;width:100%;height:36px;min-height:36px;padding:0 10px;border:1px solid var(--dsw-alias-border-l4);border-radius:12px;background:var(--dsw-alias-bg-layer-1);box-shadow:none}
+.skill-listing-dialog .wd-form-input:focus-within{border-color:var(--dsw-alias-state-business-primary)}
+.skill-listing-dialog .wd-form-input input{flex:1;width:auto;min-width:0;height:100%;min-height:0;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none;outline:none;font:inherit;color:var(--dsw-alias-label-primary)}
+.skill-listing-dialog .wd-form-input input:focus-visible{outline:none}
+.skill-listing-dialog .listing-tags{display:flex;align-items:center;flex-wrap:wrap;gap:6px;width:100%;min-height:36px;padding:4px 8px;border:1px solid var(--dsw-alias-border-l4);border-radius:12px;background:var(--dsw-alias-bg-layer-1);cursor:text}
+.skill-listing-dialog .listing-tags:focus-within{border-color:var(--dsw-alias-state-business-primary)}
+.skill-listing-dialog .listing-tags .wd-form-input{flex:1 1 160px;width:auto;min-width:160px;height:26px;min-height:26px;padding:0 4px;border:0;border-radius:0;background:transparent}
+.skill-listing-dialog .listing-tag{display:inline-flex;align-items:center;gap:4px;padding:1px 6px;border:1px solid var(--dsw-alias-border-l2);border-radius:4px;background:var(--dsw-alias-bg-layer-2);font-size:12px;line-height:20px}
+.skill-listing-dialog .listing-tag button{width:16px;height:16px;min-height:0;padding:0;border:0;border-radius:50%;background:transparent;color:var(--dsw-alias-label-tertiary);font-size:13px;line-height:1}
+.skill-listing-dialog .listing-radio-group{display:flex;align-items:center;gap:20px;min-height:36px}
+.skill-listing-dialog .listing-radio{display:inline-flex;align-items:center;gap:6px;font-size:13px;cursor:pointer}
+.skill-listing-dialog .listing-radio input{width:15px;height:15px;min-width:0;min-height:0;margin:0;padding:0;border:0;background:transparent}
+`;

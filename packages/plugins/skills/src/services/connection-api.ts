@@ -2,13 +2,17 @@ import type { Context } from '@deepseek-ai/cordis';
 import type { ConnectionRpcResult, HostConnectionHandle } from '@deepseek-ai/dsh-client-connection';
 import { SkillMarketRequestError } from '../market.js';
 import type { SkillMarket, SkillMarketUninstall } from './market-entry.js';
+import { SkillListingRequestError, type SkillListing } from './listing-entry.js';
 import type { SkillInstallScope, SkillManagementEndpoint, SkillManagementService } from '../shared.js';
 import { skillCatalogIconPath } from './catalog.js';
 
 export const skillManagementPath = '/api/workdsh-skills';
 export const skillImportPath = '/api/workdsh-skills/import';
+export const skillListingUploadPath = '/api/workdsh-skills/listing-upload';
 const maximumBodyBytes = 1024 * 1024 + 64 * 1024;
 const maximumUploadBytes = 50 * 1024 * 1024;
+/** 图标上传上限：与表单约定保持一致（≤2 MiB 的 png/jpeg）。 */
+const maximumIconBytes = 2 * 1024 * 1024;
 
 const ok = <T>(value: T): ConnectionRpcResult<T> => ({ ok: true, value });
 const fail = (code: string, message: string): ConnectionRpcResult<never> => ({ ok: false, error: { code, message, details: {} } });
@@ -18,6 +22,8 @@ const nameFrom = (payload: unknown): string | undefined => typeof record(payload
 function publicFailure(error: unknown): ConnectionRpcResult<never> {
   if (error instanceof DOMException && error.name === 'AbortError') return fail('skill/request-cancelled', '操作已取消。');
   if (error instanceof SkillMarketRequestError) return fail(error.code, error.message);
+  // 上架申请服务的错误码与文案在服务内已经归一，直接透传，避免再维护一份映射表。
+  if (error instanceof SkillListingRequestError) return fail(error.code, error.message);
   const code = error instanceof Error && error.message.startsWith('skill/') ? error.message : 'skill/internal';
   const messages: Record<string, string> = {
     'skill/invalid-name': '技能名称无效。',
@@ -62,6 +68,8 @@ function publicFailure(error: unknown): ConnectionRpcResult<never> {
     'skill/market-file-too-large': '技能文件超过 50 MiB 上限，不能安装。',
     'skill/market-item-unknown': '市场条目信息已失效，请刷新技能市场后重试。',
     'skill/market-unavailable': '当前环境未接入技能市场。',
+    'skill/listing-upload-empty': '上传的文件为空。',
+    'skill/listing-upload-too-large': '图标不得超过 2 MiB。',
   };
   return fail(code, messages[code] ?? '技能操作失败，请重试。');
 }
@@ -72,12 +80,17 @@ const optionalCount = (value: unknown): number | undefined | null =>
 /** 市场文本参数：缺省表示不过滤，出现非字符串则拒绝请求。 */
 const optionalText = (value: unknown): string | undefined | null => value === undefined ? undefined : typeof value === 'string' ? value : null;
 
-async function dispatch(manager: SkillManagementService, marketService: () => SkillMarket | undefined, rawEndpoint: unknown, payload: unknown, signal: AbortSignal): Promise<ConnectionRpcResult<unknown>> {
+async function dispatch(manager: SkillManagementService, marketService: () => SkillMarket | undefined, listingService: () => SkillListing | undefined, rawEndpoint: unknown, payload: unknown, signal: AbortSignal): Promise<ConnectionRpcResult<unknown>> {
   if (typeof rawEndpoint !== 'string') return fail('skill/invalid-request', '技能管理操作无效。');
   const endpoint = rawEndpoint as SkillManagementEndpoint;
   const market = (): SkillMarket => {
     const service = marketService();
     if (!service) throw new SkillMarketRequestError('skill/market-unavailable', '当前环境未接入技能市场。');
+    return service;
+  };
+  const listing = (): SkillListing => {
+    const service = listingService();
+    if (!service) throw new SkillListingRequestError('skill/listing-unavailable', '当前环境未接入技能上架申请服务。');
     return service;
   };
   try {
@@ -103,6 +116,38 @@ async function dispatch(manager: SkillManagementService, marketService: () => Sk
       const input = record(payload); const names = input?.names; const action = input?.action;
       if (!Array.isArray(names) || !names.every(name => typeof name === 'string') || (action !== 'enable' && action !== 'disable' && action !== 'uninstall')) return fail('skill/invalid-request', '批量技能操作无效。');
       return ok(await manager.batch({ names, action }));
+    }
+    // 技能上架申请：表单字典一次取回；列表与提交的参数在宿主侧校验后再转后台。
+    if (endpoint === 'listing-options') return ok(await listing().options(signal));
+    if (endpoint === 'listing-list') {
+      const page = optionalCount(record(payload)?.page); const pageSize = optionalCount(record(payload)?.pageSize);
+      const status = optionalText(record(payload)?.status); const keyword = optionalText(record(payload)?.keyword);
+      if (page === null || pageSize === null || status === null || keyword === null) return fail('skill/invalid-request', '我的申请查询参数无效。');
+      return ok(await listing().list({ page, pageSize, status, keyword }, signal));
+    }
+    if (endpoint === 'listing-submit') {
+      const input = record(payload);
+      const required = ['skillName', 'skillNameEn', 'skillVersion', 'skillType', 'bizScene', 'sourceNode', 'skillDescr', 'reason', 'isPublic', 'stagedId'] as const;
+      if (!input || required.some(key => typeof input[key] !== 'string' || !(input[key] as string).trim())) return fail('skill/invalid-request', '上架申请缺少必填项。');
+      if (typeof input.customTag !== 'string' || (input.icon !== undefined && typeof input.icon !== 'string')) return fail('skill/invalid-request', '上架申请的标签或图标无效。');
+      const bounded = (key: string, limit: number): boolean => typeof input[key] !== 'string' || (input[key] as string).length <= limit;
+      if (!bounded('skillName', 200) || !bounded('skillNameEn', 200) || !bounded('skillVersion', 64) || !bounded('skillDescr', 4000)
+        || !bounded('reason', 4000) || !bounded('bizScene', 8192) || !bounded('sourceNode', 8192) || !bounded('customTag', 8192) || !bounded('icon', 8192))
+        return fail('skill/invalid-request', '上架申请字段超出长度限制。');
+      return ok(await listing().submit({
+        skillName: input.skillName as string,
+        skillNameEn: input.skillNameEn as string,
+        skillVersion: input.skillVersion as string,
+        skillType: input.skillType as string,
+        bizScene: input.bizScene as string,
+        sourceNode: input.sourceNode as string,
+        skillDescr: input.skillDescr as string,
+        customTag: input.customTag as string,
+        reason: input.reason as string,
+        isPublic: input.isPublic as string,
+        ...(typeof input.icon === 'string' && input.icon.trim() ? { icon: input.icon.trim() } : {}),
+        stagedId: input.stagedId as string,
+      }, signal));
     }
     // 技能市场：业务场景与关键词都由服务端筛选，参数非法直接拒绝，不把错误取值带给后台。
     if (endpoint === 'market-available') {
@@ -184,12 +229,36 @@ function json(result: ConnectionRpcResult<unknown>, status = 200): Response {
   return Response.json(result, { status, headers: { 'cache-control': 'no-store' } });
 }
 
+/** 有上限地读完整份上传体：图标等小文件在宿主内存里直接转交后台上传接口。 */
+async function readBounded(body: ReadableStream<Uint8Array> | null, limit: number): Promise<Uint8Array> {
+  if (!body) throw new Error('skill/listing-upload-empty');
+  const parts: Uint8Array[] = [];
+  let total = 0;
+  const reader = body.getReader();
+  try {
+    for (;;) {
+      const part = await reader.read();
+      if (part.done) break;
+      total += part.value.byteLength;
+      if (total > limit) throw new Error('skill/listing-upload-too-large');
+      parts.push(part.value);
+    }
+  } finally { reader.releaseLock(); }
+  if (!total) throw new Error('skill/listing-upload-empty');
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const part of parts) { bytes.set(part, offset); offset += part.byteLength; }
+  return bytes;
+}
+
 /** Register the management API inside Connection's authenticated `/api` carrier. */
 export function registerSkillManagementConnection(ctx: Context): void {
   const connection = (ctx as Context & { connection: HostConnectionHandle }).connection;
   const manager = ctx.workdshSkills;
   /** 市场服务是可选注入的宿主能力：缺失时市场端点明确返回「未接入」，不影响本地技能管理。 */
   const marketService = (): SkillMarket | undefined => ctx.reflect.get('workdshSkillMarket') as SkillMarket | undefined;
+  /** 上架申请服务同样是可选能力：个人模式或未接入后台时整条链路不可用。 */
+  const listingService = (): SkillListing | undefined => ctx.reflect.get('workdshSkillListing') as SkillListing | undefined;
   const lifetime = new AbortController();
   const pending = new Set<Promise<Response>>();
   const handle = (fetcher: (request: Request) => Promise<Response>) => (request: Request) => {
@@ -220,7 +289,7 @@ export function registerSkillManagementConnection(ctx: Context): void {
         if (text.length > maximumBodyBytes) return json(fail('skill/request-too-large', '技能管理请求过大。'), 413);
         const body = record(JSON.parse(text));
         if (!body) return json(fail('skill/invalid-request', '技能管理请求格式无效。'), 400);
-        return json(await dispatch(manager, marketService, body.endpoint, body.payload, request.signal));
+        return json(await dispatch(manager, marketService, listingService, body.endpoint, body.payload, request.signal));
       } catch (error) {
         if (error instanceof SyntaxError) return json(fail('skill/invalid-request', '技能管理请求格式无效。'), 400);
         return json(publicFailure(error));
@@ -260,6 +329,27 @@ export function registerSkillManagementConnection(ctx: Context): void {
       try {
         const fileName = decodeURIComponent(encodedName);
         return json(ok(await manager.imports.stage(fileName, request.body, request.signal)));
+      } catch (error) {
+        return json(publicFailure(error));
+      }
+    }),
+  }));
+  unregister.push(connection.fetch.register({
+    // 图标上传：渲染层把图片原始字节发到这里，宿主再转交后台上传接口，
+    // 这样令牌与后台地址都不会进入渲染层。
+    path: skillListingUploadPath,
+    methods: ['POST'],
+    requestBody: 'streaming',
+    fetch: handle(async request => {
+      const declaredLength = Number(request.headers.get('content-length') ?? '0');
+      if (Number.isFinite(declaredLength) && declaredLength > maximumIconBytes) return json(fail('skill/listing-upload-too-large', '图标不得超过 2 MiB。'), 413);
+      const encodedName = request.headers.get('x-workdsh-file-name');
+      if (!encodedName) return json(fail('skill/invalid-request', '请求缺少文件名。'), 400);
+      const service = listingService();
+      if (!service) return json(fail('skill/listing-unavailable', '当前环境未接入技能上架申请服务。'));
+      try {
+        const fileName = decodeURIComponent(encodedName);
+        return json(ok(await service.upload(fileName, await readBounded(request.body, maximumIconBytes), request.signal)));
       } catch (error) {
         return json(publicFailure(error));
       }

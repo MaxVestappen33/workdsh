@@ -157,6 +157,17 @@ export class SkillImportStaging {
     await rm(join(this.root, id), { recursive: true, force: true });
   }
 
+  /**
+   * 读取暂存文件的原始字节：上架申请提交时由宿主直接上传后台，
+   * 既避免渲染层二次传输整包，也让提交前的指纹复核与安装共用同一份校验。
+   */
+  async read(id: string): Promise<{ readonly fileName: string; readonly bytes: Uint8Array }> {
+    const receipt = await this.readReceipt(id);
+    const bytes = new Uint8Array(await readFile(join(this.root, id, `upload${extname(receipt.fileName).toLowerCase()}`)));
+    if (!bytes.byteLength) throw new Error('skill/import-empty');
+    return { fileName: receipt.fileName, bytes };
+  }
+
   private async stageMarkdown(input: string, directory: string): Promise<string> {
     const target = join(directory, 'tree');
     await mkdir(target, { mode: 0o700 });

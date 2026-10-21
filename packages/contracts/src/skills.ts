@@ -168,7 +168,109 @@ export interface StagedSkillImport {
   readonly expiresAt: string;
 }
 
-export type SkillManagementEndpoint = 'list' | 'detail' | 'update' | 'resource' | 'write-resource' | 'set-enabled' | 'dependency-impact' | 'uninstall' | 'batch' | 'trash-list' | 'restore' | 'commit-import' | 'discard-import' | 'catalog' | 'install-catalog' | 'market-available' | 'market-list' | 'market-categories' | 'market-index' | 'market-install' | 'market-uninstall' | 'market-document';
+/** 下拉选项：字典与来源节点共用同一展示口径。 */
+export interface SkillOption {
+  readonly value: string;
+  readonly label: string;
+}
+
+/** 来源节点：nodeType 为本级/上级/同级/下级，界面按它分组。 */
+export interface SkillNodeOption extends SkillOption {
+  readonly nodeType: string;
+}
+
+/** 业务场景树节点：value 为业务场景 id，children 为空表示叶子。 */
+export interface SkillSceneNode {
+  readonly value: string;
+  readonly label: string;
+  readonly children: readonly SkillSceneNode[];
+}
+
+/** 上架申请表单需要的全部字典：一次请求取回，避免表单打开时多次往返。 */
+export interface SkillListingOptions {
+  readonly skillTypes: readonly SkillOption[];
+  /** 审批状态：已剔除草稿，直接用于状态下拉与徽标文案。 */
+  readonly statuses: readonly SkillOption[];
+  readonly nodes: readonly SkillNodeOption[];
+  readonly scenes: readonly SkillSceneNode[];
+  /** 是否公开：字典 yn 的选项，value 原样作为 isPublic 提交。 */
+  readonly publicOptions: readonly SkillOption[];
+}
+
+/** 技能附件信息：与后台 skillFileInfo / fjxxList 的字段同名。 */
+export interface SkillListingFile {
+  readonly fileName: string;
+  readonly filePath: string;
+  readonly size?: number;
+}
+
+/** 上架申请提交：字段与后台 listingRequest 请求体一一对应。 */
+export interface SkillListingRequest {
+  readonly skillName: string;
+  readonly skillNameEn: string;
+  readonly skillVersion: string;
+  readonly skillType: string;
+  /** 业务场景 id，多选用英文逗号连接。 */
+  readonly bizScene: string;
+  readonly sourceNode: string;
+  readonly skillDescr: string;
+  /** 自定义标签，多选用英文逗号连接；没有标签时为空串。 */
+  readonly customTag: string;
+  readonly reason: string;
+  /** 是否公开：字典 yn 的 value（如 1/0），原样提交。 */
+  readonly isPublic: string;
+  readonly icon?: string;
+  /** 本地预检通过后的暂存 id：宿主读取暂存文件上传后台后再提交申请。 */
+  readonly stagedId: string;
+}
+
+/** 我的申请查询：分页、关键词与审批状态都由服务端筛选。 */
+export interface SkillListingQuery {
+  readonly page?: number;
+  readonly pageSize?: number;
+  readonly keyword?: string;
+  readonly status?: string;
+}
+
+/** 我的一条上架申请。 */
+export interface SkillListingItem {
+  /** 申请单 id：撤销与详情定位都用它。 */
+  readonly id: string;
+  readonly title: string;
+  readonly slug: string;
+  readonly description: string;
+  readonly version?: string;
+  readonly icon?: string;
+  readonly color?: string;
+  readonly scenes: readonly string[];
+  readonly sceneLabels: readonly string[];
+  readonly skillType?: string;
+  readonly skillTypeText?: string;
+  readonly tags: readonly string[];
+  readonly status: string;
+  readonly statusText?: string;
+  readonly reason?: string;
+  readonly sourceNode?: string;
+  readonly sourceNodeText?: string;
+  readonly createdAt?: string;
+  readonly comments?: string;
+  readonly files: readonly SkillListingFile[];
+}
+
+export interface SkillListingPage {
+  readonly items: readonly SkillListingItem[];
+  readonly total: number;
+  readonly page: number;
+}
+
+/** 上传结果：URL 由后台文件服务下发，后续提交申请时原样回传。 */
+export interface SkillListingUpload {
+  readonly url: string;
+  readonly fileName: string;
+  readonly size: number;
+}
+
+export type SkillManagementEndpoint = 'list' | 'detail' | 'update' | 'resource' | 'write-resource' | 'set-enabled' | 'dependency-impact' | 'uninstall' | 'batch' | 'trash-list' | 'restore' | 'commit-import' | 'discard-import' | 'catalog' | 'install-catalog' | 'market-available' | 'market-list' | 'market-categories' | 'market-index' | 'market-install' | 'market-uninstall' | 'market-document' | 'listing-options' | 'listing-list' | 'listing-submit';
 export interface SkillManagementFailure { readonly code: string; readonly message: string; }
 export type SkillManagementResult<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: SkillManagementFailure };
 
@@ -212,6 +314,8 @@ export interface SkillManagementService extends SkillRevisionProvider {
   readCatalogIcon(name: string): Promise<SkillCatalogIcon | undefined>;
   readonly imports: {
     stage(fileName: string, body: ReadableStream<Uint8Array> | null, signal: AbortSignal): Promise<StagedSkillImport>;
+    /** 读取预检通过的暂存文件原始字节：上架申请提交时由宿主直接上传后台，不再经渲染层二次传输。 */
+    read(id: string): Promise<{ readonly fileName: string; readonly bytes: Uint8Array }>;
     commit(id: string, scope?: SkillInstallScope, signal?: AbortSignal): Promise<SkillMutationReceipt>;
     discard(id: string): Promise<void>;
   };

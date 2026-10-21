@@ -64,8 +64,8 @@ test('Skill service waits, activates independently, disposes consumers and resto
     assert.equal(observed[0][1].contractVersion, 1);
     assert.equal(observed[1][1].contractVersion, 1);
     assert.equal((await ctx.workdshSkills.dependencyImpact('shared-sample')).dependents.length, 2);
-    // Three official routes: buffered management, catalog icon delivery and streaming import.
-    assert.equal(routes.size, 3);
+    // Four official routes: buffered management, catalog icon delivery, streaming import and listing icon upload.
+    assert.equal(routes.size, 4);
     await registry.dispose();
     await settle(() => skillFiber.state === 0 && routes.size === 0 && disposed.length === 2);
     assert.equal(ctx.workdshSkills, undefined);
@@ -74,7 +74,7 @@ test('Skill service waits, activates independently, disposes consumers and resto
     await ctx.plugin(SkillRegistry);
     await settle(() => skillFiber.state === 2 && observed.length === 4);
     assert.notEqual(ctx.workdshSkills, originalService);
-    assert.equal(routes.size, 3);
+    assert.equal(routes.size, 4);
     let cancelled = false, readRequested = false;
     const body = new ReadableStream({
       start(controller) { controller.enqueue(new TextEncoder().encode('---\nname: pending-upload\n')); },

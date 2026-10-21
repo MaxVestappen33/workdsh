@@ -244,20 +244,30 @@ export function desktopConnectorMarketPatch(home: string, server: ServerConfig, 
 }
 
 /**
- * 技能市场接口路径的注入层。与 MCP 市场同理：skills 是 Desktop/Web 共用的 Profile 包，
+ * 技能市场与上架申请的接口路径注入层。与 MCP 市场同理：skills 是 Desktop/Web 共用的 Profile 包，
  * 不能自己去读载体配置，因此由这里按运行时配置生成 overlay，把接口路径作为插件选项交给 skills 插件。
- * 安装/卸载接口后台当前是预留实现；路径缺失或非法时不写进本层，插件回退到内置默认值。
+ * 两类路径各自独立：任一为空时只写另一类，插件对缺失项回退到内置默认值。
  */
 export function desktopSkillMarketPatch(home: string, server: ServerConfig): string | undefined {
-  const rows = ([
+  const marketRows = ([
     ['list', server.skillMarketListPath],
     ['categories', server.skillMarketCategoriesPath],
     ['install', server.skillMarketInstallPath],
     ['uninstall', server.skillMarketUninstallPath],
   ] as const).flatMap(([name, value]) => (typeof value === 'string' && /^\//u.test(value) ? [[name, value] as const] : []))
-  if (rows.length === 0) return undefined
+  const listingRows = ([
+    ['submit', server.skillListingSubmitPath],
+    ['list', server.skillListingListPath],
+    ['nodes', server.skillListingNodePath],
+    ['scenes', server.skillListingScenePath],
+    ['dict', server.skillDictPath],
+    ['upload', server.skillUploadPath],
+  ] as const).flatMap(([name, value]) => (typeof value === 'string' && /^\//u.test(value) ? [[name, value] as const] : []))
+  if (marketRows.length === 0 && listingRows.length === 0) return undefined
+  const section = (name: string, rows: readonly (readonly [string, string])[]): string => rows.length === 0 ? ''
+    : `    ${name}:\n      paths:\n${rows.map(([key, value]) => `        ${key}: ${JSON.stringify(value)}\n`).join('')}`
   const patch = join(home, '.skill-market.patch.yml')
-  writeFileSync(patch, `- id: workdsh-skills\n  config:\n    market:\n      paths:\n${rows.map(([name, value]) => `        ${name}: ${JSON.stringify(value)}\n`).join('')}`, { mode: 0o600 })
+  writeFileSync(patch, `- id: workdsh-skills\n  config:\n${section('market', marketRows)}${section('listing', listingRows)}`, { mode: 0o600 })
   return patch
 }
 

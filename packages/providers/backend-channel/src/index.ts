@@ -53,6 +53,10 @@ export class BackendChannelService extends Service implements BackendChannel {
     return this.backend.post<T>(path, body, query, signal);
   }
 
+  postForm<T = unknown>(path: string, form: FormData, signal?: AbortSignal, timeoutMs?: number): Promise<T> {
+    return this.backend.postForm<T>(path, form, signal, timeoutMs);
+  }
+
   /** 不缓存凭据，也不把绑定写入任何 Host 状态；身份提供方未实现该能力时视为没有绑定。 */
   private binding(signal?: AbortSignal): Promise<BackendBinding | undefined> {
     const identity = this.ctx.reflect.get('workdshIdentity') as BackendBindingIdentity | undefined;

@@ -3,7 +3,7 @@ import type {} from '@deepseek-ai/dsh-client-connection/client';
 import type {} from '@deepseek-ai/dsh-api-remotes/client';
 import type {} from '@deepseek-ai/dsh-api-session-controller/client';
 import type { SkillMarketAuthorized, SkillMarketDocument, SkillMarketInstallResult, SkillMarketPage, SkillMarketQuery, SkillScene } from '../market.js';
-import type { ManagedSkillDetail, ManagedSkillResource, ManagedSkillSummary, SkillBatchAction, SkillBatchResult, SkillCatalogSummary, SkillDependencyImpact, SkillInstallScope, SkillMutationReceipt, SkillResourceWriteRequest, SkillWriteRequest, StagedSkillImport, TrashedSkillSummary } from '../shared.js';
+import type { ManagedSkillDetail, ManagedSkillResource, ManagedSkillSummary, SkillBatchAction, SkillBatchResult, SkillCatalogSummary, SkillDependencyImpact, SkillInstallScope, SkillListingOptions, SkillListingPage, SkillListingQuery, SkillListingRequest, SkillMutationReceipt, SkillResourceWriteRequest, SkillWriteRequest, StagedSkillImport, TrashedSkillSummary } from '../shared.js';
 
 const path = '/api/workdsh-skills';
 
@@ -47,6 +47,7 @@ async function call<T>(ctx: Context, endpoint: string, payload: unknown, signal?
  * 都远超普通查询，单独放宽；其余查询与写入维持原有口径。
  */
 function timeoutOf(endpoint: string): number {
+  if (endpoint === 'listing-submit') return 180_000;
   if (endpoint === 'market-install' || endpoint === 'market-document' || endpoint === 'commit-import') return 120_000;
   if (endpoint === 'install-catalog') return 60_000;
   return 30_000;
@@ -89,6 +90,19 @@ export function createSkillManagementClient(ctx: Context, lifetime?: AbortSignal
     marketUninstall: (target: { id?: string; slug?: string }) => invoke<{ reported: boolean }>('market-uninstall', target),
     /** 详情页说明：附件信息与 SKILL.md 正文（zip 附件由宿主解包）。 */
     marketDocument: (id: string) => invoke<SkillMarketDocument>('market-document', { id }),
+    /** 上架申请表单字典：技能类型、审批状态、来源节点、业务场景树一次取回。 */
+    listingOptions: () => invoke<SkillListingOptions>('listing-options', {}),
+    listingList: (input: SkillListingQuery) => invoke<SkillListingPage>('listing-list', input),
+    /** 提交上架申请：宿主读取本地预检暂存文件上传后台后再调申请接口。 */
+    submitListing: (input: SkillListingRequest, signal?: AbortSignal) => invoke<string>('listing-submit', input, signal),
+    /** 图标上传：图片原始字节交给宿主转发后台，返回可回填到表单的文件地址。 */
+    uploadListingIcon: async (file: File, signal?: AbortSignal) => {
+      return request<{ readonly url: string; readonly fileName: string; readonly size: number }>(`${path}/listing-upload`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'content-type': file.type || 'application/octet-stream', 'x-workdsh-file-name': encodeURIComponent(file.name) },
+        body: file,
+      }, 60_000, scoped(signal));
+    },
     openDirectory: async (path: string) => {
       lifetime?.throwIfAborted();
       const result = await ctx.remote.session.openWorkspacePath({ path, action: 'reveal' });

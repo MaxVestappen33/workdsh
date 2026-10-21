@@ -46,6 +46,18 @@ export interface ServerConfig {
   skillMarketInstallPath: string
   /** 技能市场：卸载接口路径（后台当前为预留实现，只记录卸载行为）。 */
   skillMarketUninstallPath: string
+  /** 技能上架申请：提交接口路径。 */
+  skillListingSubmitPath: string
+  /** 技能上架申请：我的申请列表接口路径。 */
+  skillListingListPath: string
+  /** 技能上架申请：来源节点列表接口路径。 */
+  skillListingNodePath: string
+  /** 技能上架申请：业务场景树接口路径。 */
+  skillListingScenePath: string
+  /** 通用字典前缀：实际请求为 `${skillDictPath}/{dictCode}`。 */
+  skillDictPath: string
+  /** 通用文件上传接口路径（multipart，免签）。 */
+  skillUploadPath: string
   /** 模型市场：已授权模型列表接口路径。 */
   modelMarketListPath: string
   /** 模型市场：使用模型上报接口路径（后台当前为预留实现）。 */
@@ -97,6 +109,13 @@ const DEFAULTS: AppConfig = {
     skillMarketCategoriesPath: '/desktop-client/skill/querySkillBizSceneList',
     skillMarketInstallPath: '/desktop-client/skill/installSkill',
     skillMarketUninstallPath: '/desktop-client/skill/unInstallSkill',
+    // 技能上架申请与表单字典：同属 desktop-client 命名空间，上传接口免签。
+    skillListingSubmitPath: '/desktop-client/skill/listingRequest',
+    skillListingListPath: '/desktop-client/skill/queryMyListingSkillList',
+    skillListingNodePath: '/desktop-client/queryAiNodeList',
+    skillListingScenePath: '/desktop-client/queryAiBizSceneList',
+    skillDictPath: '/desktop-client/getDictItems',
+    skillUploadPath: '/desktop-client/upload',
     // 模型市场与技能/MCP 市场同属 desktop-client 命名空间；安装与卸载只做后台上报。
     modelMarketListPath: '/desktop-client/model/queryAuthorizedModelList',
     modelMarketUsePath: '/desktop-client/model/useModel',
@@ -154,7 +173,7 @@ export function parseAppConfig(value: unknown): PartialAppConfig {
   if (root.server !== undefined) {
     if (!root.server || typeof root.server !== 'object' || Array.isArray(root.server)) throw new Error('server 配置无效')
     const a = root.server as Record<string, unknown>
-    for (const k of Object.keys(a)) if (k !== 'baseUrl' && k !== 'loginPath' && k !== 'logoutPath' && k !== 'mePath' && k !== 'syncIntervalSeconds' && k !== 'mcpMarketListPath' && k !== 'mcpMarketCategoriesPath' && k !== 'mcpMarketInstallPath' && k !== 'mcpMarketUninstallPath' && k !== 'skillMarketListPath' && k !== 'skillMarketCategoriesPath' && k !== 'skillMarketInstallPath' && k !== 'skillMarketUninstallPath' && k !== 'modelMarketListPath' && k !== 'modelMarketUsePath' && k !== 'modelMarketUnusePath' && k !== 'mcpPackageRegistry') throw new Error(`server 配置不接受字段 ${k}`)
+    for (const k of Object.keys(a)) if (k !== 'baseUrl' && k !== 'loginPath' && k !== 'logoutPath' && k !== 'mePath' && k !== 'syncIntervalSeconds' && k !== 'mcpMarketListPath' && k !== 'mcpMarketCategoriesPath' && k !== 'mcpMarketInstallPath' && k !== 'mcpMarketUninstallPath' && k !== 'skillMarketListPath' && k !== 'skillMarketCategoriesPath' && k !== 'skillMarketInstallPath' && k !== 'skillMarketUninstallPath' && k !== 'skillListingSubmitPath' && k !== 'skillListingListPath' && k !== 'skillListingNodePath' && k !== 'skillListingScenePath' && k !== 'skillDictPath' && k !== 'skillUploadPath' && k !== 'modelMarketListPath' && k !== 'modelMarketUsePath' && k !== 'modelMarketUnusePath' && k !== 'mcpPackageRegistry') throw new Error(`server 配置不接受字段 ${k}`)
     if (a.baseUrl !== undefined) {
       if (typeof a.baseUrl !== 'string') throw new Error('server.baseUrl 必须是字符串')
       result.server = { ...(result.server ?? {}), baseUrl: normalizeBase(a.baseUrl) }
@@ -170,6 +189,12 @@ export function parseAppConfig(value: unknown): PartialAppConfig {
     if (a.skillMarketCategoriesPath !== undefined) { if (typeof a.skillMarketCategoriesPath !== 'string' || !/^\//u.test(a.skillMarketCategoriesPath)) throw new Error('server.skillMarketCategoriesPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), skillMarketCategoriesPath: a.skillMarketCategoriesPath } }
     if (a.skillMarketInstallPath !== undefined) { if (typeof a.skillMarketInstallPath !== 'string' || !/^\//u.test(a.skillMarketInstallPath)) throw new Error('server.skillMarketInstallPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), skillMarketInstallPath: a.skillMarketInstallPath } }
     if (a.skillMarketUninstallPath !== undefined) { if (typeof a.skillMarketUninstallPath !== 'string' || !/^\//u.test(a.skillMarketUninstallPath)) throw new Error('server.skillMarketUninstallPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), skillMarketUninstallPath: a.skillMarketUninstallPath } }
+    if (a.skillListingSubmitPath !== undefined) { if (typeof a.skillListingSubmitPath !== 'string' || !/^\//u.test(a.skillListingSubmitPath)) throw new Error('server.skillListingSubmitPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), skillListingSubmitPath: a.skillListingSubmitPath } }
+    if (a.skillListingListPath !== undefined) { if (typeof a.skillListingListPath !== 'string' || !/^\//u.test(a.skillListingListPath)) throw new Error('server.skillListingListPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), skillListingListPath: a.skillListingListPath } }
+    if (a.skillListingNodePath !== undefined) { if (typeof a.skillListingNodePath !== 'string' || !/^\//u.test(a.skillListingNodePath)) throw new Error('server.skillListingNodePath 必须以 / 开头'); result.server = { ...(result.server ?? {}), skillListingNodePath: a.skillListingNodePath } }
+    if (a.skillListingScenePath !== undefined) { if (typeof a.skillListingScenePath !== 'string' || !/^\//u.test(a.skillListingScenePath)) throw new Error('server.skillListingScenePath 必须以 / 开头'); result.server = { ...(result.server ?? {}), skillListingScenePath: a.skillListingScenePath } }
+    if (a.skillDictPath !== undefined) { if (typeof a.skillDictPath !== 'string' || !/^\//u.test(a.skillDictPath)) throw new Error('server.skillDictPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), skillDictPath: a.skillDictPath } }
+    if (a.skillUploadPath !== undefined) { if (typeof a.skillUploadPath !== 'string' || !/^\//u.test(a.skillUploadPath)) throw new Error('server.skillUploadPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), skillUploadPath: a.skillUploadPath } }
     if (a.modelMarketListPath !== undefined) { if (typeof a.modelMarketListPath !== 'string' || !/^\//u.test(a.modelMarketListPath)) throw new Error('server.modelMarketListPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), modelMarketListPath: a.modelMarketListPath } }
     if (a.modelMarketUsePath !== undefined) { if (typeof a.modelMarketUsePath !== 'string' || !/^\//u.test(a.modelMarketUsePath)) throw new Error('server.modelMarketUsePath 必须以 / 开头'); result.server = { ...(result.server ?? {}), modelMarketUsePath: a.modelMarketUsePath } }
     if (a.modelMarketUnusePath !== undefined) { if (typeof a.modelMarketUnusePath !== 'string' || !/^\//u.test(a.modelMarketUnusePath)) throw new Error('server.modelMarketUnusePath 必须以 / 开头'); result.server = { ...(result.server ?? {}), modelMarketUnusePath: a.modelMarketUnusePath } }

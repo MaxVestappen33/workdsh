@@ -65,6 +65,11 @@ export type BackendQuery = URLSearchParams | Readonly<Record<string, string | nu
 export interface BackendChannelClient {
   get<T = unknown>(path: string, query?: BackendQuery, signal?: AbortSignal): Promise<T>;
   post<T = unknown>(path: string, body?: unknown, query?: BackendQuery, signal?: AbortSignal): Promise<T>;
+  /**
+   * multipart 上传：用于附件与图标这类二进制提交。
+   * 不设置 Content-Type，交给 fetch 生成带 boundary 的头；超时可单独放宽。
+   */
+  postForm<T = unknown>(path: string, form: FormData, signal?: AbortSignal, timeoutMs?: number): Promise<T>;
 }
 
 export interface BackendClientOptions {
@@ -148,7 +153,11 @@ export class BackendClient implements BackendChannelClient {
     return this.request('POST', path, query, body, signal) as Promise<T>;
   }
 
-  private async request(method: 'GET' | 'POST', path: string, query: BackendQuery | undefined, body: unknown, signal?: AbortSignal): Promise<unknown> {
+  postForm<T = unknown>(path: string, form: FormData, signal?: AbortSignal, timeoutMs?: number): Promise<T> {
+    return this.request('POST', path, undefined, form, signal, timeoutMs) as Promise<T>;
+  }
+
+  private async request(method: 'GET' | 'POST', path: string, query: BackendQuery | undefined, body: unknown, signal?: AbortSignal, timeoutMs?: number): Promise<unknown> {
     signal?.throwIfAborted();
     // 凭据不缓存：每次都重新向绑定提供者索取。绑定取不到（未实现、未登录、已失效）一律
     // 归一为 unavailable，既不静默继续，也不把身份侧的原始错误文本带到上层。
@@ -158,6 +167,8 @@ export class BackendClient implements BackendChannelClient {
     if (!binding) throw new BackendRequestError('backend/unavailable', '当前环境未接入业务后台。');
     const authorization = backendAuthorization(binding.authorization);
     const target = `${backendBaseUrl(binding.url)}${backendPath(path)}${backendQuery(query)}`;
+    // multipart 由 fetch 自行生成带 boundary 的 Content-Type，不能覆盖成 application/json。
+    const form = body instanceof FormData ? body : undefined;
     let response: Response;
     try {
       response = await fetch(target, {
@@ -171,11 +182,11 @@ export class BackendClient implements BackendChannelClient {
           'X-TIMESTAMP': String(Date.now()),
           'X-Tenant-Id': tenantId,
           'X-Version': apiVersion,
-          ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+          ...(body === undefined || form ? {} : { 'Content-Type': 'application/json' }),
         },
-        body: body === undefined ? undefined : JSON.stringify(body),
+        body: body === undefined ? undefined : form ?? JSON.stringify(body),
         redirect: 'error',
-        signal: AbortSignal.any([AbortSignal.timeout(this.timeoutMs), ...(signal ? [signal] : [])]),
+        signal: AbortSignal.any([AbortSignal.timeout(timeoutMs ?? this.timeoutMs), ...(signal ? [signal] : [])]),
       });
     } catch {
       // 不回显请求头与凭据，只给出可展示的通用文案。

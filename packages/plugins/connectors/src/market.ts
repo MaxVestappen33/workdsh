@@ -51,6 +51,11 @@ export interface MarketItem {
   readonly icon?: string;
   /** 图标底色，可能为空，空时由界面使用默认底色。 */
   readonly color?: string;
+  /**
+   * 市场下发的连接令牌：原样作为 `Authorization` 请求头使用。
+   * 安装时写入官方凭据服务，连接器定义里只保留引用，连接器列表与详情都不回传。
+   */
+  readonly authorization?: string;
   readonly subscribers: number;
   readonly downloads: number;
   readonly stars: number;
@@ -193,14 +198,14 @@ const itemOf = (value: unknown): MarketItem | undefined => {
   const originId = text(row.id); const serverName = text(row.serviceId); const title = text(row.name);
   if (!originId || !serverName || !title) return undefined;
   const url = text(row.endpoint); const command = text(row.command); const args = argsOf(row.args);
-  const icon = iconOf(row.icon); const color = text(row.color);
+  const icon = iconOf(row.icon); const color = text(row.color); const authorization = text(row.token);
   const transport = transportOf(row.transport);
   const launch = packageLaunchOf(transport, command, args);
   return { originId, serverName, title, description: text(row.description) ?? '', categories: categoriesOf(row.bizScene),
     categoryLabels: categoryLabelsOf(row.bizSceneList),
     transport, ...(url ? { url } : {}), ...(command ? { command } : {}), ...(args ? { args } : {}),
     ...(launch ? { launch: 'package' as const, packageSpec: launch.spec, packageArgs: launch.args } : { launch: 'direct' as const }),
-    ...(icon ? { icon } : {}), ...(color ? { color } : {}),
+    ...(icon ? { icon } : {}), ...(color ? { color } : {}), ...(authorization ? { authorization } : {}),
     subscribers: count(row.subscribers), downloads: count(row.downloadCount), stars: count(row.starCount),
     tools: toolsOf(row.tools) };
 };

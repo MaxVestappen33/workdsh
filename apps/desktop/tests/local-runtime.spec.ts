@@ -190,7 +190,7 @@ it('skips the connectors patch layer when neither paths nor a package registry a
   expect(desktopConnectorMarketPatch(home, asServer({ mcpPackageRegistry: 'nexus.intranet/repository' }), { node: 'node', pnpm: 'pnpm.cjs' })).toBeUndefined()
 })
 
-it('injects the four skill-market paths as one skills patch layer', () => {
+it('injects skill-market and skill-listing paths as one skills patch layer', () => {
   const { home } = fixture()
   mkdirSync(home, { recursive: true })
   const patch = desktopSkillMarketPatch(home, asServer({
@@ -198,9 +198,15 @@ it('injects the four skill-market paths as one skills patch layer', () => {
     skillMarketCategoriesPath: '/desktop-client/skill/querySkillBizSceneList',
     skillMarketInstallPath: '/desktop-client/skill/installSkill',
     skillMarketUninstallPath: '/desktop-client/skill/unInstallSkill',
+    skillListingSubmitPath: '/desktop-client/skill/listingRequest',
+    skillListingListPath: '/desktop-client/skill/queryMyListingSkillList',
+    skillListingNodePath: '/desktop-client/queryAiNodeList',
+    skillListingScenePath: '/desktop-client/queryAiBizSceneList',
+    skillDictPath: '/desktop-client/getDictItems',
+    skillUploadPath: '/desktop-client/upload',
   }))
   expect(patch).toBeTruthy()
-  const rows = load(readFileSync(patch!, 'utf8')) as { id: string, config: { market: { paths: Record<string, unknown> } } }[]
+  const rows = load(readFileSync(patch!, 'utf8')) as { id: string, config: { market: { paths: Record<string, unknown> }, listing: { paths: Record<string, unknown> } } }[]
   expect(rows).toHaveLength(1)
   expect(rows[0]?.id).toBe('workdsh-skills')
   expect(rows[0]?.config.market.paths).toEqual({
@@ -208,6 +214,14 @@ it('injects the four skill-market paths as one skills patch layer', () => {
     categories: '/desktop-client/skill/querySkillBizSceneList',
     install: '/desktop-client/skill/installSkill',
     uninstall: '/desktop-client/skill/unInstallSkill',
+  })
+  expect(rows[0]?.config.listing.paths).toEqual({
+    submit: '/desktop-client/skill/listingRequest',
+    list: '/desktop-client/skill/queryMyListingSkillList',
+    nodes: '/desktop-client/queryAiNodeList',
+    scenes: '/desktop-client/queryAiBizSceneList',
+    dict: '/desktop-client/getDictItems',
+    upload: '/desktop-client/upload',
   })
 })
 
