@@ -494,6 +494,21 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
   /** 授权技能索引：标识（skillNameEn）优先、名称（skillName）兜底，用于本地技能的业务场景匹配。 */
   const slugScenes = useMemo(() => new Map(authorized.map(row => [row.slug.trim().toLowerCase(), row.sceneLabels])), [authorized]);
   const titleScenes = useMemo(() => new Map(authorized.map(row => [row.title.trim().toLowerCase(), row.sceneLabels])), [authorized]);
+  /** 市场授权条目标识 → 中文名称：本地 SKILL.md 没有 title 时用它兜底显示。 */
+  const marketTitles = useMemo(() => new Map(authorized.flatMap(row => {
+    const slug = row.slug.trim().toLowerCase();
+    const title = row.title.trim();
+    return slug && title ? [[slug, title] as const] : [];
+  })), [authorized]);
+  /**
+   * 本地技能的展示名称：SKILL.md 自带 title 优先，其次用市场下发的中文名称，
+   * 两者都没有时回退到技能标识（name）。安装不改写 SKILL.md，标识始终保持官方口径。
+   */
+  const titleOf = (skill: ManagedSkillSummary): string => {
+    const local = skill.title?.trim();
+    if (local && local !== skill.name) return local;
+    return marketTitles.get(skill.name.trim().toLowerCase()) ?? local ?? skill.name;
+  };
   /** 本地技能的业务场景文案：匹配不到后台授权条目时为空，界面不显示占位。 */
   const scenesOf = (skill: ManagedSkillSummary): readonly string[] =>
     slugScenes.get(skill.name.trim().toLowerCase())
@@ -520,7 +535,7 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
   const normalizedQuery = query.trim().toLowerCase();
   const visibleLocal = skills.filter(skill => {
     const sceneLabels = scenesOf(skill);
-    const text = `${skill.name} ${skill.title ?? ''} ${skill.localizedDescription ?? skill.description} ${skill.whenToUse ?? ''} ${sceneLabels.join(' ')}`;
+    const text = `${skill.name} ${titleOf(skill)} ${skill.localizedDescription ?? skill.description} ${skill.whenToUse ?? ''} ${sceneLabels.join(' ')}`;
     return text.toLowerCase().includes(normalizedQuery) && (!activeScenes.length || sceneLabels.some(label => activeScenes.includes(label)));
   });
   const marketEntry = marketDetailId ? market.items.find(entry => entry.id === marketDetailId) : undefined;
@@ -551,8 +566,9 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
   const batchBar = <div className="batch-bar" role="toolbar" aria-label="批量管理技能"><span>已选择 {selectedNames.length} 项</span><Button disabled={!selectedNames.length || busy} onClick={() => void runBatch('enable')}>启用</Button><Button disabled={!selectedNames.length || busy} onClick={() => void runBatch('disable')}>停用</Button><Button tone="danger" className="danger" disabled={!selectedNames.length || busy} onClick={() => setConfirmBatchUninstall(true)}>卸载</Button></div>;
   const renderSkillCard = (skill: ManagedSkillSummary) => {
     const sceneText = scenesOf(skill).join(' · ');
+    const title = titleOf(skill);
     return <article className={`card ${skill.state === 'disabled' ? 'disabled' : skill.state === 'invalid' ? 'invalid' : ''} ${actionMenu === skill.name ? 'menu-open' : ''}`} key={skill.name}>
-      <div className="card-top">{batchMode && skill.manageable ? <button className="batch-check" role="checkbox" aria-checked={selectedNames.includes(skill.name)} aria-label={`选择技能 ${skill.name}`} onClick={() => toggleBatchSelection(skill.name)}>{selectedNames.includes(skill.name) ? '✓' : ''}</button> : null}<button className="card-open" aria-label={`查看技能 ${skill.name}`} onClick={() => batchMode && skill.manageable ? toggleBatchSelection(skill.name) : void openDetail(skill.name)}><SkillMark name={skill.name} title={skill.title} iconUrl={skill.iconUrl} /><span className="card-title"><strong title={skill.name}>{skill.title ?? skill.name}</strong>{skill.title && skill.title !== skill.name ? <small className="slug">{skill.name}</small> : null}{sceneText ? <small className="tag" title={sceneText}>{sceneText}</small> : null}</span></button>
+      <div className="card-top">{batchMode && skill.manageable ? <button className="batch-check" role="checkbox" aria-checked={selectedNames.includes(skill.name)} aria-label={`选择技能 ${skill.name}`} onClick={() => toggleBatchSelection(skill.name)}>{selectedNames.includes(skill.name) ? '✓' : ''}</button> : null}<button className="card-open" aria-label={`查看技能 ${skill.name}`} onClick={() => batchMode && skill.manageable ? toggleBatchSelection(skill.name) : void openDetail(skill.name)}><SkillMark name={skill.name} title={title} iconUrl={skill.iconUrl} /><span className="card-title"><strong title={title}>{title}</strong>{title !== skill.name ? <small className="slug">{skill.name}</small> : null}{sceneText ? <small className="tag" title={sceneText}>{sceneText}</small> : null}</span></button>
         {!batchMode && skill.manageable && <div className="card-actions"><Button variant="ghost" size="sm" className="more-button" aria-label={`管理技能 ${skill.name}`} aria-haspopup="menu" aria-expanded={actionMenu === skill.name} onClick={() => setActionMenu(current => current === skill.name ? undefined : skill.name)}>•••</Button>{actionMenu === skill.name && <div className="card-menu" role="menu"><button role="menuitem" disabled={skill.state !== 'enabled'} onClick={() => void trial(skill.name)}>去试试</button><button role="menuitem" onClick={() => void openDetail(skill.name)}>编辑</button><button role="menuitem" onClick={() => void openDirectory(skill)}>打开文件夹</button><button className="danger" role="menuitem" onClick={() => void prepareUninstall(skill)}>卸载</button></div>}</div>}
         {!batchMode && <button className="switch" role="switch" disabled={!skill.manageable || skill.state === 'invalid'} aria-checked={skill.state === 'enabled'} aria-label={`${skill.state === 'enabled' ? '停用' : '启用'}技能 ${skill.name}`} onClick={() => void setEnabled(skill, skill.state !== 'enabled')} />}
       </div><p className="muted">{skill.localizedDescription ?? skill.description}</p>{skill.state === 'invalid' && <small className="diagnostic">需要修复 · {skill.diagnostics?.[0]?.message}</small>}
@@ -577,14 +593,13 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
       {failure && !isInstalled(entry) ? <p className="card-error" role="alert">{failure}</p> : null}
     </article>;
   };
-  /** 我的一条上架申请：卡片右上角与详情都放「撤销申请」占位按钮。 */
+  /** 我的一条上架申请：撤销按钮放在卡片右下角，保留名称完整展示。 */
   const renderApplicationCard = (item: SkillListingItem) => {
     const sceneText = item.sceneLabels.join(' · ');
     const statusText = statusTextOf(item);
     return <article className="card application-card" key={item.id}>
       <div className="card-top">
         <button className="card-open" aria-label={`查看申请 ${item.title}`} onClick={() => setApplicationId(item.id)}><SkillMark name={item.slug} title={item.title} iconUrl={item.icon} /><span className="card-title"><strong title={item.title}>{item.title}</strong><small className="slug">{item.slug}</small>{sceneText ? <small className="tag" title={sceneText}>{sceneText}</small> : null}</span></button>
-        <Button className="withdraw" aria-label={`撤销申请 ${item.title}`} onClick={() => setNotice('撤销申请功能暂未开放。')}>撤销申请</Button>
       </div>
       <p className="muted">{item.description}</p>
       <div className="application-meta">
@@ -592,6 +607,7 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
         {item.version ? <small>版本 {item.version}</small> : null}
         {item.createdAt ? <small>{item.createdAt}</small> : null}
       </div>
+      <div className="application-actions"><Button tone="danger" className="danger withdraw" aria-label={`撤销申请 ${item.title}`} onClick={() => setNotice('撤销申请功能暂未开放。')}>撤销</Button></div>
     </article>;
   };
   return <section className="wd-skills" data-testid="workdsh-skills" onScroll={event => {
@@ -664,13 +680,13 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
       </article>}
     </Modal>
     <Modal open={Boolean(selected)} label={selected ? `${selected.name} 技能详情` : '技能详情'} className="skill-detail-dialog" onClose={() => { setSelected(undefined); setEditing(false); setResource(undefined); }}>
-      {selected && <article data-testid="skill-detail"><div className="detail-hero"><SkillMark large name={selected.name} title={selected.title} iconUrl={selected.iconUrl} /><div className="detail-title"><h1>{selected.title ?? selected.name}</h1>{selected.title && selected.title !== selected.name ? <p className="slug">{selected.name}</p> : null}<div className="detail-actions"><Button className="try" disabled={selected.state !== 'enabled'} onClick={() => void trial(selected.name)}>去试试</Button>{selected.manageable && <><Button onClick={() => setEditing(true)}>编辑</Button><Button onClick={() => void openDirectory(selected)}>打开文件夹</Button><Button tone="danger" className="danger" onClick={() => void prepareUninstall(selected)}>卸载</Button></>}</div></div><button className="switch" role="switch" disabled={!selected.manageable || selected.state === 'invalid'} aria-checked={selected.state === 'enabled'} onClick={() => void setEnabled(selected, selected.state !== 'enabled')} /></div>
+      {selected && <article data-testid="skill-detail"><div className="detail-hero"><SkillMark large name={selected.name} title={titleOf(selected)} iconUrl={selected.iconUrl} /><div className="detail-title"><h1>{titleOf(selected)}</h1>{titleOf(selected) !== selected.name ? <p className="slug">{selected.name}</p> : null}<div className="detail-actions"><Button className="try" disabled={selected.state !== 'enabled'} onClick={() => void trial(selected.name)}>去试试</Button>{selected.manageable && <><Button onClick={() => setEditing(true)}>编辑</Button><Button onClick={() => void openDirectory(selected)}>打开文件夹</Button><Button tone="danger" className="danger" onClick={() => void prepareUninstall(selected)}>卸载</Button></>}</div></div><button className="switch" role="switch" disabled={!selected.manageable || selected.state === 'invalid'} aria-checked={selected.state === 'enabled'} onClick={() => void setEnabled(selected, selected.state !== 'enabled')} /></div>
         <p className="detail-summary">{selected.localizedDescription ?? selected.description}</p><h2 className="detail-section-title">{icon('library')}概述</h2>
         <div className="detail-body">{resource ? <><div className="resource-editor-head"><Button onClick={() => setResource(undefined)}>返回概述</Button><strong>{resource.path}</strong></div><label className="editor-label" htmlFor="resource-document">资源文件</label><Textarea id="resource-document" className="skill-editor" value={resourceDocument} onChange={event => setResourceDocument(event.currentTarget.value)} spellCheck={false} /><div className="editor-actions"><Button onClick={() => { setResourceDocument(resource.document); setResource(undefined); }}>取消</Button><Button variant="primary" className="save" disabled={busy || (!resource.isNew && resourceDocument === resource.document)} onClick={() => void saveResource()}>保存资源</Button></div></> : editing ? <><label className="editor-label" htmlFor="skill-document">SKILL.md</label><Textarea id="skill-document" className="skill-editor" value={skillDocument} onChange={event => setSkillDocument(event.currentTarget.value)} spellCheck={false} /><div className="editor-actions"><Button onClick={() => { setSkillDocument(selected.document ?? ''); setEditing(false); }}>取消</Button><Button variant="primary" className="save" disabled={busy || skillDocument === selected.document} onClick={() => void save()}>保存并重新发现</Button></div></> : <><dl><dt>名称</dt><dd>{selected.name}</dd><dt>业务场景</dt><dd>{scenesOf(selected).join(' · ') || '未标注'}</dd><dt>状态</dt><dd>{selected.state === 'enabled' ? '已启用' : selected.state === 'disabled' ? '已停用' : selected.state === 'invalid' ? '需要修复' : '只读'}</dd><dt>调用方式</dt><dd><code className="command">/{selected.name}</code></dd></dl>{selected.diagnostics?.length ? <section className="validation-errors"><h3>校验问题</h3><ul>{selected.diagnostics.map(item => <li key={`${item.code}-${item.path ?? ''}`}>{item.message}</li>)}</ul><Button onClick={() => setEditing(true)}>修复 SKILL.md</Button></section> : null}{selected.manageable && <section className="resource-section"><h3>资源文件</h3>{selected.resources.length ? <div className="resource-list">{selected.resources.map(path => <Button key={path} onClick={() => void openResource(path)}>{path}</Button>)}</div> : <p className="muted">暂无附加资源</p>}<div className="new-resource"><Input aria-label="新资源路径" placeholder="例如 references/guide.md" value={newResourcePath} onChange={event => setNewResourcePath(event.currentTarget.value)} /><Button disabled={!newResourcePath.trim()} onClick={beginResource}>新建资源</Button></div></section>}<pre className="skill-document">{selected.document ?? selected.whenToUse ?? selected.description}</pre></>}{error && <p className="error" role="alert">{error}</p>}</div>
       </article>}
     </Modal>
     <Modal open={Boolean(applicationEntry)} label={applicationEntry ? `${applicationEntry.title} 上架申请` : '上架申请详情'} className="skill-detail-dialog" onClose={() => setApplicationId(undefined)}>
-      {applicationEntry && <article data-testid="skill-listing-detail"><div className="detail-hero"><SkillMark large name={applicationEntry.slug} title={applicationEntry.title} iconUrl={applicationEntry.icon} /><div className="detail-title"><h1>{applicationEntry.title}</h1><p className="slug">{applicationEntry.slug}</p><div className="detail-actions"><span className={`status-badge ${statusToneOf(statusTextOf(applicationEntry))}`}>{statusTextOf(applicationEntry)}</span><Button className="withdraw" onClick={() => setNotice('撤销申请功能暂未开放。')}>撤销申请</Button></div></div></div>
+      {applicationEntry && <article data-testid="skill-listing-detail"><div className="detail-hero"><SkillMark large name={applicationEntry.slug} title={applicationEntry.title} iconUrl={applicationEntry.icon} /><div className="detail-title"><h1>{applicationEntry.title}</h1><p className="slug">{applicationEntry.slug}</p><div className="detail-actions"><span className={`status-badge ${statusToneOf(statusTextOf(applicationEntry))}`}>{statusTextOf(applicationEntry)}</span><Button tone="danger" className="danger withdraw" onClick={() => setNotice('撤销申请功能暂未开放。')}>撤销</Button></div></div></div>
         <p className="detail-summary">{applicationEntry.description}</p>
         <h2 className="detail-section-title">{icon('library')}申请信息</h2>
         <div className="detail-body"><dl><dt>名称</dt><dd>{applicationEntry.title}</dd><dt>英文名称</dt><dd>{applicationEntry.slug}</dd><dt>版本</dt><dd>{applicationEntry.version ?? '未标注'}</dd><dt>Skill 类型</dt><dd>{applicationEntry.skillTypeText ?? applicationEntry.skillType ?? '未标注'}</dd><dt>业务场景</dt><dd>{applicationEntry.sceneLabels.join(' · ') || '未标注'}</dd><dt>来源节点</dt><dd>{applicationEntry.sourceNodeText ?? applicationEntry.sourceNode ?? '未标注'}</dd><dt>自定义标签</dt><dd>{applicationEntry.tags.join(' · ') || '未标注'}</dd><dt>审批状态</dt><dd>{statusTextOf(applicationEntry)}</dd><dt>提交时间</dt><dd>{applicationEntry.createdAt ?? '未标注'}</dd><dt>上架原因</dt><dd>{applicationEntry.reason ?? '未填写'}</dd><dt>审批意见</dt><dd>{applicationEntry.comments ?? '暂无'}</dd><dt>附件</dt><dd>{applicationEntry.files.length ? applicationEntry.files.map(file => `${file.fileName}${file.size ? `（${sizeOf(file.size)}）` : ''}`).join('、') : '无'}</dd></dl></div>

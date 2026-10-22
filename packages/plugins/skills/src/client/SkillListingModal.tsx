@@ -77,7 +77,6 @@ export function SkillListingModal({ open, management, options, optionsError, onR
   const [sceneOpen, setSceneOpen] = useState(false);
   const [collapsed, setCollapsed] = useState<readonly string[]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
-  const folderInput = useRef<HTMLInputElement>(null);
   const iconInput = useRef<HTMLInputElement>(null);
   const tagInput = useRef<HTMLInputElement>(null);
   const sceneWrap = useRef<HTMLDivElement>(null);
@@ -248,11 +247,11 @@ export function SkillListingModal({ open, management, options, optionsError, onR
           <input ref={iconInput} className="visually-hidden" type="file" accept=".png,.jpg,.jpeg,image/png,image/jpeg" onChange={event => { const file = event.currentTarget.files?.[0]; if (file) void chooseIcon(file); event.currentTarget.value = ''; }} />
         </div>
         <div className="listing-grid">
-          <label className="listing-field"><span>技能名称 <em>*</em></span><Input aria-label="技能名称" placeholder="请输入技能名称" maxLength={200} value={skillName} onChange={event => setSkillName(event.currentTarget.value)} /></label>
-          <label className="listing-field"><span>英文名称 <em>*</em></span><Input aria-label="英文名称" placeholder="英文名称需以字母开头，仅支持字母、数字、下划线和中划线" maxLength={200} value={skillNameEn} onChange={event => setSkillNameEn(event.currentTarget.value)} /><small>创建后不可修改</small></label>
-          <label className="listing-field"><span>版本号 <em>*</em></span><Input aria-label="版本号" placeholder="例如 v1.0.0" maxLength={64} value={skillVersion} onChange={event => setSkillVersion(event.currentTarget.value)} /></label>
-          <label className="listing-field"><span>Skill 类型 <em>*</em></span><Select aria-label="Skill 类型" value={skillType} onChange={event => setSkillType(event.currentTarget.value)}><option value="">请选择 Skill 类型</option>{(options?.skillTypes ?? []).map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</Select></label>
-          <div className="listing-field"><span>所属业务场景 <em>*</em></span>
+          <label className="listing-field"><span><em>*</em>技能名称</span><Input aria-label="技能名称" placeholder="请输入技能名称" maxLength={200} value={skillName} onChange={event => setSkillName(event.currentTarget.value)} /></label>
+          <label className="listing-field"><span><em>*</em>英文名称</span><Input aria-label="英文名称" placeholder="英文名称需以字母开头，仅支持字母、数字、下划线和中划线" maxLength={200} value={skillNameEn} onChange={event => setSkillNameEn(event.currentTarget.value)} /><small>创建后不可修改</small></label>
+          <label className="listing-field"><span><em>*</em>版本号</span><Input aria-label="版本号" placeholder="例如 v1.0.0" maxLength={64} value={skillVersion} onChange={event => setSkillVersion(event.currentTarget.value)} /></label>
+          <label className="listing-field"><span><em>*</em>Skill类型</span><Select aria-label="Skill 类型" value={skillType} onChange={event => setSkillType(event.currentTarget.value)}><option value="">请选择 Skill 类型</option>{(options?.skillTypes ?? []).map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</Select></label>
+          <div className="listing-field"><span><em>*</em>所属业务场景</span>
             <div className="scene-select" ref={sceneWrap}>
               <button type="button" className={`scene-trigger${sceneOpen ? ' open' : ''}`} aria-haspopup="tree" aria-expanded={sceneOpen} onClick={() => setSceneOpen(value => !value)}>
                 <span className={selectedSceneLabels.length ? '' : 'placeholder'}>{selectedSceneLabels.length ? selectedSceneLabels.join('、') : '请选择业务场景（可含一级）'}</span>
@@ -264,7 +263,7 @@ export function SkillListingModal({ open, management, options, optionsError, onR
             </div>
             <small>可多选；父级与子级独立选择，不做级联。</small>
           </div>
-          <label className="listing-field"><span>来源节点 <em>*</em></span>
+          <label className="listing-field"><span><em>*</em>来源节点</span>
             <Select aria-label="来源节点" value={sourceNode} onChange={event => setSourceNode(event.currentTarget.value)}>
               {nodeGroups.map(([type, label]) => {
                 const group = nodes.filter(node => node.nodeType === type);
@@ -273,25 +272,25 @@ export function SkillListingModal({ open, management, options, optionsError, onR
             </Select>
             <small>按节点类型分组（本级 / 上级 / 同级 / 下级）</small>
           </label>
-          <label className="listing-field listing-field-wide"><span>描述 <em>*</em></span><Textarea aria-label="描述" className="listing-textarea" maxLength={1000} placeholder="请输入技能的功能描述" value={skillDescr} onChange={event => setSkillDescr(event.currentTarget.value)} /><small className="listing-counter">{skillDescr.length} / 1000</small></label>
+          <label className="listing-field listing-field-wide"><span><em>*</em>描述</span><Textarea aria-label="描述" className="listing-textarea" maxLength={1000} placeholder="请输入技能的功能描述" value={skillDescr} onChange={event => setSkillDescr(event.currentTarget.value)} /><small className="listing-counter">{skillDescr.length} / 1000</small></label>
           <div className="listing-field listing-field-wide"><span>自定义标签</span>
             <div className="listing-tags" onClick={() => tagInput.current?.focus()}>
               {tags.map(tag => <span className="listing-tag" key={tag}>{tag}<button type="button" aria-label={`移除标签 ${tag}`} onClick={() => setTags(current => current.filter(item => item !== tag))}>×</button></span>)}
               <Input ref={tagInput} aria-label="自定义标签" placeholder="输入后回车添加标签" maxLength={40} value={tagDraft} onChange={event => setTagDraft(event.currentTarget.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); addTag(); } }} />
             </div>
           </div>
-          <div className="listing-field listing-field-wide"><span>是否公开 <em>*</em></span>
+          <div className="listing-field listing-field-wide"><span><em>*</em>是否公开</span>
             <div className="listing-radio-group" role="radiogroup" aria-label="是否公开">
               {(options?.publicOptions ?? []).map(option => <label key={option.value} className="listing-radio"><input type="radio" name="listing-public" value={option.value} checked={isPublic === option.value} onChange={() => setIsPublic(option.value)} /><span>{option.label}</span></label>)}
             </div>
           </div>
-          <label className="listing-field listing-field-wide"><span>上架原因 <em>*</em></span><Textarea aria-label="上架原因" className="listing-textarea" maxLength={2000} placeholder="请说明本次上架的原因" value={reason} onChange={event => setReason(event.currentTarget.value)} /></label>
+          <label className="listing-field listing-field-wide"><span><em>*</em>上架原因</span><Textarea aria-label="上架原因" className="listing-textarea" maxLength={2000} placeholder="请说明本次上架的原因" value={reason} onChange={event => setReason(event.currentTarget.value)} /></label>
         </div>
       </section>
       <section className="listing-section">
         <h3><i aria-hidden />配置</h3>
         <div className="listing-field">
-          <span>Skill 文件 <em>*</em></span>
+          <span><em>*</em>Skill 文件</span>
           {staged ? <div className="listing-file" data-testid="skill-listing-review">
             <div className="listing-file-main"><strong>{staged.fileName}</strong><small>{staged.inspection.files.length} 个文件 · {sizeOf(staged.inspection.totalBytes)}</small><small className="slug">{staged.inspection.name}</small></div>
             <Button onClick={() => { fileInput.current?.click(); }} disabled={busy || fileBusy}>重新选择</Button>
@@ -306,15 +305,14 @@ export function SkillListingModal({ open, management, options, optionsError, onR
             <small>仅可上传 1 个 .md 或 .zip 文件</small>
           </button>}
           <input ref={fileInput} className="visually-hidden" type="file" accept=".zip,.md,text/markdown,application/zip" onChange={event => { if (event.currentTarget.files) void inspect(event.currentTarget.files); event.currentTarget.value = ''; }} />
-          <input ref={folderInput} className="visually-hidden" type="file" multiple {...({ webkitdirectory: '', directory: '' } as React.InputHTMLAttributes<HTMLInputElement>)} onChange={event => { if (event.currentTarget.files) void inspect(event.currentTarget.files); event.currentTarget.value = ''; }} />
-          {!staged ? <div className="listing-file-actions">{fileBusy ? <Button onClick={() => operationAbort.current?.abort()}>取消上传</Button> : <Button onClick={() => folderInput.current?.click()} disabled={busy}>选择技能文件夹</Button>}</div> : null}
-          <small>压缩包或文件夹内必须且只能包含一个 SKILL.md；最多 50 MiB、400 个文件、6 层资源目录。</small>
+          {!staged && fileBusy ? <div className="listing-file-actions"><Button onClick={() => operationAbort.current?.abort()}>取消上传</Button></div> : null}
+          <small>压缩包内必须且只能包含一个 SKILL.md；最多 50 MiB、400 个文件、6 层资源目录。</small>
         </div>
       </section>
       {optionsError ? <p className="error" role="alert">表单字典加载失败：{optionsError}<Button onClick={onReloadOptions}>重试</Button></p> : null}
       {!options && !optionsError ? <p className="muted" role="status">正在读取表单字典…</p> : null}
       {error ? <p className="error" role="alert">{error}</p> : null}
     </div>
-    <footer className="listing-footer"><Button onClick={close} disabled={busy || fileBusy}>取消</Button><Button variant="primary" className="listing-submit" disabled={busy || fileBusy || !staged} onClick={() => void submit()}>{busy ? '正在提交…' : '保存并上架'}</Button></footer>
+    <footer className="listing-footer"><Button onClick={close} disabled={busy || fileBusy}>取消</Button><Button variant="primary" className="listing-submit" disabled={busy || fileBusy || !staged} onClick={() => void submit()}>{busy ? '正在提交…' : '提交申请'}</Button></footer>
   </Modal>;
 }

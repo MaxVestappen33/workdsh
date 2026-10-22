@@ -269,8 +269,7 @@ export const skillsListingCss = `${modalCss}
 .skill-listing-dialog .error button{margin-left:10px}
 /* 我的申请：状态筛选、审批状态徽标与卡片底部信息。 */
 .wd-skills .listing-toolbar{display:flex;align-items:center;gap:12px;margin:0 0 18px;min-height:36px}
-.wd-skills .listing-status-filter{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--dsw-alias-label-secondary)}
-.wd-skills .listing-status-filter select{min-height:34px;padding:4px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font:inherit}
+.wd-skills .listing-status-filter{display:flex;align-items:center;gap:12px;font-size:13px;color:var(--dsw-alias-label-secondary)}
 .wd-skills .status-badge,.skill-detail-dialog .status-badge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:500;white-space:nowrap}
 .wd-skills .status-badge.pending,.skill-detail-dialog .status-badge.pending{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 18%,transparent);color:var(--dsw-alias-state-warn-primary)}
 .wd-skills .status-badge.success,.skill-detail-dialog .status-badge.success{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 16%,transparent);color:var(--dsw-alias-state-success-primary)}
@@ -278,8 +277,9 @@ export const skillsListingCss = `${modalCss}
 .wd-skills .status-badge.neutral,.skill-detail-dialog .status-badge.neutral{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary)}
 .wd-skills .application-card .application-meta{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-top:10px}
 .wd-skills .application-card .application-meta small{color:var(--dsw-alias-label-tertiary);font-size:11px}
-.wd-skills .application-card .withdraw{flex:none;min-height:30px;height:30px;padding:0 10px;font-size:12px;color:var(--dsw-alias-label-secondary)}
-.wd-skills .application-card .withdraw:hover{color:var(--dsw-alias-label-primary)}
+.wd-skills .application-card .application-actions{display:flex;justify-content:flex-end;margin-top:10px}
+.wd-skills .application-card .withdraw{flex:none;min-height:32px;height:32px;padding:0 12px;font-size:12px}
+.skill-detail-dialog .withdraw{min-height:32px;height:32px;padding:0 12px;font-size:12px}
 @media(max-width:640px){.wd-dialog.skill-listing-dialog{width:calc(100vw - 24px);max-height:calc(100dvh - 24px)}.skill-listing-dialog .listing-header{padding:20px 60px 14px 20px}.skill-listing-dialog .listing-content{padding:0 20px 20px}.skill-listing-dialog .listing-footer{padding:14px 20px}.skill-listing-dialog .listing-grid{grid-template-columns:1fr}}
 
 }
@@ -304,4 +304,8 @@ ${controlsCss}
 .skill-listing-dialog .listing-radio-group{display:flex;align-items:center;gap:20px;min-height:36px}
 .skill-listing-dialog .listing-radio{display:inline-flex;align-items:center;gap:6px;font-size:13px;cursor:pointer}
 .skill-listing-dialog .listing-radio input{width:15px;height:15px;min-width:0;min-height:0;margin:0;padding:0;border:0;background:transparent}
+/* 审批状态下拉与模型市场筛选框同款：32 高、0.5px 边框、主题圆角，聚焦只换描边颜色。 */
+.wd-skills .listing-status-filter select{height:32px;min-height:32px;padding:0 10px;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);font:inherit;box-shadow:none}
+.wd-skills .listing-status-filter select:focus-visible{outline:none}
+.wd-skills .listing-status-filter select:focus{border-color:var(--dsw-alias-state-business-primary)}
 `;
