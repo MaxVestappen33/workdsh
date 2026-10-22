@@ -185,6 +185,10 @@ export interface ExpertSummary {
   readonly pinned: boolean;
   readonly lastUsedAt?: string;
   readonly updatedAt: string;
+  /** True when this expert came from a backend installation; gates execution in product mode. */
+  readonly installedFromCatalog: boolean;
+  /** Set when execution is refused although the expert is ready (e.g. not installed). */
+  readonly executionBlocked?: 'approval-required';
 }
 
 /** Full detail returned by `get`. */
@@ -196,6 +200,8 @@ export interface ExpertDetail {
   readonly canUse: boolean;
   readonly canEdit: boolean;
   readonly canManage: boolean;
+  readonly installedFromCatalog: boolean;
+  readonly executionBlocked?: 'approval-required';
 }
 
 /** Durable Session → expert-revision binding. Reserved before task creation; never re-bound. */
@@ -369,6 +375,214 @@ export interface ConfirmationRequest {
   readonly nonce: string;
 }
 
+// ── Remote catalog & local installation ─────────────────────────────────────
+
+export type RemoteExpertType = 'agent' | 'team';
+
+/** Package descriptor supplied by the backend list row (never a credential). */
+export interface RemoteExpertPackage {
+  readonly fileName: string;
+  /** Absolute HTTP(S) URL of the package archive. */
+  readonly url: string;
+  readonly bytes?: number;
+  /** sha256 hex of the archive when the backend provides one. */
+  readonly digest?: string;
+}
+
+/** One backend business scene (`bizSceneList` entry) usable as a catalog filter. */
+export interface RemoteExpertScene {
+  readonly value: string;
+  readonly label: string;
+}
+
+/** One backend catalog row (`queryAuthorizedExpertList` / `...GroupList`). */
+export interface RemoteExpertSummary {
+  readonly remoteId: string;
+  readonly expertType: RemoteExpertType;
+  readonly name: string;
+  readonly description: string;
+  readonly version: string;
+  readonly tags: readonly string[];
+  readonly icon?: string;
+  readonly color?: string;
+  readonly capability?: string;
+  readonly useCase?: string;
+  readonly domain?: string;
+  readonly domainLabel?: string;
+  readonly owner?: string;
+  readonly department?: string;
+  readonly subscribers?: number;
+  readonly downloadCount?: number;
+  readonly rating?: number;
+  readonly memberIds: readonly string[];
+  readonly scenes: readonly RemoteExpertScene[];
+  readonly updatedAt?: string;
+  readonly package?: RemoteExpertPackage;
+  /** Present when this row is installed locally. */
+  readonly installed?: ExpertInstallationSummary;
+}
+
+/** Local installation state merged into a catalog row. */
+export interface ExpertInstallationSummary {
+  readonly expertId: string;
+  readonly version: string;
+  readonly status: ExpertInstallationStatus;
+  readonly updateAvailable: boolean;
+  readonly boundSessions: number;
+}
+
+export type ExpertInstallationStatus = 'ready' | 'missing-dependency' | 'unavailable';
+
+/** Durable record of one backend expert installed into this deployment. */
+export interface ExpertInstallation {
+  /** `${expertType}-${remoteId}` */
+  readonly remoteKey: string;
+  readonly remoteId: string;
+  readonly expertType: RemoteExpertType;
+  readonly expertId: string;
+  readonly version: string;
+  readonly fileName: string;
+  readonly sourceUrl: string;
+  readonly packageDigest?: string;
+  readonly status: ExpertInstallationStatus;
+  readonly issues: readonly DomainIssue[];
+  readonly owner: ResourceOwner;
+  readonly installedAt: string;
+  readonly updatedAt: string;
+}
+
+export interface RemoteExpertListQuery {
+  readonly expertType?: RemoteExpertType;
+  readonly keyword?: string;
+  /** Comma-joined `bizScene` ids; the backend expands parent scenes itself. */
+  readonly bizScene?: string;
+  readonly pageNo?: number;
+  readonly pageSize?: number;
+}
+
+export interface RemoteExpertListResult {
+  readonly available: boolean;
+  /** Present when `available` is false, for a readable empty state. */
+  readonly reason?: string;
+  readonly items: readonly RemoteExpertSummary[];
+  readonly pageNo: number;
+  readonly pageSize: number;
+  readonly total: number;
+  readonly pages: number;
+}
+
+export interface RemoteInstallRequest {
+  readonly expertType: RemoteExpertType;
+  readonly remoteId: string;
+  readonly version?: string;
+}
+
+export interface InstallReceipt {
+  readonly installation: ExpertInstallation;
+  readonly expertId: string;
+  /** false when a Skill dependency is missing, so the expert cannot be summoned yet. */
+  readonly published: boolean;
+  readonly issues: readonly DomainIssue[];
+}
+
+export interface UninstallReceipt {
+  readonly remoteKey: string;
+  readonly expertId: string;
+  readonly deletedExpertIds: readonly string[];
+  readonly boundSessions: number;
+}
+
+// ── Listing request (submit a local expert for backend review) ──────────────
+
+export interface ListingOption {
+  readonly value: string;
+  readonly label: string;
+}
+
+/** `queryAiNodeList` row: the source node an asset is submitted from. */
+export interface ListingNodeOption extends ListingOption {
+  readonly nodeType: string;
+}
+
+export interface ExpertListingOptions {
+  readonly available: boolean;
+  readonly reason?: string;
+  readonly nodes: readonly ListingNodeOption[];
+  readonly publicOptions: readonly ListingOption[];
+  readonly domains: readonly ListingOption[];
+}
+
+export interface ExpertListingRequest {
+  readonly expertId: string;
+  readonly name: string;
+  readonly version?: string;
+  readonly sourceNode: string;
+  readonly capability: string;
+  readonly tags: readonly string[];
+  readonly owner: string;
+  readonly department: string;
+  /** Dictionary `ai_expert_domain`; the backend rejects a listing without it. */
+  readonly domain: string;
+  readonly isPublic: string;
+  /** false stores the asset as a draft without creating a listing application. */
+  readonly listed: boolean;
+  /** Optional icon as a data URL; the Host uploads it through the shared attachment endpoint. */
+  readonly iconDataUrl?: string;
+}
+
+export interface DeleteExpertReceipt {
+  readonly expertId: string;
+  readonly deletedExpertIds: readonly string[];
+  readonly boundSessions: number;
+}
+
+// ── My listing applications (queryMyListingExpert[Group]List) ───────────────
+
+/** Row from the backend's "my listing" ledger; `status` keeps the backend code. */
+export interface MyListingSummary {
+  readonly remoteId: string;
+  readonly expertType: RemoteExpertType;
+  readonly name: string;
+  readonly description: string;
+  readonly version: string;
+  /** 1 draft / 2 pending / 3 listed / 4 rejected / 5 withdrawn. */
+  readonly status: string;
+  readonly statusLabel: string;
+  readonly tags: readonly string[];
+  readonly domain?: string;
+  readonly owner?: string;
+  readonly department?: string;
+  readonly listingReason?: string;
+  readonly offlineReason?: string;
+  readonly memberIds: readonly string[];
+  readonly updatedAt?: string;
+  readonly package?: RemoteExpertPackage;
+}
+
+export interface MyListingQuery {
+  readonly expertType?: RemoteExpertType;
+  readonly keyword?: string;
+  readonly pageNo?: number;
+  readonly pageSize?: number;
+}
+
+export interface MyListingListResult {
+  readonly available: boolean;
+  readonly reason?: string;
+  readonly items: readonly MyListingSummary[];
+  readonly pageNo: number;
+  readonly pageSize: number;
+  readonly total: number;
+  readonly pages: number;
+}
+
+/** Withdraw a pending listing application (`withdrawListingRequest`). */
+export interface WithdrawListingRequest {
+  readonly expertType: RemoteExpertType;
+  readonly remoteId: string;
+  readonly reason?: string;
+}
+
 // ── Stable error codes ──────────────────────────────────────────────────────
 
 /** Wire codes share the `experts/` prefix; the UI maps by code and never parses messages. */
@@ -393,6 +607,12 @@ export type ExpertErrorCode =
   | 'experts/outcome-unknown'
   | 'experts/unavailable'
   | 'experts/invalid-request'
+  | 'experts/remote-unavailable'
+  | 'experts/install-package-missing'
+  | 'experts/install-digest-mismatch'
+  | 'experts/install-invalid'
+  | 'experts/not-installed'
+  | 'experts/approval-required'
   | 'experts/internal';
 
 // ── Host service interface ──────────────────────────────────────────────────
@@ -435,6 +655,23 @@ export interface ExpertsService {
   operation(actor: ActorContext, operationId: string, signal?: AbortSignal): Promise<Operation>;
   /** Verify a bound Session's artifacts before execution/recovery; rejects tampering, drift and unbound forks. */
   verifyBinding(actor: ActorContext, sessionId: string, signal?: AbortSignal): Promise<ExecutionBinding>;
+  /** Backend catalog. `available: false` when this deployment has no business backend binding. */
+  remoteList(actor: ActorContext, query: RemoteExpertListQuery, signal?: AbortSignal): Promise<RemoteExpertListResult>;
+  /** Download, verify and import one catalog row into this deployment, then publish it. */
+  installRemote(actor: ActorContext, request: RemoteInstallRequest, context: MutationContext, signal?: AbortSignal): Promise<InstallReceipt>;
+  /** Hard delete an installed expert (and team members) including every local file. */
+  uninstallRemote(actor: ActorContext, remoteKey: string, context: MutationContext, signal?: AbortSignal): Promise<UninstallReceipt>;
+  listInstallations(actor: ActorContext, signal?: AbortSignal): Promise<readonly ExpertInstallation[]>;
+  /** Backend form dictionaries for the listing modal (`queryAiNodeList`, `yn`, `ai_expert_domain`). */
+  listingOptions(actor: ActorContext, signal?: AbortSignal): Promise<ExpertListingOptions>;
+  /** Package the current draft, upload it, then submit the backend listing request. */
+  submitListing(actor: ActorContext, request: ExpertListingRequest, signal?: AbortSignal): Promise<string>;
+  /** Hard delete a self-made expert and every local file it owns. */
+  deleteExpert(actor: ActorContext, expertId: string, context: MutationContext, signal?: AbortSignal): Promise<DeleteExpertReceipt>;
+  /** Ledger of the assets this member submitted for review (`queryMyListing*List`). */
+  myListings(actor: ActorContext, query: MyListingQuery, signal?: AbortSignal): Promise<MyListingListResult>;
+  /** Withdraw a pending application; returns the backend message. */
+  withdrawListing(actor: ActorContext, request: WithdrawListingRequest, signal?: AbortSignal): Promise<string>;
 }
 
 /** The action vocabulary audited and authorized for expert operations. */
@@ -443,4 +680,7 @@ export type ExpertAction =
   | 'experts.copy' | 'experts.validate' | 'experts.publish' | 'experts.set-availability'
   | 'experts.set-preference' | 'experts.prepare-execution' | 'experts.create-execution'
   | 'experts.prepare-handoff' | 'experts.create-handoff' | 'experts.preview-import'
-  | 'experts.commit-import' | 'experts.export' | 'experts.operation' | 'experts.verify-binding';
+  | 'experts.commit-import' | 'experts.export' | 'experts.operation' | 'experts.verify-binding'
+  | 'experts.remote-list' | 'experts.install' | 'experts.uninstall' | 'experts.list-installations'
+  | 'experts.listing-options' | 'experts.submit-listing' | 'experts.delete-expert'
+  | 'experts.my-listings' | 'experts.withdraw-listing';

@@ -52,12 +52,17 @@ export function actionAccess(action: ExpertAction): AccessAction {
   switch (action) {
     case 'experts.publish':
     case 'experts.set-availability':
+    case 'experts.install':
+    case 'experts.uninstall':
+    case 'experts.delete-expert':
       return 'manage';
     case 'experts.create-draft':
     case 'experts.update-draft':
     case 'experts.copy':
     case 'experts.validate':
     case 'experts.commit-import':
+    case 'experts.submit-listing':
+    case 'experts.withdraw-listing':
       return 'edit';
     case 'experts.prepare-execution':
     case 'experts.create-execution':

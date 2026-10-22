@@ -85,6 +85,36 @@ dsh --profile workdsh
 
 `ExpertsManagerOptions.includeDefaultSkillRoots` 为可选启动配置。省略或 true 保留个人版默认项目/用户技能发现；false 生成仅使用受管 Skill 快照及专家包资源的官方 filesystem provider 配置。false 参与不可变 preset 标识及输入摘要，不能复用旧的默认扫描 preset。此配置由服务器装配传入，不从浏览器请求接收。独立目录不等于完整企业执行验收；官方 preset/子 Agent 仍需成员组合验证。
 
+### 默认专家种子
+
+`ExpertsManagerOptions.seedDefaults` 出厂不开启：安装后的专家目录为空，三个随包模板（需求分析顾问、文档评审顾问、工作复盘顾问）只在显式传 `true` 时种入本地目录，供探针与本地调试当夹具使用。关闭种子时，旧版本已种下且仍为 `origin: default` 的专家会在首次读取目录时一次性归档（可逆状态，不物理删除），使升级后的目录与全新安装一致；已发布修订、preset 和已绑定会话不受影响。默认专家本身不可编辑（`default-immutable`），用户需要时可复制为个人专家再修改。
+
+
+### 后台专家目录与本地安装
+
+接入业务后台（`workdshBackend` 绑定）后，专家中心的「全部」改为后台目录，数据来自：
+
+| 用途 | 接口 |
+| --- | --- |
+| 专家目录 | `GET /desktop-client/expert/queryAuthorizedExpertList`（固定 `status=3`） |
+| 专家团目录 | `GET /desktop-client/expertgroup/queryAuthorizedExpertGroupList`（固定 `status=3`） |
+| 安装包 | 列表行的 `fjxxList[]`（`filePath` / `fileName` / `fileSize` / `sha256`） |
+
+只有安装到本地才能召唤：`installRemote` 会下载并校验安装包，经现有导入预检后创建本地专家并立即发布；未安装的后台条目只能浏览。包缺少 `fjxxList` 附件时明确拒绝安装；声明的 sha256 不一致也会拒绝。缺少 Skill 依赖时专家仍会安装，但保持未发布状态，召唤会被 readiness 拦下，补齐技能后可重试发布。
+
+`uninstallRemote` 是硬删除：删除 `experts/drafts/revisions/preferences/bindings` 记录、团队派生成员、安装记录，并删除 `presets/wd-exp-*` 磁盘目录。已有会话绑定的数量会随安装状态返回，界面据此二次确认。后台未接入（个人模式/未登录）时，中心页回退到本地目录，行为与之前一致。
+
+### 仅安装用户可用（执行闸门）
+
+`ExpertsManagerOptions.requireInstalledExpert` 默认开启（产品模式）：只有命中 `installations` 记录的专家可以召唤。团队成员按 `teamParentId` 继承主理人的安装状态。自建、草稿、已发布但未上架审核的专家仍可查看、编辑和导出，但 `prepareExecution`／`createExecution`／恢复会话的 `agent/pre-step` 会以 `experts/approval-required` 拒绝执行。列表与详情通过 `installedFromCatalog` 与 `executionBlocked` 告诉界面该禁用「召唤」。探针、Web 预览和开发夹具可显式传 `false` 保留本地执行能力。
+
+### 上架申请与删除
+
+自建专家可在列表或详情点「申请上架」：`submitListing` 用当前草稿导出标准 `.expert.zip`，通过共享附件接口 `POST /desktop-client/upload`（biz = `desktop-client/expert` 或 `desktop-client/expertgroup`）上传，再调用 `expert/listingRequest` 或 `expertgroup/listingRequest`；表单字典来自 `queryAiNodeList`、`getDictItems/yn`、`getDictItems/ai_expert_domain`。上传文件不落本地持久化，提交只进入后台审批流，不改变本地发布状态。
+
+「我的申请」读取后台台账 `queryMyListingExpertList` / `queryMyListingExpertGroupList`（只含当前登录人提交过申请的资产，不限状态）。界面按 `status` 显示草稿 / 待审批 / 已上架 / 已驳回 / 已下架，与「我的专家」同版式卡片展示，并可按审批状态就地筛选；专家 / 专家团页签带各自条数统计。`fjxxList` 在该接口有值，可作为「附件已提交」的依据。列表分页参数为 `pageNo` / `pageSize`，`keyword` 同时匹配名称与描述。
+
+卸载（后台安装）与删除（自建）都是硬删除：移除专家、团队派生成员、`drafts/revisions/preferences/bindings` 记录、`presets/wd-exp-*` 磁盘目录与安装记录。市场安装的专家在「我的」只提供召唤与卸载；自建专家提供继续编辑、编辑、复制、导出、申请上架与删除（不再提供停用/归档）。
 
 ### 专家文件持久化与连接器
 

@@ -12,6 +12,9 @@ import { ExpertDetailModal } from './ExpertDetailModal.js';
 import { expertDraftId } from '../domain/navigation.js';
 import { ExpertDraftEditor } from './ExpertDraftEditor.js';
 import { ImportExpertModal } from './ImportExportModals.js';
+import { RemoteExperts } from './RemoteExperts.js';
+import { ExpertListingModal } from './ExpertListingModal.js';
+import { MyApplications } from './MyApplications.js';
 import { expertsCss } from './styles.js';
 
 type ExpertsPanelInjected = {
@@ -28,8 +31,7 @@ type ExpertsPanelInjected = {
 };
 export type ExpertsPanelProps = PropsRuntime<'main'> & InjectFace<ExpertsPanelInjected>;
 
-type View = 'center' | 'mine';
-type OriginFilter = 'all' | 'default' | 'personal';
+type View = 'center' | 'mine' | 'applications';
 type StateFilter = 'all' | 'draft' | 'published' | 'disabled' | 'archived';
 type Notice = { kind: 'info' | 'warn' | 'error'; text: string };
 
@@ -57,7 +59,6 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
   const [typeCounts, setTypeCounts] = useState({ agent: 0, team: 0 });
   const [query, setQuery] = useState('');
   const [debounced, setDebounced] = useState('');
-  const [originFilter, setOriginFilter] = useState<OriginFilter>('all');
   const [stateFilter, setStateFilter] = useState<StateFilter>('all');
   const [items, setItems] = useState<readonly ExpertSummary[]>([]);
   const [total, setTotal] = useState(0);
@@ -67,11 +68,20 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
   const [error, setError] = useState('');
   const [notice, setNotice] = useState<Notice | undefined>();
   const [mineCount, setMineCount] = useState(0);
+  /** 「我的申请」按类型的条数：既用于顶部按钮总数，也用于「我的申请」页签上的数字统计。 */
+  const [applicationCounts, setApplicationCounts] = useState({ agent: 0, team: 0 });
   const [detailId, setDetailId] = useState<string>();
+  /** Set when the detail was opened from the backend catalog: only 召唤 and 卸载 apply. */
+  const [detailRemote, setDetailRemote] = useState<{ remoteKey: string; boundSessions: number }>();
+  /** `expertId → remoteKey` for experts installed from the backend catalog. */
+  const [installations, setInstallations] = useState<ReadonlyMap<string, string>>(new Map());
+  const [listingId, setListingId] = useState<string>();
   const [editorId, setEditorId] = useState<string | undefined>(() => expertDraftId(window.location.search));
   const [importOpen, setImportOpen] = useState(false);
   const [actionMenu, setActionMenu] = useState<string>();
   const [acting, setActing] = useState(false);
+  /** Bumped by 刷新 so the backend catalog reloads; it is the only center-view source. */
+  const [remoteReload, setRemoteReload] = useState(0);
   const search = useRef<HTMLInputElement>(null);
   const loadSequence = useRef(0);
   const kindLabel = kind === 'team' ? '专家团' : '专家';
@@ -85,15 +95,13 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
 
   useEffect(() => { const timer = window.setTimeout(() => setDebounced(query.trim()), 300); return () => window.clearTimeout(timer); }, [query]);
 
+  /** Local catalog query. Only the 「我的」 view uses it; the center view is backend-only. */
   const buildQuery = useCallback(() => {
     const search_ = debounced || undefined;
-    if (view === 'center') {
-      return { expertType: kind, ...(search_ ? { search: search_ } : {}), ...(originFilter === 'all' ? {} : { origin: originFilter as 'default' | 'personal' }), availability: 'enabled' as const, limit: 100 };
-    }
     const availability = stateFilter === 'disabled' || stateFilter === 'archived' || stateFilter === 'published'
       ? (stateFilter === 'published' ? 'enabled' : stateFilter) as ExpertAvailability : undefined;
     return { expertType: kind, ...(search_ ? { search: search_ } : {}), origin: 'personal' as const, ...(availability ? { availability } : {}), limit: 100 };
-  }, [view, kind, debounced, originFilter, stateFilter]);
+  }, [kind, debounced, stateFilter]);
 
   const load = useCallback(async (cursor?: string) => {
     const sequence = ++loadSequence.current;
@@ -121,8 +129,30 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
     try { const [agent, team] = await Promise.all([management.list({ origin: 'personal', expertType: 'agent', limit: 1 }), management.list({ origin: 'personal', expertType: 'team', limit: 1 })]); setTypeCounts({ agent: agent.total, team: team.total }); setMineCount(agent.total + team.total); } catch { /* non-fatal badge */ }
   }, [management]);
 
-  useEffect(() => { void load(); }, [load]);
+  // The center view is backend-only, so the local catalog is fetched only for 「我的」.
+  useEffect(() => {
+    if (view !== 'mine') { setBusy(false); return; }
+    void load();
+  }, [load, view]);
   useEffect(() => { void loadMineCount(); }, [loadMineCount, items]);
+  /** 「我的申请」数字统计：两类申请的总条数（后台台账，不含本地记录）。 */
+  const loadApplicationCount = useCallback(async () => {
+    try {
+      const [agent, team] = await Promise.all([
+        management.myListings({ expertType: 'agent', pageNo: 1, pageSize: 1 }),
+        management.myListings({ expertType: 'team', pageNo: 1, pageSize: 1 }),
+      ]);
+      setApplicationCounts({ agent: agent.available ? agent.total : 0, team: team.available ? team.total : 0 });
+    } catch { setApplicationCounts({ agent: 0, team: 0 }); }
+  }, [management]);
+  useEffect(() => { void loadApplicationCount(); }, [loadApplicationCount]);
+  const loadInstallations = useCallback(async () => {
+    try {
+      const rows = await management.installations();
+      setInstallations(new Map(rows.map(row => [row.expertId, row.remoteKey])));
+    } catch { /* non-fatal: summaries still carry installedFromCatalog */ }
+  }, [management]);
+  useEffect(() => { void loadInstallations(); }, [loadInstallations]);
   useEffect(() => {
     const revalidate = () => { if (document.visibilityState === 'visible') { void load(); void loadMineCount(); } };
     window.addEventListener('focus', revalidate); document.addEventListener('visibilitychange', revalidate);
@@ -135,13 +165,19 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
   }, [actionMenu]);
 
   const visible = useMemo(() => {
-    if (view === 'center') return items.filter(item => item.publishedRevisionRef !== undefined);
     if (stateFilter === 'draft') return items.filter(item => item.publishedRevisionRef === undefined);
     if (stateFilter === 'published') return items.filter(item => item.publishedRevisionRef !== undefined);
     return items;
-  }, [items, view, stateFilter]);
+  }, [items, stateFilter]);
 
-  const refresh = useCallback(() => { void load(); void loadMineCount(); }, [load, loadMineCount]);
+  /** 刷新 reloads the active source only: backend catalog in the center, local list in 「我的」. */
+  const refresh = useCallback(() => {
+    setRemoteReload(value => value + 1);
+    if (view === 'mine') void load();
+    void loadMineCount();
+    void loadInstallations();
+    void loadApplicationCount();
+  }, [load, loadMineCount, loadInstallations, loadApplicationCount, view]);
   const closeEditor = () => {
     setEditorId(undefined);
     const url = new URL(window.location.href);
@@ -151,13 +187,45 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
 
   const runSummon = async (expertId: string, revisionId: string | undefined, draftText: string | undefined) => {
     setActing(true); setError('');
-    try { await summon(expertId, revisionId, draftText); setDetailId(undefined); }
+    try { await summon(expertId, revisionId, draftText); setDetailId(undefined); setDetailRemote(undefined); }
     catch (cause) { setError(messageOf(cause)); }
+    finally { setActing(false); }
+  };
+  /** Hard-delete an expert installed from the backend catalog, then refresh the catalog. */
+  const uninstallInstalled = async (remote: { remoteKey: string; boundSessions: number }) => {
+    const warning = remote.boundSessions > 0
+      ? `该专家已被 ${remote.boundSessions} 个会话使用，卸载后这些会话将无法继续使用。\n\n将删除本地专家及其全部文件，确定卸载吗？`
+      : '将删除本地专家及其全部文件，确定卸载吗？';
+    if (!window.confirm(warning)) return;
+    setActing(true); setError('');
+    try {
+      await management.uninstallRemote(remote.remoteKey, management.newOperationId('uninstall'));
+      setDetailId(undefined); setDetailRemote(undefined);
+      refresh();
+    } catch (cause) { setError(messageOf(cause)); }
     finally { setActing(false); }
   };
   const createExpert = async (type: 'agent' | 'team' = kind) => {
     setActing(true); setError('');
     try { await createExpertTask(type); } catch (cause) { setError(messageOf(cause)); } finally { setActing(false); }
+  };
+  /** Installed expert (opened from 「我的」): resolve its installation key, then hard delete. */
+  const uninstallById = async (expertId: string) => {
+    const remoteKey = installations.get(expertId);
+    if (!remoteKey) { setError('未找到该专家的安装记录，请刷新后重试。'); return; }
+    await uninstallInstalled({ remoteKey, boundSessions: 0 });
+  };
+  /** Self-made expert: hard delete records, members, bindings and preset files. */
+  const deleteLocalById = async (expertId: string) => {
+    if (!window.confirm('将删除该专家及其全部本地文件，删除后无法恢复。确定删除吗？')) return;
+    setActing(true); setError('');
+    try {
+      await management.deleteExpert(expertId, management.newOperationId('delete'));
+      setDetailId(undefined); setDetailRemote(undefined);
+      setNotice({ kind: 'info', text: '已删除该专家及其本地文件。' });
+      refresh();
+    } catch (cause) { setError(messageOf(cause)); }
+    finally { setActing(false); }
   };
   const setPreference = async (summary: ExpertSummary, pinned: boolean) => {
     setActionMenu(undefined);
@@ -205,8 +273,12 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
           aria-current={active ? 'page' : undefined}
           onClick={() => { if (!active && target) openCapability(target); }}>{icon(key)}{label}</button>;
       })}
-      <Input ref={search} className="search" aria-label="搜索专家" placeholder={view === 'mine' ? `搜索我创建的${kind === 'team' ? '专家团' : '专家'}` : `搜索${kindLabel}`} value={query}
+      <Input ref={search} className="search" aria-label="搜索专家"
+        placeholder={view === 'mine' ? `搜索我创建的${kind === 'team' ? '专家团' : '专家'}` : view === 'applications' ? '搜索我的上架申请' : `搜索${kindLabel}`}
+        value={query}
         onChange={event => setQuery(event.currentTarget.value)} />
+      <Button className={`mine-toggle ${view === 'applications' ? 'active' : ''}`} aria-pressed={view === 'applications'}
+        onClick={() => { setView('applications'); setQuery(''); }}>我的申请 {applicationCounts.agent + applicationCounts.team}</Button>
       <Button className={`mine-toggle ${view === 'mine' ? 'active' : ''}`} aria-pressed={view === 'mine'}
         onClick={() => { setView('mine'); setQuery(''); }}>我的专家 {mineCount}</Button>
       <details className="create-menu"><summary className="create-expert">制作专家</summary><div role="menu">
@@ -215,38 +287,42 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
       </div></details>
     </header>
 
-    {view === 'mine' && <Button variant="ghost" size="sm" className="back-center" onClick={() => { setView('center'); setQuery(''); setStateFilter('all'); }}>‹ 全部专家</Button>}
+    {view !== 'center' && <Button variant="ghost" size="sm" className="back-center" onClick={() => { setView('center'); setQuery(''); setStateFilter('all'); }}>‹ 全部专家</Button>}
     <div className="section-head">
-      <nav className="work-types" aria-label={view === 'mine' ? '我的作品类型' : '专家中心类型'}>{([['agent', '专家'], ['team', '专家团']] as const).map(([type, label]) => <button key={type} className={kind === type ? 'active' : ''} aria-pressed={kind === type} onClick={() => { setKind(type); setQuery(''); }}>{label}{view === 'mine' && <span>{typeCounts[type]}</span>}</button>)}</nav>
+      <nav className="work-types" aria-label={view === 'mine' ? '我的作品类型' : '专家中心类型'}>{([['agent', '专家'], ['team', '专家团']] as const).map(([type, label]) => <button key={type} className={kind === type ? 'active' : ''} aria-pressed={kind === type} onClick={() => { setKind(type); setQuery(''); }}>{label}{view === 'mine' && <span>{typeCounts[type]}</span>}{view === 'applications' && <span>{applicationCounts[type]}</span>}</button>)}</nav>
       <div className="section-actions">
-        <Button onClick={() => setImportOpen(true)}>导入</Button>
+        {view !== 'applications' && <Button onClick={() => setImportOpen(true)}>导入</Button>}
         <Button onClick={refresh} disabled={busy}>刷新</Button>
       </div>
     </div>
 
-    {view === 'center'
-      ? <nav className="filter-tabs" aria-label="来源过滤">
-        {([['all', '全部'], ['default', '默认'], ['personal', '我的']] as const).map(([key, label]) =>
-          <Button key={key} className={originFilter === key ? 'active' : ''} aria-current={originFilter === key ? 'page' : undefined}
-            onClick={() => setOriginFilter(key)}>{label}</Button>)}
-      </nav>
-      : <nav className="filter-tabs" aria-label="状态过滤">
-        {([['all', '全部'], ['draft', '草稿'], ['published', '已发布'], ['disabled', '已停用'], ['archived', '已归档']] as const).map(([key, label]) =>
-          <Button key={key} className={stateFilter === key ? 'active' : ''} aria-current={stateFilter === key ? 'page' : undefined}
-            onClick={() => setStateFilter(key)}>{label}</Button>)}
-      </nav>}
+    {/* 中心页不提供来源筛选：后台目录是唯一来源；状态筛选只属于「我的」。 */}
+    {view === 'mine' && <nav className="filter-tabs" aria-label="状态过滤">
+      {([['all', '全部'], ['draft', '草稿'], ['published', '已发布'], ['disabled', '已停用'], ['archived', '已归档']] as const).map(([key, label]) =>
+        <Button key={key} className={stateFilter === key ? 'active' : ''} aria-current={stateFilter === key ? 'page' : undefined}
+          onClick={() => setStateFilter(key)}>{label}</Button>)}
+    </nav>}
 
     {notice && <div className={`notice ${notice.kind}`} role="status"><div className="notice-body"><span>{notice.text}</span></div><Button onClick={() => setNotice(undefined)} aria-label="关闭提示">×</Button></div>}
-    <div role="status" aria-live="polite" className={error ? 'error counts' : 'counts'}>
-      {busy ? '正在读取专家目录…' : error || `目录共 ${total} 个${kindLabel} · 当前显示 ${visible.length} 个${debounced ? `（搜索“${debounced}”）` : ''}`}
-    </div>
+    {/* 中心页只渲染后台目录：本地列表仅在「我的」出现，不存在两个数据源切换。 */}
+    {view === 'center'
+      ? <RemoteExperts management={management} kind={kind} keyword={debounced} onChanged={refresh} reloadKey={remoteReload}
+        onOpenInstalled={(expertId, remote) => { setDetailId(expertId); setDetailRemote(remote); }} />
+      : view === 'applications'
+        ? <MyApplications management={management} kind={kind} keyword={debounced} reloadKey={remoteReload} />
+        : <>
+    {busy
+      ? <div className="remote-status" role="status" aria-live="polite"><span className="muted">正在读取专家目录…</span></div>
+      : <div role="status" aria-live="polite" className={error ? 'error counts' : 'counts'}>
+        {error || `目录共 ${total} 个${kindLabel} · 当前显示 ${visible.length} 个${debounced ? `（搜索“${debounced}”）` : ''}`}
+      </div>}
 
     {busy
-      ? <div className="grid" aria-hidden>{Array.from({ length: 8 }, (_, index) => <div className="skeleton" key={index} />)}</div>
+      ? null
       : !error && !visible.length
         ? <div className="empty">
           <strong>{debounced ? `没有匹配的${kindLabel}` : view === 'mine' ? `还没有自己的${kind === 'team' ? '专家团' : '专家'}` : `暂无可用${kindLabel}`}</strong>
-          <span className="muted">{debounced ? '保留搜索词，可清除后重试。' : view === 'mine' ? '从默认模板复制，或直接制作一个属于你的专家。' : '默认模板尚未就绪，请稍后重试或制作专家。'}</span>
+          <span className="muted">{debounced ? '保留搜索词，可清除后重试。' : view === 'mine' ? '从后台安装，或直接制作一个属于你的专家。' : '暂无可用条目。'}</span>
           <div className="empty-actions">
             {debounced && <Button onClick={() => { setQuery(''); search.current?.focus(); }}>清除搜索</Button>}
             <Button variant="primary" className="create-expert" disabled={acting} onClick={() => void createExpert()}>创建{kindLabel}</Button>
@@ -268,15 +344,25 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
                 <Button variant="ghost" size="sm" className="more-button" aria-label={`管理专家 ${summary.name}`} aria-haspopup="menu" aria-expanded={actionMenu === summary.id}
                   onClick={() => setActionMenu(current => (current === summary.id ? undefined : summary.id))}>•••</Button>
                 {actionMenu === summary.id && <div className="card-menu" role="menu">
-                  {draft
-                    ? <button role="menuitem" onClick={() => { void editInConversation(summary.id); }}>继续编辑</button>
-                    : <button role="menuitem" disabled={!usable || acting} onClick={() => void runSummon(summary.id, summary.publishedRevisionRef?.revisionId, undefined)}>召唤专家</button>}
-                  {summary.canEdit && !draft && <button role="menuitem" onClick={() => { void editInConversation(summary.id); }}>编辑</button>}
-                  <button role="menuitem" disabled={acting} onClick={() => void copyToMine(summary)}>复制到我的专家</button>
-                  <button role="menuitem" disabled={acting} onClick={() => void exportExpert(summary)}>导出</button>
-                  {summary.canManage && !draft && summary.availability === 'enabled' && <button role="menuitem" disabled={acting} onClick={() => void setAvailability(summary, 'disabled')}>停用</button>}
-                  {summary.canManage && summary.availability === 'disabled' && <button role="menuitem" disabled={acting} onClick={() => void setAvailability(summary, 'enabled')}>启用</button>}
-                  {summary.canManage && summary.availability !== 'archived' && <button className="danger" role="menuitem" disabled={acting} onClick={() => void setAvailability(summary, 'archived')}>归档</button>}
+                  {summary.installedFromCatalog ? <>
+                    {/* 市场安装：只能召唤或卸载。 */}
+                    <button role="menuitem" disabled={!usable || acting || summary.executionBlocked !== undefined}
+                      title={summary.executionBlocked === 'approval-required' ? '需上架审核并安装后才能召唤' : undefined}
+                      onClick={() => { setActionMenu(undefined); void runSummon(summary.id, summary.publishedRevisionRef?.revisionId, undefined); }}>召唤专家</button>
+                    <button className="danger" role="menuitem" disabled={acting}
+                      onClick={() => { setActionMenu(undefined); void uninstallById(summary.id); }}>卸载</button>
+                  </> : <>
+                    {draft
+                      ? <button role="menuitem" onClick={() => { setActionMenu(undefined); void editInConversation(summary.id); }}>继续编辑</button>
+                      : <button role="menuitem" disabled={!usable || acting || summary.executionBlocked !== undefined}
+                          title={summary.executionBlocked === 'approval-required' ? '需上架审核并安装后才能召唤' : undefined}
+                          onClick={() => { setActionMenu(undefined); void runSummon(summary.id, summary.publishedRevisionRef?.revisionId, undefined); }}>召唤专家</button>}
+                    {summary.canEdit && !draft && <button role="menuitem" onClick={() => { setActionMenu(undefined); void editInConversation(summary.id); }}>编辑</button>}
+                    <button role="menuitem" disabled={acting} onClick={() => { setActionMenu(undefined); void copyToMine(summary); }}>复制到我的专家</button>
+                    <button role="menuitem" disabled={acting} onClick={() => { setActionMenu(undefined); void exportExpert(summary); }}>导出</button>
+                    <button role="menuitem" disabled={acting} onClick={() => { setActionMenu(undefined); setListingId(summary.id); }}>申请上架</button>
+                    <button className="danger" role="menuitem" disabled={acting} onClick={() => { setActionMenu(undefined); void deleteLocalById(summary.id); }}>删除</button>
+                  </>}
                 </div>}
               </div>}
             </div>
@@ -286,7 +372,9 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
               <span className="badge">{summary.expertType === 'team' ? '专家团' : '专家'}</span>
               {!draft && <span className={`badge ${readiness.cls}`}>{readiness.label}</span>}
               {draft && <span className="badge">未发布</span>}
+              {summary.executionBlocked === 'approval-required' && <span className="badge warn">需上架审核</span>}
               {summary.origin === 'default' && <span className="badge">默认</span>}
+              {!summary.installedFromCatalog && <Button size="sm" className="listing-entry" disabled={acting} onClick={() => setListingId(summary.id)}>申请上架</Button>}
               <button className={`pin ${summary.pinned ? 'on' : ''}`} role="switch" aria-checked={summary.pinned}
                 aria-label={`${summary.pinned ? '取消置顶' : '置顶'}专家 ${summary.name}`}
                 onClick={() => void setPreference(summary, !summary.pinned)}>★</button>
@@ -297,10 +385,16 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
     {nextCursor && !busy && <div className="empty-actions" style={{ justifyContent: 'center', marginTop: 18 }}>
       <Button disabled={loadingMore} onClick={() => void load(nextCursor)}>{loadingMore ? '正在加载…' : '加载更多'}</Button>
     </div>}
+      </>}
 
-    <Modal open={Boolean(detailId)} label={detailId ? '专家详情' : '专家详情'} className="expert-dialog" onClose={() => setDetailId(undefined)}>
+    <Modal open={Boolean(detailId)} label={detailId ? '专家详情' : '专家详情'} className="expert-dialog" onClose={() => { setDetailId(undefined); setDetailRemote(undefined); }}>
       {detailId && <ExpertDetailModal expertId={detailId} management={management} acting={acting}
-        onClose={() => setDetailId(undefined)}
+        onUninstall={detailRemote
+          ? () => void uninstallInstalled(detailRemote)
+          : installations.has(detailId) ? () => void uninstallById(detailId) : undefined}
+        onSubmitListing={installations.has(detailId) ? undefined : () => { const id = detailId; setDetailId(undefined); setListingId(id); }}
+        onDelete={installations.has(detailId) ? undefined : () => void deleteLocalById(detailId)}
+        onClose={() => { setDetailId(undefined); setDetailRemote(undefined); }}
         onSummon={(expertId, revisionId, draftText) => void runSummon(expertId, revisionId, draftText)}
         onEditTask={id => void editInConversation(id)}
         onEditDraft={id => { setDetailId(undefined); setEditorId(id); }}
@@ -321,6 +415,14 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
         }}
         onChanged={refresh} />}
     </Modal>
+
+    {listingId && <ExpertListingModal expertId={listingId} management={management}
+      onClose={() => setListingId(undefined)}
+      onSubmitted={message => {
+        setListingId(undefined);
+        setNotice({ kind: 'info', text: message });
+        refresh();
+      }} />}
 
     {editorId && <ExpertDraftEditor expertId={editorId} management={management}
       onClose={closeEditor}

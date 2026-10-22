@@ -1,3 +1,13 @@
+## 0.1.0-alpha.10 — Unreleased（2026-10-22）
+
+- 新增后台专家目录：专家中心从 `AiClientController` 读取已上架专家/专家团，只有「安装到本地」后才会创建本地专家、立即发布并可召唤；安装包来自列表行 `fjxxList`，做大小限制与 sha256 校验。
+- 新增「我的申请」：读取 `queryMyListingExpertList` / `queryMyListingExpertGroupList`，按专家/专家团页签展示草稿、待审批、已上架、已驳回、已下架状态与附件已提交标记；列表改为与「我的专家」一致的卡片版式，页签带条数统计，并新增审批状态筛选。
+- 新增上架申请：自建专家导出草稿 zip、经共享上传接口提交 `listingRequest`（专家/专家团），表单字典来自 `queryAiNodeList` 与通用字典；新增 `deleteExpert` 硬删除。
+- 新增执行闸门 `requireInstalledExpert`（默认开启）：只有从后台目录安装的专家可召唤；自建/待审核专家以 `experts/approval-required` 拒绝，界面禁用「召唤」并提示需上架审核。
+- 新增安装与硬删除卸载：安装记录独立存储域 `workdsh_expert_installations`；卸载删除专家、团队成员、绑定、偏好与 `presets/wd-exp-*` 磁盘目录。缺少 Skill 依赖时仍可安装，但保持未发布、不可召唤。
+
+- 默认专家种子改为可选且出厂关闭（`ExpertsManagerOptions.seedDefaults`）；关闭时旧版本种下的默认专家一次性归档。
+
 ## 0.1.0-alpha.9 — 2026-09-25
 
 - 将专家与官方 Team 接入按 DSH 0.1.7-rc.2 的公开接口重新打包。

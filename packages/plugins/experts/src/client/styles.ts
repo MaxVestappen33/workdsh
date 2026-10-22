@@ -58,9 +58,25 @@ export const expertsCss = `${modalCss}
 .wd-experts .filter-tabs button{border:0;background:transparent}
 .wd-experts .filter-tabs button.active{background:var(--dsw-alias-interactive-bg-hover)}
 .wd-experts .filter-tabs button:disabled{color:var(--dsw-alias-label-dimmed)}
+/* 应用场景筛选：与技能市场同款胶囊（全部 = 不筛选）。 */
+.wd-experts .scene-bar{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 16px}
+.wd-experts .scene-bar button{padding:6px 12px;border:0;border-radius:9px;background:transparent;color:var(--dsw-alias-label-secondary);white-space:nowrap}
+.wd-experts .scene-bar button:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.wd-experts .scene-bar button.active{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);font-weight:600}
+/* 我的申请：与「我的专家」同版式卡片，审批状态作为筛选项。 */
+.wd-experts .application-toolbar{display:flex;align-items:center;gap:12px;margin:0 0 18px;min-height:36px}
+.wd-experts .application-status-filter{display:flex;align-items:center;gap:12px;font-size:13px;color:var(--dsw-alias-label-secondary)}
+.wd-experts .application-status-filter select{height:32px;min-height:32px;padding:0 10px;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);box-shadow:none}
+.wd-experts .application-status-filter select:focus-visible{outline:none}
+.wd-experts .application-status-filter select:focus{border-color:var(--dsw-alias-state-business-primary)}
+.wd-experts .application-note{margin:0;font-size:12px;color:var(--dsw-alias-label-secondary);line-height:1.7}
+.wd-experts .application-note.error-text{color:var(--dsw-alias-state-error-primary)}
+.wd-experts .application-withdraw{margin-left:auto;min-height:32px;padding:0 12px;font-size:12px}
 .wd-experts .counts{margin:0 0 16px}
 .wd-experts .counts{font-size:12px;color:var(--dsw-alias-label-tertiary)}
 .wd-experts .counts.error{color:var(--dsw-alias-state-error-primary)}
+/* Loading line only: centered like the skill market footer, so no placeholder cards. */
+.wd-experts .remote-status{display:flex;justify-content:center;padding:22px 0 6px;color:var(--dsw-alias-label-tertiary);font-size:12px}
 .wd-experts .grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}
 .wd-experts .card{position:relative;min-width:0;display:flex;flex-direction:column;gap:12px}
 .wd-experts .card{border-radius:17px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);min-height:150px;padding:24px}
@@ -390,5 +406,42 @@ export const expertsCss = `${modalCss}
 /* The shared Modal rules are unlayered; sizing must use the same cascade layer. */
 .wd-dialog.editor-dialog{width:min(760px,calc(100vw - 56px));max-height:min(820px,calc(100dvh - 80px))}
 @media(max-width:640px){.wd-dialog.editor-dialog{width:calc(100vw - 24px);max-height:calc(100dvh - 24px)}}
+
+/* 专家上架申请弹窗：与技能上架申请同版式。 */
+.expert-listing-dialog{display:flex;flex-direction:column;padding:0;overflow:hidden}
+.expert-listing-dialog .listing-header{padding:24px 28px 12px;border-bottom:1px solid var(--dsw-alias-border-l2)}
+.expert-listing-dialog .listing-header h2{margin:0 0 6px;font-size:20px}
+.expert-listing-dialog .listing-header p{margin:0;color:var(--dsw-alias-label-tertiary);font-size:13px}
+.expert-listing-dialog .listing-content{overflow:auto;padding:20px 28px 8px}
+.expert-listing-dialog .listing-section{margin-bottom:22px}
+.expert-listing-dialog .listing-section h3{display:flex;align-items:center;gap:8px;margin:0 0 14px;font-size:15px}
+.expert-listing-dialog .listing-section h3 i{width:3px;height:14px;border-radius:2px;background:var(--dsw-alias-state-error-primary)}
+.expert-listing-dialog .listing-icon-field{display:flex;gap:16px;align-items:flex-start;margin-bottom:16px}
+.expert-listing-dialog .listing-icon{width:72px;height:72px;border-radius:50%;border:1px solid var(--dsw-alias-border-l2);display:grid;place-items:center;font-size:24px;overflow:hidden;background:var(--dsw-alias-bg-layer-1)}
+.expert-listing-dialog .listing-icon img{width:100%;height:100%;object-fit:cover}
+.expert-listing-dialog .listing-icon-buttons{display:flex;gap:8px;margin-bottom:6px}
+.expert-listing-dialog .listing-icon-field small{color:var(--dsw-alias-label-tertiary);font-size:12px}
+.expert-listing-dialog .listing-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 18px}
+.expert-listing-dialog .listing-field{display:flex;flex-direction:column;gap:6px;min-width:0}
+.expert-listing-dialog .listing-field>span{font-size:13px;color:var(--dsw-alias-label-secondary)}
+.expert-listing-dialog .listing-field>span em{font-style:normal;color:var(--dsw-alias-state-error-primary);margin-right:2px}
+.expert-listing-dialog .listing-field small{color:var(--dsw-alias-label-tertiary);font-size:12px}
+.expert-listing-dialog .listing-field-wide{grid-column:1 / -1}
+.expert-listing-dialog .listing-textarea{min-height:88px;resize:vertical}
+.expert-listing-dialog .listing-counter{align-self:flex-end}
+.expert-listing-dialog .listing-tags{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px;border:1px solid var(--dsw-alias-border-l2);border-radius:9px}
+.expert-listing-dialog .listing-tag{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);font-size:12px}
+.expert-listing-dialog .listing-tag button{border:0;background:transparent;cursor:pointer;color:var(--dsw-alias-label-tertiary)}
+.expert-listing-dialog .listing-radio-group{display:flex;gap:18px}
+.expert-listing-dialog .listing-radio{display:flex;align-items:center;gap:6px;font-size:13px}
+.expert-listing-dialog .listing-switch{display:flex;align-items:center;gap:8px;font-size:13px}
+.expert-listing-dialog .listing-file-note{margin:0 0 10px;color:var(--dsw-alias-label-tertiary);font-size:12px}
+.expert-listing-dialog .listing-file{display:flex;justify-content:space-between;align-items:center;padding:14px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-1)}
+.expert-listing-dialog .listing-file-main{display:flex;flex-direction:column;gap:4px}
+.expert-listing-dialog .listing-file-main small{color:var(--dsw-alias-label-tertiary)}
+.expert-listing-dialog .error{color:var(--dsw-alias-state-error-primary);font-size:13px}
+.expert-listing-dialog .listing-footer{display:flex;justify-content:flex-end;gap:10px;padding:14px 28px;border-top:1px solid var(--dsw-alias-border-l2)}
+.wd-dialog.expert-listing-dialog{width:min(880px,calc(100vw - 56px));max-height:min(88vh,900px)}
+@media(max-width:640px){.wd-dialog.expert-listing-dialog{width:calc(100vw - 24px);max-height:calc(100dvh - 24px)}.expert-listing-dialog .listing-grid{grid-template-columns:1fr}}
 ${controlsCss}
 `;

@@ -20,6 +20,12 @@ export type ExpertDetailModalProps = {
   readonly onAvailability: (expertId: string, availability: ExpertAvailability) => Promise<void>;
   readonly onExport: (expertId: string) => Promise<void>;
   readonly onChanged: () => void;
+  /** Submit this self-made expert for backend review. */
+  readonly onSubmitListing?: () => void;
+  /** Hard delete a self-made expert (installed experts use `onUninstall` instead). */
+  readonly onDelete?: () => void;
+  /** Hard delete an expert installed from the backend catalog. */
+  readonly onUninstall?: () => void;
 };
 
 const ORIGIN_LABEL: Record<string, string> = { default: '默认模板', personal: '我的专家', organization: '组织' };
@@ -39,7 +45,7 @@ function Prose({ title, body }: { title: string; body: string }) {
   return <div className="prose-block"><h4>{title}</h4>{body}</div>;
 }
 
-export function ExpertDetailModal({ expertId, management, acting, onClose, onSummon, onEditTask, onEditDraft, onCopy, onAvailability, onExport, onChanged }: ExpertDetailModalProps) {
+export function ExpertDetailModal({ expertId, management, acting, onClose, onSummon, onEditTask, onEditDraft, onCopy, onAvailability, onExport, onSubmitListing, onDelete, onUninstall }: ExpertDetailModalProps) {
   const [skills, setSkills] = useState<readonly ExpertSkillOption[]>();
   const [skillsError, setSkillsError] = useState('');
   const [detail, setDetail] = useState<ExpertDetail>();
@@ -81,7 +87,7 @@ export function ExpertDetailModal({ expertId, management, acting, onClose, onSum
   const hasUnpublishedChanges = detail.canEdit && revision !== undefined && JSON.stringify(detail.draft.definition) !== JSON.stringify(revision.definition);
   const readiness = READINESS[detail.readiness] ?? READINESS.unknown;
   const revisionId = expert.publishedRevisionRef?.revisionId;
-  const canSummon = detail.canUse && !isDraft && expert.availability === 'enabled' && detail.readiness === 'ready';
+  const canSummon = detail.canUse && !isDraft && expert.availability === 'enabled' && detail.readiness === 'ready' && detail.executionBlocked === undefined;
   const kindLabel = definition.team ? '专家团' : '专家';
   const versionLabel = revision ? `版本 ${revision.revisionId.slice(0, 10)}` : '草稿';
 
@@ -95,7 +101,11 @@ export function ExpertDetailModal({ expertId, management, acting, onClose, onSum
         {!isDraft && <Button variant="primary" className="summon" disabled={!canSummon || acting} title={canSummon ? `召唤${kindLabel}` : readiness.hint}
           onClick={() => { setMenuOpen(false); onSummon(expertId, revisionId, undefined); }}>召唤{kindLabel}</Button>}
         {isDraft && detail.canEdit && <Button variant="primary" className="summon" onClick={() => { onEditTask(expertId); }}>继续编辑</Button>}
-        {(detail.canManage || detail.canEdit) && <div ref={menu} style={{ position: 'relative' }}>
+        {/* 市场安装的专家只保留召唤与卸载；自建专家可申请上架、删除。 */}
+        {!detail.installedFromCatalog && detail.canEdit && onSubmitListing && <Button onClick={onSubmitListing}>申请上架</Button>}
+        {detail.installedFromCatalog
+          ? onUninstall && <Button tone="danger" disabled={acting} onClick={onUninstall}>卸载</Button>
+          : (detail.canManage || detail.canEdit) && <div ref={menu} style={{ position: 'relative' }}>
           <Button aria-label="管理专家" aria-haspopup="menu" aria-expanded={menuOpen} disabled={acting}
             onClick={() => setMenuOpen(open => !open)}>•••</Button>
           {menuOpen && <div className="card-menu" role="menu" style={{ right: 0, left: 'auto' }}>
@@ -103,9 +113,7 @@ export function ExpertDetailModal({ expertId, management, acting, onClose, onSum
             {detail.canEdit && <button role="menuitem" onClick={() => { setMenuOpen(false); onClose(); onEditDraft(expertId); }}>编辑制作文件</button>}
             <button role="menuitem" disabled={acting} onClick={() => { setMenuOpen(false); void onCopy(expertId, revisionId); }}>复制到我的专家</button>
             <button role="menuitem" disabled={acting} onClick={() => { setMenuOpen(false); void onExport(expertId); }}>导出</button>
-            {detail.canManage && !isDraft && expert.availability === 'enabled' && <button role="menuitem" disabled={acting} onClick={() => { setMenuOpen(false); void onAvailability(expertId, 'disabled'); }}>停用</button>}
-            {detail.canManage && expert.availability === 'disabled' && <button role="menuitem" disabled={acting} onClick={() => { setMenuOpen(false); void onAvailability(expertId, 'enabled'); }}>启用</button>}
-            {detail.canManage && expert.availability !== 'archived' && <button className="danger" role="menuitem" disabled={acting} onClick={() => { setMenuOpen(false); void onAvailability(expertId, 'archived'); }}>归档</button>}
+            {onDelete && <button className="danger" role="menuitem" disabled={acting} onClick={() => { setMenuOpen(false); onDelete(); }}>删除</button>}
           </div>}
         </div>}
       </div>
@@ -115,6 +123,10 @@ export function ExpertDetailModal({ expertId, management, acting, onClose, onSum
     {hasUnpublishedChanges && <div className="notice" role="status">
       <div className="notice-body"><strong>草稿有修改，尚未发布</strong><span>当前详情与召唤使用已发布版本。已发布配备 {definition.skillRequirements.length} 个技能，草稿配备 {detail.draft.definition.skillRequirements.length} 个；保存草稿不会更新已发布版本。</span></div>
       <Button disabled={acting} onClick={() => { onClose(); onEditDraft(expertId); }}>审阅草稿</Button>
+    </div>}
+
+    {detail.executionBlocked === 'approval-required' && <div className="notice warn" role="status" style={{ marginTop: 20 }}>
+      <div className="notice-body"><strong>需上架审核并安装后才能使用</strong><span>自建专家不能直接召唤。请在专家市场上架并通过审核后，从市场安装再使用。</span></div>
     </div>}
 
     {definition.description && <p className="detail-desc" style={{ marginTop: 20 }}>{definition.description}</p>}
@@ -167,10 +179,5 @@ export function ExpertDetailModal({ expertId, management, acting, onClose, onSum
     <p className="detail-subtitle">{versionLabel}</p>
     {definition.agentDocument ? <div className="prose-block" style={{ whiteSpace: 'pre-wrap' }}>{definition.agentDocument}</div> : <><Prose title="专业角色" body={definition.role} /><ExpertWorkSummary definition={definition} /></>}
     </details>
-
-    <div className="detail-head-actions" style={{ marginTop: 28, justifyContent: 'flex-end' }}>
-      <Button onClick={onClose}>关闭</Button>
-      <Button onClick={() => { void load(); onChanged(); }} disabled={busy}>刷新</Button>
-    </div>
   </div>;
 }

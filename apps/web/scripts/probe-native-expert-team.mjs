@@ -120,7 +120,9 @@ try {
   await ctx.plugin({ name: 'fixture-skills-host', inject: ['skills'], apply(scope) { new SkillManager(scope); } });
   ctx.provide('sessionController', { async inspect(id) { return { sessionId: id }; } });
   ctx.provide('workdshSessionAccess', { async create(request) { await rootAgent(request.sessionId, request.agentPreset); return { sessionId: request.sessionId }; } });
-  await ctx.plugin(ExpertsManager);
+  // Probe fixture: it publishes and summons a locally authored team, so the product
+  // "installed-only" gate stays off here (packaged Desktop keeps the default on).
+  await ctx.plugin(ExpertsManager, { requireInstalledExpert: false });
   const composition = ctx.plugin({ name: 'production-expert-adapter', inject: ['workdshExperts', 'workdshIdentity', 'tools', 'agentTeams', 'agentPresets', 'agents', 'skills', 'systemPrompt', 'workdshSkills'], apply(scope) { registerExpertExecutionGuard(scope); registerExpertManagementTools(scope); } });
   await composition;
   let lead, preset, expertId;

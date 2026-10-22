@@ -37,7 +37,9 @@ type Endpoint =
   | 'request-publish-confirmation' | 'confirm-publish' | 'publish'
   | 'set-availability' | 'set-preference' | 'prepare-execution' | 'create-execution'
   | 'consume-handoff' | 'prepare-handoff' | 'create-handoff' | 'preview-import'
-  | 'commit-import' | 'export' | 'operation' | 'verify-binding';
+  | 'commit-import' | 'export' | 'operation' | 'verify-binding'
+  | 'remote-list' | 'install' | 'uninstall' | 'installations'
+  | 'listing-options' | 'submit-listing' | 'delete-expert' | 'my-listings' | 'withdraw-listing';
 
 const ok = <T>(value: T): ConnectionRpcResult<T> => ({ ok: true, value });
 const fail = (code: string, message: string, details: object = {}): ConnectionRpcResult<never> => ({ ok: false, error: { code, message, details } });
@@ -285,6 +287,85 @@ async function dispatch(manager: ExpertsService, actor: ActorContext, rawEndpoin
         const sessionId = str(input?.sessionId);
         if (!sessionId) return fail('experts/invalid-request', '请求缺少会话标识。');
         return ok(await manager.verifyBinding(actor, sessionId, signal));
+      }
+      case 'remote-list': {
+        const expertType = oneOf(input?.expertType, ['agent', 'team'] as const);
+        const keyword = str(input?.keyword);
+        const bizScene = str(input?.bizScene);
+        const pageNo = typeof input?.pageNo === 'number' && Number.isFinite(input.pageNo) ? input.pageNo : undefined;
+        const pageSize = typeof input?.pageSize === 'number' && Number.isFinite(input.pageSize) ? input.pageSize : undefined;
+        return ok(await manager.remoteList(actor, {
+          ...(expertType === undefined ? {} : { expertType }),
+          ...(keyword === undefined ? {} : { keyword }),
+          ...(bizScene === undefined ? {} : { bizScene }),
+          ...(pageNo === undefined ? {} : { pageNo }),
+          ...(pageSize === undefined ? {} : { pageSize }),
+        }, signal));
+      }
+      case 'install': {
+        const expertType = oneOf(input?.expertType, ['agent', 'team'] as const);
+        const remoteId = str(input?.remoteId);
+        const context = mutationContext(payload);
+        if (!expertType || !remoteId || !context) return fail('experts/invalid-request', '安装请求缺少专家类型、后台标识或幂等操作标识。');
+        const version = str(input?.version);
+        return ok(await manager.installRemote(actor, { expertType, remoteId, ...(version === undefined ? {} : { version }) }, context, signal));
+      }
+      case 'uninstall': {
+        const remoteKey = str(input?.remoteKey);
+        const context = mutationContext(payload);
+        if (!remoteKey || !context) return fail('experts/invalid-request', '卸载请求缺少安装标识或幂等操作标识。');
+        return ok(await manager.uninstallRemote(actor, remoteKey, context, signal));
+      }
+      case 'installations':
+        return ok(await manager.listInstallations(actor, signal));
+      case 'listing-options':
+        return ok(await manager.listingOptions(actor, signal));
+      case 'submit-listing': {
+        const expertId = str(input?.expertId);
+        const name = str(input?.name);
+        const sourceNode = str(input?.sourceNode);
+        const capability = str(input?.capability);
+        const owner = str(input?.owner);
+        const department = str(input?.department);
+        const domain = str(input?.domain);
+        const isPublic = str(input?.isPublic);
+        const listed = bool(input?.listed);
+        if (!expertId || !name || !sourceNode || !capability || !owner || !department || !domain || !isPublic || listed === undefined) {
+          return fail('experts/invalid-request', '上架申请缺少必要字段。');
+        }
+        return ok(await manager.submitListing(actor, {
+          expertId, name, sourceNode, capability, owner, department, domain, isPublic, listed,
+          tags: strArray(input?.tags) ?? [],
+          ...(str(input?.version) === undefined ? {} : { version: str(input?.version) }),
+          ...(str(input?.iconDataUrl) === undefined ? {} : { iconDataUrl: str(input?.iconDataUrl) }),
+        }, signal));
+      }
+      case 'delete-expert': {
+        const expertId = str(input?.expertId);
+        const context = mutationContext(payload);
+        if (!expertId || !context) return fail('experts/invalid-request', '删除请求缺少专家标识或幂等操作标识。');
+        return ok(await manager.deleteExpert(actor, expertId, context, signal));
+      }
+      case 'my-listings': {
+        const expertType = oneOf(input?.expertType, ['agent', 'team'] as const);
+        const keyword = str(input?.keyword);
+        const pageNo = typeof input?.pageNo === 'number' && Number.isFinite(input.pageNo) ? input.pageNo : undefined;
+        const pageSize = typeof input?.pageSize === 'number' && Number.isFinite(input.pageSize) ? input.pageSize : undefined;
+        return ok(await manager.myListings(actor, {
+          ...(expertType === undefined ? {} : { expertType }),
+          ...(keyword === undefined ? {} : { keyword }),
+          ...(pageNo === undefined ? {} : { pageNo }),
+          ...(pageSize === undefined ? {} : { pageSize }),
+        }, signal));
+      }
+      case 'withdraw-listing': {
+        const expertType = oneOf(input?.expertType, ['agent', 'team'] as const);
+        const remoteId = str(input?.remoteId);
+        if (!expertType || !remoteId) return fail('experts/invalid-request', '撤回申请缺少专家类型或后台标识。');
+        return ok(await manager.withdrawListing(actor, {
+          expertType, remoteId,
+          ...(str(input?.reason) === undefined ? {} : { reason: str(input?.reason) }),
+        }, signal));
       }
       default:
         return fail('experts/unknown-endpoint', '未知的专家管理操作。');

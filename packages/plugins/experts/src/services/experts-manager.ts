@@ -21,6 +21,7 @@ import type {
   AvailabilityReceipt,
   ConfirmationProof,
   ConfirmationRequest,
+  DeleteExpertReceipt,
   DomainIssue,
   DraftHandoff,
   ExecutionBinding,
@@ -35,22 +36,35 @@ import type {
   ExpertExport,
   ExpertListQuery,
   ExpertListResult,
+  ExpertListingOptions,
+  ExpertListingRequest,
   ExpertPreference,
   ExpertReadiness,
   ExpertRevision,
   ExpertRevisionRef,
   ExpertSummary,
   ExpertValidation,
+  ExpertInstallation,
   ExpertsService,
   HandoffPlan,
   IdentityService,
   ImportPreview,
+  InstallReceipt,
+  ListingNodeOption,
+  ListingOption,
   ModelSelectionRequest,
   MutationContext,
+  MyListingListResult,
+  MyListingQuery,
   Operation,
   PublishReceipt,
+  RemoteExpertListQuery,
+  RemoteExpertListResult,
+  RemoteInstallRequest,
   ResourceOwner,
   SkillRevisionRef,
+  UninstallReceipt,
+  WithdrawListingRequest,
 } from 'workdsh-contracts';
 import type { SkillManagementService } from 'workdsh-contracts/skills';
 import { expertsDomainSpec, keys } from '../storage/domain.js';
@@ -61,6 +75,8 @@ import { definitionDigest, normalizeDefinition, validateDefinition, teamDefiniti
 import { codePointLength, digestOf, shortDigest, sha256 } from '../domain/digest.js';
 import { DEFAULT_TEMPLATES } from '../domain/templates.js';
 import { assertUploadWithinLimit, buildExport, preflightPackage } from './portability.js';
+import { installationsDomainSpec, installationKey } from '../storage/installations.js';
+import { RemoteExpertCatalog, type BackendChannelLike } from './remote-catalog.js';
 
 /**
  * The single Host domain service for experts (D04 / P1-02, expert module 0.1).
@@ -197,9 +213,96 @@ function sanitizeFileName(fileName: string): string {
   return base || 'expert.zip';
 }
 
+// ── listing form helpers (shared backend dictionaries) ─────────────────────
+
+const listingText = (value: unknown): string | undefined =>
+  typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+
+/** `queryAiNodeList` rows grouped by node type, in the order the form shows them. */
+function listingNodes(value: unknown): ListingNodeOption[] {
+  if (!Array.isArray(value)) return [];
+  const order = ['self', 'up', 'peer', 'down'];
+  const nodes: ListingNodeOption[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    const row = entry as Record<string, unknown>;
+    const nodeValue = listingText(row.value);
+    const label = listingText(row.label);
+    if (!nodeValue || !label) continue;
+    nodes.push({ value: nodeValue, label, nodeType: listingText(row.nodeType) ?? 'self' });
+  }
+  return nodes.sort((left, right) => order.indexOf(left.nodeType) - order.indexOf(right.nodeType));
+}
+
+/** Jeecg dictionary rows (`value` + `text`/`label`/`title`) become form options. */
+function listingOptionsOf(value: unknown): ListingOption[] {
+  if (!Array.isArray(value)) return [];
+  const options: ListingOption[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    const row = entry as Record<string, unknown>;
+    const optionValue = listingText(row.value);
+    const label = listingText(row.text) ?? listingText(row.label) ?? listingText(row.title);
+    if (!optionValue || !label) continue;
+    options.push({ value: optionValue, label });
+  }
+  return options;
+}
+
+/** The upload endpoint answers with a URL, or a message containing one. */
+function uploadPathOf(value: unknown): string | undefined {
+  const candidates: unknown[] = [value];
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const row = value as Record<string, unknown>;
+    candidates.push(row.filePath, row.url, row.path, row.result, row.message);
+  }
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string') continue;
+    if (/^https?:\/\//iu.test(candidate)) return candidate;
+    const match = candidate.match(/https?:\/\/[^\s`]+/u);
+    if (match?.[0]) return match[0];
+  }
+  return undefined;
+}
+
+function listingMessageOf(value: unknown): string | undefined {
+  if (typeof value === 'string') return listingText(value);
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const row = value as Record<string, unknown>;
+    return listingText(row.message) ?? listingText(row.result);
+  }
+  return undefined;
+}
+
+function listingFailure(error: unknown): string {
+  const candidate = error as { name?: string; code?: string; message?: string } | undefined;
+  if (candidate?.name === 'BackendRequestError') {
+    if (candidate.code === 'backend/unavailable') return '当前环境未接入业务后台。';
+    if (candidate.code === 'backend/unauthorized') return candidate.message ?? '登录已过期，请重新登录。';
+    if (candidate.code === 'backend/unreachable') return '无法连接业务后台，请检查网络后重试。';
+    return candidate.message ?? '业务后台拒绝了本次请求。';
+  }
+  return candidate?.message ?? '上架表单读取失败。';
+}
+
 declare module '@deepseek-ai/cordis' { interface Context { workdshConnectors: ConnectorManagementService; } }
 
-export interface ExpertsManagerOptions { agentsHome?: string; includeDefaultSkillRoots?: boolean; }
+export interface ExpertsManagerOptions {
+  agentsHome?: string;
+  includeDefaultSkillRoots?: boolean;
+  /**
+   * 出厂不预置默认专家：随包模板只在显式开启时写入本地目录，供探针与本地调试
+   * 当夹具使用。未开启时，旧版本种下且用户未改过的默认专家会被一次性归档，
+   * 使升级后的目录与全新安装一致。
+   */
+  seedDefaults?: boolean;
+  /**
+   * 产品模式：只有从业务后台安装到本地的专家可以召唤。自建（以及审核中的）专家
+   * 仍可查看、编辑和提交上架，但执行会以 `experts/approval-required` 拒绝。
+   * 开发/探针/Web 预览可显式传 false 保留旧的本地执行能力。
+   */
+  requireInstalledExpert?: boolean;
+}
 
 export class ExpertsManager extends Service implements ExpertsService {
   static inject = [
@@ -213,8 +316,10 @@ export class ExpertsManager extends Service implements ExpertsService {
   private bindings?: KvTable<string, ExecutionBinding>;
   private preferences?: KvTable<string, ExpertPreference>;
   private operations?: KvTable<string, Operation>;
+  private installations?: KvTable<string, ExpertInstallation>;
   private mutationTail: Promise<void> = Promise.resolve();
   private seeding?: Promise<void>;
+  private readonly remote: RemoteExpertCatalog;
 
   private readonly confirmations = new ConfirmationStore();
   private readonly executionPlans = new TtlStore<ExecutionPlan>(PLAN_TTL_MS);
@@ -227,13 +332,20 @@ export class ExpertsManager extends Service implements ExpertsService {
   private connectors?: ConnectorManagementService;
   private readonly unavailablePresets = new Set<string>();
   private readonly includeDefaultSkillRoots?: boolean;
+  private readonly seedDefaults?: boolean;
+  private readonly requireInstalledExpert: boolean;
 
   constructor(ctx: Context, options: ExpertsManagerOptions = {}) {
     super(ctx, 'workdshExperts');
     const agentsHome = resolveAgentsHome(options.agentsHome);
     this.agentsHome = agentsHome;
     this.includeDefaultSkillRoots = options.includeDefaultSkillRoots;
+    this.seedDefaults = options.seedDefaults;
+    this.requireInstalledExpert = options.requireInstalledExpert !== false;
     this.stagingRoot = join(agentsHome, '.workdsh-state', 'experts', 'staging');
+    // The business backend is optional: personal mode has no binding and the
+    // catalog degrades to "unavailable" instead of failing plugin load.
+    this.remote = new RemoteExpertCatalog(() => this.ctx.reflect.get('workdshBackend') as BackendChannelLike | undefined);
   }
 
   private compilePreset(input: Parameters<typeof compileExpertPreset>[1]) {
@@ -254,6 +366,9 @@ export class ExpertsManager extends Service implements ExpertsService {
     this.bindings = domain.table('bindings');
     this.preferences = domain.table('preferences');
     this.operations = domain.table('operations');
+    const installationsDomain = await this.ctx.storageDomain.open(installationsDomainSpec);
+    this.ctx.effect(() => () => installationsDomain.close(), 'workdshExperts.installationsDomainClose');
+    this.installations = installationsDomain.table('installations');
     for (const [, revision] of this.revisions.entries()) {
       if (revision.compilerVersion !== COMPILER_VERSION) continue;
       try {
@@ -292,6 +407,10 @@ export class ExpertsManager extends Service implements ExpertsService {
   private operationsTable(): KvTable<string, Operation> {
     if (!this.operations) throw new ExpertsError('experts/unavailable', '专家服务尚未就绪。');
     return this.operations;
+  }
+  private installationsTable(): KvTable<string, ExpertInstallation> {
+    if (!this.installations) throw new ExpertsError('experts/unavailable', '专家服务尚未就绪。');
+    return this.installations;
   }
 
   private loadExpert(expertId: string): Expert {
@@ -387,8 +506,21 @@ export class ExpertsManager extends Service implements ExpertsService {
    * read in a deployment. They become ordinary personal-owned experts (copyable,
    * disable-able), never a hidden second source of truth. A compilation failure
    * (e.g. no writable preset root) skips that template rather than breaking reads.
+   *
+   * Seeding is opt-in (`seedDefaults`): a packaged install starts with an empty
+   * catalog. When it is off, defaults left by an earlier release are archived once
+   * so upgraded and fresh installs show the same list.
    */
   private async ensureSeeded(actor: ActorContext, signal?: AbortSignal): Promise<void> {
+    if (this.seedDefaults !== true) {
+      if (!this.seeding) {
+        this.seeding = this.enqueue(async () => { await this.retireSeededDefaults(signal); })
+          .then(() => undefined, () => undefined)
+          .finally(() => { this.seeding = undefined; });
+      }
+      await this.seeding;
+      return;
+    }
     if (this.expertsTable().size > 0) return;
     if (!this.seeding) {
       this.seeding = this.enqueue(async () => {
@@ -403,6 +535,23 @@ export class ExpertsManager extends Service implements ExpertsService {
       }).then(() => undefined, () => undefined).finally(() => { this.seeding = undefined; });
     }
     await this.seeding;
+  }
+
+  /**
+   * Archive default experts left behind when seeding is switched off, so an
+   * upgraded deployment shows the same empty catalog as a fresh install.
+   * Default experts are `default-immutable`, so a `default` record can only be the
+   * shipped template; archiving is a reversible state (never a hard delete) and
+   * published revisions plus already-bound presets stay readable.
+   */
+  private async retireSeededDefaults(signal?: AbortSignal): Promise<void> {
+    for (const template of DEFAULT_TEMPLATES) {
+      signal?.throwIfAborted();
+      const id = keys.expert(template.id);
+      const expert = this.expertsTable().get(id);
+      if (!expert || expert.origin !== 'default' || expert.availability === 'archived') continue;
+      await this.expertsTable().update(id, (row) => ({ ...row, availability: 'archived', revision: `r-${randomUUID()}`, updatedAt: new Date().toISOString() }));
+    }
   }
 
   private async seedTemplate(actor: ActorContext, expertId: string, definition: ExpertDefinition, signal?: AbortSignal): Promise<void> {
@@ -566,6 +715,30 @@ export class ExpertsManager extends Service implements ExpertsService {
   }
 
   /**
+   * Execution gate for product mode: an expert is executable only when it came from
+   * a backend installation. Team members inherit their lead's installation through
+   * `teamParentId`, because only the team itself is installed.
+   */
+  private isInstalledExpert(expertId: string): boolean {
+    const expert = this.expertsTable().get(keys.expert(expertId));
+    const rootId = expert?.teamParentId ?? expertId;
+    for (const [, row] of this.installationsTable().entries()) {
+      if (row.expertId === rootId) return true;
+    }
+    return false;
+  }
+
+  private executionBlockOf(expertId: string): 'approval-required' | undefined {
+    if (!this.requireInstalledExpert) return undefined;
+    return this.isInstalledExpert(expertId) ? undefined : 'approval-required';
+  }
+
+  private assertExecutable(expertId: string): void {
+    if (this.executionBlockOf(expertId) === undefined) return;
+    throw new ExpertsError('experts/approval-required', '该专家需要在专家市场上架并通过审核后安装，才能召唤使用。', { reason: 'approval-required' });
+  }
+
+  /**
    * List-view readiness: one roster read gives preset health for every row, and
    * required-but-unsupported future capabilities are in-memory. Per-Skill drift is
    * authoritative only in the detail view, so a 1,000-row list stays cheap (AT-22).
@@ -668,6 +841,8 @@ export class ExpertsManager extends Service implements ExpertsService {
       pinned: preference?.pinned ?? false,
       ...(preference?.lastUsedAt === undefined ? {} : { lastUsedAt: preference.lastUsedAt }),
       updatedAt: expert.updatedAt,
+      installedFromCatalog: this.isInstalledExpert(expert.id),
+      ...(this.executionBlockOf(expert.id) === undefined ? {} : { executionBlocked: 'approval-required' as const }),
     };
   }
 
@@ -801,6 +976,8 @@ export class ExpertsManager extends Service implements ExpertsService {
       ...(revision === undefined ? {} : { revision }),
       readiness,
       canUse: caps.canUse, canEdit: caps.canEdit, canManage: caps.canManage,
+      installedFromCatalog: this.isInstalledExpert(expertId),
+      ...(this.executionBlockOf(expertId) === undefined ? {} : { executionBlocked: 'approval-required' as const }),
     };
   }
 
@@ -1332,6 +1509,9 @@ export class ExpertsManager extends Service implements ExpertsService {
     await this.authorize(actor, 'experts.prepare-execution', expert, signal);
     if (expert.availability === 'archived') throw new ExpertsError('experts/archived', '专家已归档，无法召唤。');
     if (expert.availability === 'disabled') throw new ExpertsError('experts/disabled', '专家已停用，请先启用后再召唤。');
+    // Product gate before publish state: a self-made expert is not usable even after
+    // it was published locally; it must be listed, approved and installed.
+    this.assertExecutable(expertId);
     const targetRevisionId = revisionId ?? expert.publishedRevisionRef?.revisionId;
     if (targetRevisionId === undefined) throw new ExpertsError('experts/not-published', '专家尚未发布，无法召唤。');
     let revision = this.loadRevision(expertId, targetRevisionId);
@@ -1392,6 +1572,9 @@ export class ExpertsManager extends Service implements ExpertsService {
     const expert = this.loadExpert(plan.expertRevisionRef.expertId);
     if (!this.isVisible(actor, expert)) throw new ExpertsError('experts/not-found', '未找到该专家。');
     await this.authorize(actor, 'experts.create-execution', expert, signal);
+    // Re-check the product gate at commit time: an installation can be removed between
+    // preparing the plan and creating the Session.
+    this.assertExecutable(plan.expertRevisionRef.expertId);
     const revision = this.loadRevision(plan.expertRevisionRef.expertId, plan.expertRevisionRef.revisionId);
     const capabilityIssues = await this.requiredCapabilityIssues(revision, signal);
     if (capabilityIssues.length) throw new ExpertsError('experts/dependency-missing', '必需能力已不可用，请重新准备任务。', { issues: capabilityIssues });
@@ -1618,6 +1801,9 @@ export class ExpertsManager extends Service implements ExpertsService {
     if (!this.isVisible(actor, owner)) throw new ExpertsError('experts/not-found', '未找到该任务绑定的专家。');
     await this.authorize(actor, 'experts.prepare-execution', owner, signal);
     if (owner.availability !== 'enabled') throw new ExpertsError('experts/disabled', '该任务绑定的专家已停用或归档。');
+    // Resumed Sessions and Team members pass through here on every pre-step, so the
+    // product gate also covers tasks whose installation was removed after creation.
+    this.assertExecutable(owner.id);
     const lead = this.loadRevision(binding.expertRevisionRef.expertId, binding.expertRevisionRef.revisionId);
     let revision = lead;
     if (memberName && lead.definition.team) {
@@ -1819,6 +2005,370 @@ export class ExpertsManager extends Service implements ExpertsService {
     const { descriptor } = buildExport(definition);
     await this.audit(actor, 'experts.export', expertId, 'succeeded', 'experts/export-succeeded', { fileName: descriptor.fileName, bytes: String(descriptor.bytes) });
     return descriptor;
+  }
+
+  // ── backend catalog: install / uninstall ─────────────────────────────────
+
+  /** Read-only backend catalog with this deployment's install state merged in. */
+  async remoteList(actor: ActorContext, query: RemoteExpertListQuery, signal?: AbortSignal): Promise<RemoteExpertListResult> {
+    signal?.throwIfAborted();
+    assertActorContext(actor);
+    const result = await this.remote.list(query, signal);
+    await this.audit(actor, 'experts.remote-list', undefined, 'succeeded', 'experts/remote-list-succeeded', { count: String(result.items.length), total: String(result.total) });
+    if (!result.available) return result;
+    return {
+      ...result,
+      items: result.items.map((item) => {
+        const installation = this.installationFor(item.expertType, item.remoteId);
+        if (!installation) return item;
+        return {
+          ...item,
+          installed: {
+            expertId: installation.expertId,
+            version: installation.version,
+            status: installation.status,
+            updateAvailable: installation.version !== item.version,
+            boundSessions: this.boundSessionCount([installation.expertId]),
+          },
+        };
+      }),
+    };
+  }
+
+  /** Ledger of the assets this member submitted for review. */
+  async myListings(actor: ActorContext, query: MyListingQuery, signal?: AbortSignal): Promise<MyListingListResult> {
+    signal?.throwIfAborted();
+    assertActorContext(actor);
+    const result = await this.remote.myListings(query, signal);
+    await this.audit(actor, 'experts.my-listings', undefined, 'succeeded', 'experts/my-listings-succeeded', {
+      count: String(result.items.length), total: String(result.total),
+    });
+    return result;
+  }
+
+  /** Withdraw one pending application; the backend owns the resulting state. */
+  async withdrawListing(actor: ActorContext, request: WithdrawListingRequest, signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted();
+    assertActorContext(actor);
+    const channel = await this.requireBackend();
+    const isTeam = request.expertType === 'team';
+    let result: unknown;
+    try {
+      result = await channel.post(
+        isTeam ? '/desktop-client/expertgroup/withdrawListingRequest' : '/desktop-client/expert/withdrawListingRequest',
+        { id: request.remoteId, ...(request.reason?.trim() ? { reason: request.reason.trim() } : {}) },
+        undefined, signal,
+      );
+    } catch (error) {
+      throw new ExpertsError('experts/remote-unavailable', listingFailure(error));
+    }
+    const message = listingMessageOf(result) ?? '撤回申请已提交。';
+    await this.audit(actor, 'experts.withdraw-listing', undefined, 'succeeded', 'experts/withdraw-listing-succeeded', { remoteId: request.remoteId });
+    return message;
+  }
+
+  async listInstallations(actor: ActorContext, signal?: AbortSignal): Promise<readonly ExpertInstallation[]> {
+    signal?.throwIfAborted();
+    assertActorContext(actor);
+    const rows: ExpertInstallation[] = [];
+    for (const [, row] of this.installationsTable().entries()) {
+      if (row.owner.organizationId !== actor.organizationId) continue;
+      if (row.owner.ownerPrincipalId !== actor.principalId) continue;
+      const expert = this.expertsTable().get(keys.expert(row.expertId));
+      if (!expert || !this.isVisible(actor, expert)) continue;
+      rows.push(row);
+    }
+    await this.audit(actor, 'experts.list-installations', undefined, 'succeeded', 'experts/list-installations-succeeded', { count: String(rows.length) });
+    return rows;
+  }
+
+  /**
+   * Install one backend catalog row locally.
+   *
+   * Trusted install authority is the user's explicit action plus the exact package
+   * bytes: the archive is size-bounded, optionally sha256-verified, re-validated by
+   * the existing import preflight, imported as this actor's own expert, and then
+   * published through the same audited publish path (a Host-minted confirmation
+   * replaces the UI dialog because there is no editable draft to review).
+   *
+   * A missing Skill dependency never blocks the install: the expert is kept
+   * unpublished so readiness reports `missing-dependency` and Summon is refused.
+   */
+  async installRemote(actor: ActorContext, request: RemoteInstallRequest, context: MutationContext, signal?: AbortSignal): Promise<InstallReceipt> {
+    signal?.throwIfAborted();
+    assertActorContext(actor);
+    this.assertContext(context);
+    const remoteKey = installationKey(request.expertType, request.remoteId);
+    const existing = this.installationsTable().get(remoteKey);
+    const remote = await this.remote.find(request.expertType, request.remoteId, signal);
+    if (!remote) throw new ExpertsError('experts/not-found', '后台目录中不存在该专家，或该专家已下架。');
+    if (remote.package === undefined) throw new ExpertsError('experts/install-package-missing', '后台未返回该专家的安装包附件，暂时无法安装。');
+    if (existing && existing.version === remote.version && existing.status === 'ready' && existing.owner.ownerPrincipalId === actor.principalId) {
+      return { installation: existing, expertId: existing.expertId, published: true, issues: [] };
+    }
+    if (existing && existing.owner.ownerPrincipalId !== actor.principalId) throw new ExpertsError('experts/forbidden', '该专家由其他成员安装，无法覆盖。');
+    const { bytes, digest } = await this.remote.download(remote.package, signal);
+    const stagedId = await this.stageImport(remote.package.fileName, bytes, signal);
+    const preview = await this.previewImport(actor, stagedId, signal);
+    if (preview.issues.length > 0) {
+      throw new ExpertsError('experts/install-invalid', '专家包未通过校验，无法安装。', { issues: preview.issues });
+    }
+    let expertId: string;
+    let draftRevision: string;
+    if (existing) {
+      const updated = await this.updateDraft(actor, existing.expertId, preview.candidate, { operationId: `${context.operationId}-draft` }, signal);
+      expertId = updated.expertId;
+      draftRevision = updated.revision;
+    } else {
+      const committed = await this.commitImport(actor, preview.importPlanId, preview.previewDigest, { operationId: `${context.operationId}-import` }, signal);
+      expertId = committed.expertId;
+      draftRevision = committed.revision;
+    }
+    const validation = await this.validate(actor, expertId, draftRevision, signal);
+    let published = false;
+    if (validation.publishable) {
+      // Host-minted confirmation: the authority here is the explicit install action
+      // plus the verified package, not model text. The publish path below still
+      // re-computes and re-verifies every digest before freezing the revision.
+      const challenge = this.confirmations.request({
+        expertId, action: 'experts.publish', draftRevision,
+        definitionDigest: validation.definitionDigest,
+        dependencyLockDigest: validation.dependencyLockDigest,
+        principalId: actor.principalId,
+      });
+      const proof = this.confirmations.confirm(challenge.confirmationToken, actor.principalId);
+      await this.publish(actor, expertId, draftRevision, validation.dependencyLockDigest, proof, { operationId: `${context.operationId}-publish` }, signal);
+      published = true;
+    }
+    const now = new Date().toISOString();
+    const expert = this.loadExpert(expertId);
+    const installation: ExpertInstallation = {
+      remoteKey, remoteId: request.remoteId, expertType: request.expertType, expertId,
+      version: remote.version, fileName: remote.package.fileName, sourceUrl: remote.package.url,
+      packageDigest: remote.package.digest ?? digest,
+      status: published ? 'ready' : 'missing-dependency',
+      issues: published ? [] : validation.issues,
+      owner: expert.owner,
+      installedAt: existing?.installedAt ?? now,
+      updatedAt: now,
+    };
+    await this.installationsTable().put(remoteKey, installation);
+    await this.audit(actor, 'experts.install', expertId, 'succeeded', 'experts/install-succeeded', { remoteKey, version: remote.version, published: String(published) });
+    return { installation, expertId, published, issues: installation.issues };
+  }
+
+  /**
+   * Hard delete: remove the installed expert, every team member it created, every
+   * storage record and every preset directory on disk. Bindings are removed too, so
+   * an already-summoned Task loses its expert assets; the UI warns with the bound
+   * Session count before calling this.
+   */
+  async uninstallRemote(actor: ActorContext, remoteKey: string, context: MutationContext, signal?: AbortSignal): Promise<UninstallReceipt> {
+    signal?.throwIfAborted();
+    assertActorContext(actor);
+    this.assertContext(context);
+    const installation = this.installationsTable().get(remoteKey);
+    if (!installation) throw new ExpertsError('experts/not-installed', '该专家尚未安装到本地。');
+    const expert = this.expertsTable().get(keys.expert(installation.expertId));
+    if (!expert || !this.isVisible(actor, expert)) throw new ExpertsError('experts/not-found', '未找到该专家。');
+    await this.authorize(actor, 'experts.uninstall', expert, signal);
+    const deletedExpertIds = [installation.expertId, ...[...this.expertsTable().entries()]
+      .filter(([, row]) => row.teamParentId === installation.expertId)
+      .map(([id]) => id)];
+    const boundSessions = this.boundSessionCount(deletedExpertIds);
+    await this.enqueue(async () => {
+      await this.deleteLocalExpert(installation.expertId, signal);
+      await this.installationsTable().delete(remoteKey);
+    });
+    await this.audit(actor, 'experts.uninstall', installation.expertId, 'succeeded', 'experts/uninstall-succeeded', { remoteKey, deleted: String(deletedExpertIds.length), boundSessions: String(boundSessions) });
+    return { remoteKey, expertId: installation.expertId, deletedExpertIds, boundSessions };
+  }
+
+  /**
+   * Hard delete a locally authored expert (and its team members) from this machine.
+   * Installed experts use `uninstallRemote`; this path additionally clears any stale
+   * installation row so no orphaned catalog link survives.
+   */
+  async deleteExpert(actor: ActorContext, expertId: string, context: MutationContext, signal?: AbortSignal): Promise<DeleteExpertReceipt> {
+    signal?.throwIfAborted();
+    assertActorContext(actor);
+    this.assertContext(context);
+    const expert = this.expertsTable().get(keys.expert(expertId));
+    if (!expert || !this.isVisible(actor, expert)) throw new ExpertsError('experts/not-found', '未找到该专家。');
+    await this.authorize(actor, 'experts.delete-expert', expert, signal);
+    const deletedExpertIds = this.deletionIds(expertId);
+    const boundSessions = this.boundSessionCount(deletedExpertIds);
+    await this.enqueue(async () => {
+      await this.deleteLocalExpert(expertId, signal);
+      for (const [key, row] of [...this.installationsTable().entries()]) {
+        if (row.expertId === expertId) await this.installationsTable().delete(key);
+      }
+    });
+    await this.audit(actor, 'experts.delete-expert', expertId, 'succeeded', 'experts/delete-expert-succeeded', { deleted: String(deletedExpertIds.length), boundSessions: String(boundSessions) });
+    return { expertId, deletedExpertIds, boundSessions };
+  }
+
+  /** Expert plus its content-addressed team members; both must be removed together. */
+  private deletionIds(expertId: string): string[] {
+    return [expertId, ...[...this.expertsTable().entries()]
+      .filter(([, row]) => row.teamParentId === expertId)
+      .map(([id]) => id)];
+  }
+
+  /** Caller must hold the mutation queue (this.enqueue). */
+  private async deleteLocalExpert(expertId: string, signal?: AbortSignal): Promise<void> {
+    for (const id of this.deletionIds(expertId)) {
+      signal?.throwIfAborted();
+      const presetIds = new Set<string>();
+      for (const [key, revision] of [...this.revisionsTable().entries()]) {
+        if (revision.expertId !== id) continue;
+        presetIds.add(revision.presetRevisionRef);
+        await this.revisionsTable().delete(key);
+      }
+      for (const [key, preference] of [...this.preferencesTable().entries()]) {
+        if (preference.expertId === id) await this.preferencesTable().delete(key);
+      }
+      for (const [key, binding] of [...this.bindingsTable().entries()]) {
+        if (binding.expertRevisionRef.expertId === id) await this.bindingsTable().delete(key);
+      }
+      await this.draftsTable().delete(keys.draft(id));
+      await this.expertsTable().delete(keys.expert(id));
+      for (const presetId of presetIds) {
+        this.unavailablePresets.delete(presetId);
+        await rm(expertPresetDir(presetId, this.agentsHome), { recursive: true, force: true });
+      }
+    }
+  }
+
+  // ── listing request (submit a self-made expert for backend review) ────────
+
+  /** Form dictionaries for the listing modal; unavailable backend degrades to no options. */
+  async listingOptions(actor: ActorContext, signal?: AbortSignal): Promise<ExpertListingOptions> {
+    signal?.throwIfAborted();
+    assertActorContext(actor);
+    const channel = this.ctx.reflect.get('workdshBackend') as BackendChannelLike | undefined;
+    if (!channel || !(await channel.available().catch(() => false))) {
+      return { available: false, reason: '当前未接入业务后台。', nodes: [], publicOptions: [], domains: [] };
+    }
+    try {
+      const [nodes, publicItems, domains] = await Promise.all([
+        channel.get<unknown>('/desktop-client/queryAiNodeList', undefined, signal),
+        channel.get<unknown>('/desktop-client/getDictItems/yn', undefined, signal),
+        channel.get<unknown>('/desktop-client/getDictItems/ai_expert_domain', undefined, signal),
+      ]);
+      return {
+        available: true,
+        nodes: listingNodes(nodes),
+        publicOptions: listingOptionsOf(publicItems),
+        domains: listingOptionsOf(domains),
+      };
+    } catch (error) {
+      return { available: false, reason: listingFailure(error), nodes: [], publicOptions: [], domains: [] };
+    }
+  }
+
+  /**
+   * Submit the current draft for review: export it as the standard `.expert.zip`, upload
+   * that archive through the shared attachment endpoint, then call the backend listing
+   * request. Nothing is published locally, so the expert stays unusable until approval
+   * and installation.
+   */
+  async submitListing(actor: ActorContext, request: ExpertListingRequest, signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted();
+    assertActorContext(actor);
+    const expert = this.loadExpert(request.expertId);
+    if (!this.isVisible(actor, expert)) throw new ExpertsError('experts/not-found', '未找到该专家。');
+    await this.authorize(actor, 'experts.submit-listing', expert, signal);
+    if (this.isInstalledExpert(expert.id)) throw new ExpertsError('experts/invalid-request', '已安装的专家无需再提交上架申请。');
+    if (!request.name.trim()) throw new ExpertsError('experts/invalid-request', '显示名称不能为空。');
+    if (!request.capability.trim()) throw new ExpertsError('experts/invalid-request', '能力说明不能为空。');
+    if (!request.owner.trim()) throw new ExpertsError('experts/invalid-request', '负责人不能为空。');
+    if (!request.department.trim()) throw new ExpertsError('experts/invalid-request', '所属部门不能为空。');
+    if (!request.domain.trim()) throw new ExpertsError('experts/invalid-request', '警务领域不能为空。');
+    if (!request.sourceNode.trim()) throw new ExpertsError('experts/invalid-request', '来源节点不能为空。');
+
+    const definition = this.loadDraft(expert.id).definition;
+    const isTeam = definition.team !== undefined;
+    const { archive } = buildExport(definition);
+    const bytes = new Uint8Array(archive);
+    const fileName = `${expert.id}${isTeam ? '.expert-team' : '.expert'}.zip`;
+    const channel = await this.requireBackend();
+    // Optional icon: uploaded through the same attachment endpoint before the package.
+    let iconUrl: string | undefined;
+    if (request.iconDataUrl !== undefined && request.iconDataUrl.trim().length > 0) {
+      const match = /^data:(image\/(?:png|jpeg));base64,([A-Za-z0-9+/=]+)$/u.exec(request.iconDataUrl.trim());
+      if (!match) throw new ExpertsError('experts/invalid-request', '图标格式无效，仅支持 png 或 jpeg。');
+      const iconBytes = Buffer.from(match[2], 'base64');
+      if (iconBytes.byteLength > 2 * 1024 * 1024) throw new ExpertsError('experts/invalid-request', '图标不得超过 2 MiB。');
+      try {
+        const iconForm = new FormData();
+        iconForm.append('biz', isTeam ? 'desktop-client/expertgroup' : 'desktop-client/expert');
+        iconForm.append('file', new Blob([new Uint8Array(iconBytes)], { type: match[1] }), match[1] === 'image/png' ? 'icon.png' : 'icon.jpg');
+        iconUrl = uploadPathOf(await channel.postForm('/desktop-client/upload', iconForm, signal, 60_000));
+      } catch (error) {
+        throw new ExpertsError('experts/remote-unavailable', listingFailure(error));
+      }
+      if (!iconUrl) throw new ExpertsError('experts/remote-unavailable', '图标上传失败，请重试。');
+    }
+    let uploaded: unknown;
+    try {
+      const form = new FormData();
+      form.append('biz', isTeam ? 'desktop-client/expertgroup' : 'desktop-client/expert');
+      form.append('file', new Blob([bytes], { type: 'application/zip' }), fileName);
+      uploaded = await channel.postForm('/desktop-client/upload', form, signal, 180_000);
+    } catch (error) {
+      throw new ExpertsError('experts/remote-unavailable', listingFailure(error));
+    }
+    const filePath = uploadPathOf(uploaded);
+    if (!filePath) throw new ExpertsError('experts/remote-unavailable', '附件上传接口未返回可用的文件地址，请重试。');
+
+    const body = {
+      name: request.name.trim(),
+      ...(iconUrl === undefined ? {} : { icon: iconUrl }),
+      version: request.version?.trim() || 'v1.0.0',
+      tags: request.tags.join(','),
+      domain: request.domain.trim(),
+      capability: request.capability.trim(),
+      description: definition.description,
+      owner: request.owner.trim(),
+      department: request.department.trim(),
+      isPublic: request.isPublic.trim() || '1',
+      sourceNode: request.sourceNode.trim(),
+      // `reason` is what moves the asset from draft (1) to pending review (2).
+      ...(request.listed ? { reason: `专家「${request.name.trim()}」上架申请` } : {}),
+      attachmentInfo: { fileName, filePath, fileSize: String(bytes.byteLength) },
+    };
+    let result: unknown;
+    try {
+      result = await channel.post(isTeam ? '/desktop-client/expertgroup/listingRequest' : '/desktop-client/expert/listingRequest', body, undefined, signal);
+    } catch (error) {
+      throw new ExpertsError('experts/remote-unavailable', listingFailure(error));
+    }
+    const message = listingMessageOf(result) ?? '上架申请已提交。';
+    await this.audit(actor, 'experts.submit-listing', expert.id, 'succeeded', 'experts/submit-listing-succeeded', { listed: String(request.listed) });
+    return message;
+  }
+
+  private async requireBackend(): Promise<BackendChannelLike> {
+    const channel = this.ctx.reflect.get('workdshBackend') as BackendChannelLike | undefined;
+    if (!channel || !(await channel.available().catch(() => false))) {
+      throw new ExpertsError('experts/remote-unavailable', '当前环境未接入业务后台。');
+    }
+    return channel;
+  }
+
+
+  private installationFor(expertType: 'agent' | 'team', remoteId: string): ExpertInstallation | undefined {
+    return this.installationsTable().get(installationKey(expertType, remoteId));
+  }
+
+  private boundSessionCount(expertIds: readonly string[]): number {
+    const ids = new Set(expertIds);
+    let total = 0;
+    for (const [, binding] of this.bindingsTable().entries()) {
+      if (ids.has(binding.expertRevisionRef.expertId)) total += 1;
+    }
+    return total;
   }
 
   async operation(actor: ActorContext, operationId: string, signal?: AbortSignal): Promise<Operation> {

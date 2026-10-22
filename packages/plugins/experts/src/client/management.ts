@@ -11,16 +11,28 @@ import type {
   ExpertDraft,
   ExpertListQuery,
   ExpertListResult,
+  ExpertListingOptions,
+  ExpertListingRequest,
   ExpertPreference,
+  ExpertInstallation,
+  DeleteExpertReceipt,
   ExpertValidation,
   ExecutionBinding,
   ExecutionCreation,
   ExecutionPlan,
   HandoffPlan,
   ImportPreview,
+  InstallReceipt,
   ModelSelectionRequest,
+  MyListingListResult,
+  MyListingQuery,
   Operation,
   PublishReceipt,
+  RemoteExpertListQuery,
+  RemoteExpertListResult,
+  RemoteInstallRequest,
+  UninstallReceipt,
+  WithdrawListingRequest,
 } from '../shared.js';
 
 const path = '/api/workdsh-experts';
@@ -151,6 +163,23 @@ export function createExpertManagementClient(ctx: Context, lifetime?: AbortSigna
       invoke<ExpertDraft>('commit-import', { importPlanId, previewDigest, operationId }, signal, 60_000),
     operation: (operationId: string, signal?: AbortSignal) => invoke<Operation>('operation', { operationId }, signal),
     verifyBinding: (sessionId: string, signal?: AbortSignal) => invoke<ExecutionBinding>('verify-binding', { sessionId }, signal),
+    /** Backend catalog (read-only). `available:false` means no business backend binding. */
+    remoteList: (query: RemoteExpertListQuery = {}, signal?: AbortSignal) =>
+      invoke<RemoteExpertListResult>('remote-list', query, signal, 60_000),
+    installRemote: (request: RemoteInstallRequest, operationId: string, signal?: AbortSignal) =>
+      invoke<InstallReceipt>('install', { ...request, operationId }, signal, 180_000),
+    uninstallRemote: (remoteKey: string, operationId: string, signal?: AbortSignal) =>
+      invoke<UninstallReceipt>('uninstall', { remoteKey, operationId }, signal, 60_000),
+    installations: (signal?: AbortSignal) => invoke<readonly ExpertInstallation[]>('installations', {}, signal),
+    listingOptions: (signal?: AbortSignal) => invoke<ExpertListingOptions>('listing-options', {}, signal, 60_000),
+    submitListing: (request: ExpertListingRequest, signal?: AbortSignal) => invoke<string>('submit-listing', request, signal, 180_000),
+    deleteExpert: (expertId: string, operationId: string, signal?: AbortSignal) =>
+      invoke<DeleteExpertReceipt>('delete-expert', { expertId, operationId }, signal, 60_000),
+    myListings: (query: MyListingQuery = {}, signal?: AbortSignal) =>
+      invoke<MyListingListResult>('my-listings', query, signal, 60_000),
+    /** Withdraw a pending listing application; resolves the backend message. */
+    withdrawListing: (request: WithdrawListingRequest, signal?: AbortSignal) =>
+      invoke<string>('withdraw-listing', request, signal, 60_000),
     /** Streaming upload of an export package; returns the staged artifact reference for preview/commit. */
     stageImport: (file: File, signal?: AbortSignal) =>
       request<{ uploadedArtifactRef: string }>(importPath, {

@@ -25,6 +25,8 @@ import { registerExpertExecutionGuard } from '../../../../packages/plugins/exper
 import { COMPILER_VERSION, compileExpertPreset, expertPersonaConfig, expertPresetDir, readExpertPreset } from '../../../../packages/plugins/experts/dist/runtime/preset-compiler.js';
 import { definitionFromDocuments } from '../../../../packages/plugins/experts/dist/authoring/documents.js';
 import { keys } from '../../../../packages/plugins/experts/dist/storage/domain.js';
+import { buildExport } from '../../../../packages/plugins/experts/dist/services/portability.js';
+import { createHash } from 'node:crypto';
 
 test('authored expert package publishes complete MD and mounts retained bundled Skill resources', async () => {
   const h = await boot();
@@ -141,7 +143,7 @@ function fullDefinition(name, overrides = {}) {
  * a previously used home (cold-restart test); the returned `cleanup` only removes a
  * root this call created.
  */
-async function boot(existingRoot, { profileAgents = false, connectors } = {}) {
+async function boot(existingRoot, { profileAgents = false, connectors, seedDefaults = true, requireInstalledExpert = false } = {}) {
   const root = existingRoot ?? await mkdtemp(join(tmpdir(), 'workdsh-experts-'));
   const dshHome = join(root, 'dsh');
   const agentsHome = profileAgents ? join(dshHome, 'agents') : join(root, 'agents');
@@ -197,8 +199,9 @@ async function boot(existingRoot, { profileAgents = false, connectors } = {}) {
     });
 
     // ctx.plugin awaits the async [Service.init] that opens the storage domain, so the
-    // first domain call never races a `experts/unavailable`.
-    await ctx.plugin(ExpertsManager);
+    // first domain call never races a `experts/unavailable`. Seeding is opt-in since
+    // packaged installs ship no default experts; this suite exercises the seeded set.
+    await ctx.plugin(ExpertsManager, { seedDefaults, requireInstalledExpert });
 
     return {
       ctx, root, agentsHome, createCalls,
@@ -538,6 +541,31 @@ test('AT-14 default experts cannot be edited/published; copy creates an editable
       (err) => err.code === 'experts/not-published',
     );
   } finally { await h.cleanup(); }
+});
+
+// ── packaged installs ship no default experts ─────────────────────────────────
+
+test('seedDefaults is off for packaged installs and archives untouched defaults from an earlier release', async () => {
+  const empty = await boot(undefined, { seedDefaults: false });
+  try {
+    const a = actor('owner-a');
+    assert.equal((await empty.experts.list(a, {})).total, 0, 'a fresh packaged install starts with an empty catalog');
+    assert.equal((await empty.experts.list(a, { availability: 'enabled' })).total, 0);
+  } finally { await empty.cleanup(); }
+
+  const seeded = await boot();
+  const root = seeded.root;
+  assert.equal((await seeded.experts.list(actor('owner-a'), {})).total, 3, 'explicit seeding still ships three templates for probes');
+
+  // Cold restart with seeding switched off: the leftover defaults leave the catalog.
+  const off = await boot(root, { seedDefaults: false });
+  try {
+    const a = actor('owner-a');
+    assert.equal((await off.experts.list(a, { availability: 'enabled' })).total, 0, 'untouched defaults are archived on read');
+    const detail = await off.experts.get(a, 'requirement-analysis-advisor');
+    assert.equal(detail.expert.availability, 'archived');
+    assert.equal((await off.experts.list(a, { availability: 'archived' })).total, 3);
+  } finally { await off.cleanup(); }
 });
 
 // ── AT-16: publish is idempotent per operationId and rejects a reused id ────────
@@ -1141,5 +1169,263 @@ test('missing required connector reports its ID before creating a native session
     assert.match(plan.missing[0].message, /missing-connector/);
     await assert.rejects(h.experts.createExecution(a, plan.executionPlanId, { operationId: 'missing-execution' }), error => error.code === 'experts/dependency-missing');
     assert.equal(h.createCalls.length, 0);
+  } finally { await h.cleanup(); }
+});
+
+// ── backend catalog: install / update / hard-delete uninstall ─────────────────
+
+/** Minimal `workdshBackend` stand-in: one catalog page per type, no envelope. */
+function fakeBackend(rows) {
+  return {
+    async available() { return true; },
+    async get(path, query) {
+      const page = path.includes('expertgroup') ? (rows.team ?? []) : (rows.agent ?? []);
+      const records = query?.id === undefined ? page : page.filter(row => row.id === query.id);
+      return { current: 1, size: records.length, total: records.length, pages: 1, records };
+    },
+  };
+}
+
+/** Backend row shape documented in `AiClientController` (only the fields we map). */
+function remoteRow({ id, name, version = 'v1.0.0', archive, digest, withPackage = true }) {
+  return {
+    id, name, version, description: `后台专家 ${name}`, tags: '远程,测试',
+    capability: '后台下发的专家能力', useCase: '联调验证',
+    status: '3', delFlag: 0, updateTime: '2026-10-22 10:00:00',
+    fjxxList: withPackage && archive
+      ? [{ fileName: `${id}.expert.zip`, filePath: `https://packages.test/${id}.zip`, fileSize: String(archive.byteLength), ...(digest ? { sha256: digest } : {}) }]
+      : null,
+  };
+}
+
+test('backend catalog installs to local and publishes; uninstall hard-deletes records and presets', async () => {
+  const h = await boot();
+  const originalFetch = globalThis.fetch;
+  try {
+    const a = actor('owner-a');
+    const definition = fullDefinition('后台下发专家', { tags: ['remote'] });
+    const { archive } = buildExport(definition);
+    const bytes = Buffer.from(archive);
+    const digest = createHash('sha256').update(bytes).digest('hex');
+    globalThis.fetch = async (input, init) => {
+      if (String(input) === 'https://packages.test/remote-1.zip') {
+        return new Response(bytes, { status: 200, headers: { 'content-type': 'application/zip' } });
+      }
+      return originalFetch(input, init);
+    };
+    h.ctx.provide('workdshBackend', fakeBackend({ agent: [remoteRow({ id: 'remote-1', name: '后台下发专家', archive: bytes, digest })] }));
+
+    const catalog = await h.experts.remoteList(a, { expertType: 'agent' });
+    assert.equal(catalog.available, true);
+    assert.equal(catalog.total, 1);
+    assert.equal(catalog.items[0].remoteId, 'remote-1');
+    assert.equal(catalog.items[0].installed, undefined, 'a catalog row is not installed until the user installs it');
+
+    const receipt = await h.experts.installRemote(a, { expertType: 'agent', remoteId: 'remote-1' }, { operationId: 'install-1' });
+    assert.equal(receipt.published, true, 'a package without Skill dependencies publishes immediately');
+    assert.equal(receipt.installation.status, 'ready');
+    assert.equal(receipt.installation.packageDigest, digest);
+
+    const detail = await h.experts.get(a, receipt.expertId);
+    assert.equal(detail.readiness, 'ready');
+    const presetDir = expertPresetDir(detail.revision.presetRevisionRef, h.agentsHome);
+    await stat(join(presetDir, 'preset.json'));
+    const plan = await h.experts.prepareExecution(a, receipt.expertId);
+    assert.deepEqual(plan.missing, [], 'an installed expert is summonable');
+
+    const installed = await h.experts.remoteList(a, { expertType: 'agent' });
+    assert.equal(installed.items[0].installed.expertId, receipt.expertId);
+    assert.equal(installed.items[0].installed.updateAvailable, false);
+
+    const removed = await h.experts.uninstallRemote(a, 'agent-remote-1', { operationId: 'uninstall-1' });
+    assert.deepEqual(removed.deletedExpertIds, [receipt.expertId]);
+    await assert.rejects(h.experts.get(a, receipt.expertId), error => error.code === 'experts/not-found');
+    await assert.rejects(stat(join(presetDir, 'preset.json')), 'the preset directory is removed from disk');
+    assert.deepEqual(await h.experts.listInstallations(a), []);
+    assert.equal((await h.experts.remoteList(a, { expertType: 'agent' })).items[0].installed, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await h.cleanup();
+  }
+});
+
+test('backend install refuses a missing package and a digest mismatch', async () => {
+  const h = await boot();
+  const originalFetch = globalThis.fetch;
+  try {
+    const a = actor('owner-a');
+    const { archive } = buildExport(fullDefinition('后台专家二'));
+    const bytes = Buffer.from(archive);
+    globalThis.fetch = async (input, init) => {
+      if (String(input).startsWith('https://packages.test/')) return new Response(bytes, { status: 200 });
+      return originalFetch(input, init);
+    };
+    h.ctx.provide('workdshBackend', fakeBackend({
+      agent: [
+        remoteRow({ id: 'remote-2', name: '后台专家二', archive: bytes, withPackage: false }),
+        remoteRow({ id: 'remote-3', name: '后台专家三', archive: bytes, digest: 'f'.repeat(64) }),
+      ],
+    }));
+
+    await assert.rejects(
+      h.experts.installRemote(a, { expertType: 'agent', remoteId: 'remote-2' }, { operationId: 'install-2' }),
+      error => error.code === 'experts/install-package-missing',
+      'a row without an attachment cannot be installed',
+    );
+    await assert.rejects(
+      h.experts.installRemote(a, { expertType: 'agent', remoteId: 'remote-3' }, { operationId: 'install-3' }),
+      error => error.code === 'experts/install-digest-mismatch',
+      'a package whose sha256 differs is rejected before import',
+    );
+    assert.deepEqual(await h.experts.listInstallations(a), []);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await h.cleanup();
+  }
+});
+
+test('product mode blocks self-made experts until they are installed from the catalog', async () => {
+  const h = await boot(undefined, { requireInstalledExpert: true });
+  const originalFetch = globalThis.fetch;
+  try {
+    const a = actor('owner-a');
+    // Published locally, but never listed/approved/installed: not executable.
+    const mine = await publishCopyOfDefault(h, a, 'gate-mine');
+    const mineDetail = await h.experts.get(a, mine.expertId);
+    assert.equal(mineDetail.installedFromCatalog, false);
+    assert.equal(mineDetail.executionBlocked, 'approval-required');
+    await assert.rejects(
+      h.experts.prepareExecution(a, mine.expertId),
+      error => error.code === 'experts/approval-required',
+      'a self-made expert must not be summonable',
+    );
+    const listed = await h.experts.list(a, { origin: 'personal' });
+    assert.equal(listed.items.find(row => row.id === mine.expertId).executionBlocked, 'approval-required');
+
+    // Installed from the backend catalog: executable with no further review step.
+    const { archive } = buildExport(fullDefinition('审核通过专家'));
+    const bytes = Buffer.from(archive);
+    globalThis.fetch = async (input, init) => String(input).startsWith('https://packages.test/')
+      ? new Response(bytes, { status: 200 })
+      : originalFetch(input, init);
+    h.ctx.provide('workdshBackend', fakeBackend({ agent: [remoteRow({ id: 'approved-1', name: '审核通过专家', archive: bytes })] }));
+    const receipt = await h.experts.installRemote(a, { expertType: 'agent', remoteId: 'approved-1' }, { operationId: 'gate-install' });
+    const detail = await h.experts.get(a, receipt.expertId);
+    assert.equal(detail.installedFromCatalog, true);
+    assert.equal(detail.executionBlocked, undefined);
+    const plan = await h.experts.prepareExecution(a, receipt.expertId);
+    assert.deepEqual(plan.missing, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await h.cleanup();
+  }
+});
+
+test('listing request uploads the current draft and hard delete removes every local file', async () => {
+  const h = await boot();
+  try {
+    const a = actor('owner-a');
+    const created = await h.experts.createDraft(a, fullDefinition('待上架专家', { role: '角色能力说明' }), { operationId: 'listing-draft' });
+    const uploads = [];
+    const posts = [];
+    h.ctx.provide('workdshBackend', {
+      async available() { return true; },
+      async get(path) {
+        if (path.endsWith('/queryAiNodeList')) return [{ value: 'node-self', label: '本级节点', nodeType: 'self' }];
+        if (path.endsWith('/getDictItems/yn')) return [{ value: '1', text: '公开' }, { value: '0', text: '非公开' }];
+        if (path.endsWith('/getDictItems/ai_expert_domain')) return [{ value: '反诈劝阻', text: '反诈劝阻' }];
+        throw new Error(`unexpected GET ${path}`);
+      },
+      async post(path, body) { posts.push({ path, body }); return '专家上架申请成功！'; },
+      async postForm(path, form) { uploads.push({ path, form }); return { filePath: 'https://files.test/expert.zip' }; },
+    });
+
+    const options = await h.experts.listingOptions(a);
+    assert.equal(options.available, true);
+    assert.deepEqual(options.nodes.map(node => node.nodeType), ['self']);
+    assert.deepEqual(options.domains.map(option => option.value), ['反诈劝阻']);
+
+    const message = await h.experts.submitListing(a, {
+      expertId: created.expertId, name: '待上架专家', sourceNode: 'node-self',
+      capability: '能力说明', tags: ['反诈'], owner: '张三', department: '科信支队',
+      domain: '反诈劝阻', isPublic: '1', listed: true,
+    });
+    assert.equal(message, '专家上架申请成功！');
+    assert.equal(uploads.length, 1);
+    assert.equal(uploads[0].path, '/desktop-client/upload');
+    assert.equal(uploads[0].form.get('biz'), 'desktop-client/expert');
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0].path, '/desktop-client/expert/listingRequest');
+    assert.equal(posts[0].body.name, '待上架专家');
+    assert.equal(posts[0].body.domain, '反诈劝阻');
+    assert.equal(posts[0].body.capability, '能力说明');
+    assert.match(posts[0].body.reason, /上架申请/u);
+    assert.equal(posts[0].body.attachmentInfo.filePath, 'https://files.test/expert.zip');
+    assert.ok(Number(posts[0].body.attachmentInfo.fileSize) > 0, 'attachment size is the exported archive length');
+
+    const removed = await h.experts.deleteExpert(a, created.expertId, { operationId: 'delete-local' });
+    assert.deepEqual(removed.deletedExpertIds, [created.expertId]);
+    await assert.rejects(h.experts.get(a, created.expertId), error => error.code === 'experts/not-found');
+    assert.equal((await h.experts.list(a, { origin: 'personal' })).items.some(row => row.id === created.expertId), false);
+  } finally { await h.cleanup(); }
+});
+
+test('my listing ledger maps expert and team applications with local status labels', async () => {
+  const h = await boot();
+  try {
+    const a = actor('owner-a');
+    h.ctx.provide('workdshBackend', {
+      async available() { return true; },
+      async get(path) {
+        if (path.includes('queryMyListingExpertList')) {
+          return {
+            current: 1, size: 2, total: 2, pages: 1,
+            records: [
+              { id: 'm1', name: '待审批专家', status: '2', version: 'v1.0.0', tags: '反诈', domain: '反诈劝阻', listingReason: '申请上架', updateTime: '2026-10-22 17:03:14', delFlag: 0, fjxxList: [{ fileName: 'e.zip', filePath: 'https://files.test/e.zip', fileSize: '20480' }] },
+              { id: 'm2', name: '被驳回专家', status: '4', delFlag: 0, offlineReason: '材料不全' },
+            ],
+          };
+        }
+        if (path.includes('queryMyListingExpertGroupList')) {
+          return { current: 1, size: 1, total: 1, pages: 1, records: [{ id: 'g1', name: '申请中的团', status: '3', memberIds: 'a,b', delFlag: 0 }] };
+        }
+        throw new Error(`unexpected GET ${path}`);
+      },
+      async post() { throw new Error('unused'); },
+      async postForm() { throw new Error('unused'); },
+    });
+
+    const agent = await h.experts.myListings(a, { expertType: 'agent' });
+    assert.equal(agent.available, true);
+    assert.equal(agent.total, 2);
+    assert.equal(agent.items[0].statusLabel, '待审批');
+    assert.equal(agent.items[0].package.fileName, 'e.zip');
+    assert.equal(agent.items[1].statusLabel, '已驳回');
+    assert.equal(agent.items[1].offlineReason, '材料不全');
+
+    const team = await h.experts.myListings(a, { expertType: 'team' });
+    assert.equal(team.items[0].statusLabel, '已上架');
+    assert.deepEqual(team.items[0].memberIds, ['a', 'b']);
+  } finally { await h.cleanup(); }
+});
+
+test('withdraw listing posts to the matching expert or team endpoint', async () => {
+  const h = await boot();
+  try {
+    const a = actor('owner-a');
+    const calls = [];
+    h.ctx.provide('workdshBackend', {
+      async available() { return true; },
+      async get() { throw new Error('unused'); },
+      async post(path, body) { calls.push({ path, body }); return { code: 200, message: '撤回申请成功' }; },
+      async postForm() { throw new Error('unused'); },
+    });
+
+    assert.equal(await h.experts.withdrawListing(a, { expertType: 'agent', remoteId: 'e1' }), '撤回申请成功');
+    assert.equal(await h.experts.withdrawListing(a, { expertType: 'team', remoteId: 'g1', reason: '不需要了' }), '撤回申请成功');
+    assert.deepEqual(calls, [
+      { path: '/desktop-client/expert/withdrawListingRequest', body: { id: 'e1' } },
+      { path: '/desktop-client/expertgroup/withdrawListingRequest', body: { id: 'g1', reason: '不需要了' } },
+    ]);
   } finally { await h.cleanup(); }
 });
