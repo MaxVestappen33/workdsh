@@ -54,9 +54,12 @@ try {
   for (const client of release.officialWeb.clients.filter(row => !row.conditional)) {
     if (!ids.has(client.package)) throw new Error('Unconditional official Web client missing at runtime: ' + client.package)
   }
-  for (const name of [...PRODUCT_PACKAGES, 'workdsh-bundle']) if (!ids.has(name)) throw new Error('Owned client missing at runtime: ' + name + '; owned graph=' + [...ids].filter(row => row.startsWith('workdsh-')).join(',') + '; ' + diagnostics())
+  // account-settings 声明 client.immediately，官方客户端会立即拉起随包的账号设置 UI；
+  // 其余默认客户端必须与产品清单完全一致，不允许额外 WorkDSH 客户端混入。
+  const expectedOwned = [...PRODUCT_PACKAGES, 'workdsh-bundle', 'workdsh-plugin-account-settings'].sort()
+  for (const name of expectedOwned) if (!ids.has(name)) throw new Error('Owned client missing at runtime: ' + name + '; owned graph=' + [...ids].filter(row => row.startsWith('workdsh-')).join(',') + '; ' + diagnostics())
   const owned = [...ids].filter(name => name.startsWith('workdsh-')).sort()
-  if (JSON.stringify(owned) !== JSON.stringify([...PRODUCT_PACKAGES, 'workdsh-bundle'].sort())) throw new Error('Unexpected default owned client inventory')
+  if (JSON.stringify(owned) !== JSON.stringify(expectedOwned)) throw new Error('Unexpected default owned client inventory: expected=' + JSON.stringify(expectedOwned) + '; actual=' + JSON.stringify(owned) + '; ' + diagnostics())
   for (const batch of graph.batches) {
     const address = new URL(batch.url, url)
     if (address.origin !== new URL(url).origin) throw new Error('Client batch escaped the loopback runtime origin')

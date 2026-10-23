@@ -23,6 +23,7 @@ vi.mock('../src/owned-process.ts', () => ({
   stopOwnedProcess: vi.fn(async () => {}),
   cleanOwnedProcessTree: vi.fn(async () => {}),
   reclaimOrphanedToolProcesses: vi.fn(),
+  trackOwnedProcess: vi.fn(),
 }))
 vi.mock('electron', async () => {
   const { EventEmitter } = await import('node:events')
@@ -75,6 +76,8 @@ it('keeps the encrypted login session across a normal quit so the next launch sk
   writeFileSync(join(source, 'node_modules/pnpm/bin/pnpm.cjs'), '')
   mkdirSync(join(root, 'dependencies/pnpm/bin'), { recursive: true })
   writeFileSync(join(root, 'dependencies/pnpm/bin/pnpm.cjs'), '')
+  // 载体按 pnpm 清单选择安装工具参数，缺失时启动失败。
+  writeFileSync(join(root, 'dependencies/pnpm/package.json'), JSON.stringify({ name: 'pnpm', version: '11.28.5' }))
   writeFileSync(join(source, 'package.json'), JSON.stringify({ dependencies: {}, dsh: { profile: { bundles: ['@deepseek-ai/dsh-base'] } } }))
   writeFileSync(join(source, 'profile-installation.json'), readFileSync(join(source, 'package.json')))
   mkdirSync(home, { recursive: true })

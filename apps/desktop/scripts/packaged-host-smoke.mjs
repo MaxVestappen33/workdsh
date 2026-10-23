@@ -6,6 +6,7 @@ export const PRODUCT_SERVICES = Object.freeze({
   'workdsh-plugin-connectors': 'workdshConnectors',
   'workdsh-plugin-experts': 'workdshExperts',
   'workdsh-plugin-library': 'workdshLibrary',
+  'workdsh-plugin-model-market': 'workdshModelMarket',
   'workdsh-plugin-projects': 'workdshProjects',
   'workdsh-plugin-skills': 'workdshSkills',
   'workdsh-plugin-workbenches': 'workdshWorkbenchRegistration',

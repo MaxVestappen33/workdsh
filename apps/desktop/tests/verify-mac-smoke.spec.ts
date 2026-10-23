@@ -148,7 +148,7 @@ describe('macOS DMG smoke artifact verification', () => {
   })
 
   it('rejects a missing or falsified Intel source receipt rather than relabelling tool bytes as npm rc.2',()=>{
-    const value=fixture('x64'),primary=join(value.root,'WorkDSH.app','Contents','Resources','workdsh-runtime','primary-runtime')
+    const value=fixture('x64'),primary=join(value.root,'PoliceAssistant.app','Contents','Resources','workdsh-runtime','primary-runtime')
     const harness=options({targetArch:'x64',makeMountPoint:()=>value.root},value.modeOverrides)
     writeFileSync(join(primary,OFFICIAL_PROVENANCE_FILE),JSON.stringify({schemaVersion:1,npmDshVersion:'0.2.1-rc.2',artifact:{version:'0.2.1-rc.2'}}))
     expectSmokeFailure(harness,'provenance mismatch')

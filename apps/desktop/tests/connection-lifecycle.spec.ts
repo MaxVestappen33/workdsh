@@ -100,7 +100,8 @@ it('enforces the packaged backend, uses explicitly installed enterprise identity
     expect(launch[2]?.env?.DSH_HOME).toBe(enterprise.home)
     expect(launch[2]?.env?.DSH_AGENTS_HOME).toBe(join(enterprise.root, 'agents'))
     expect(launch[1]?.join(' ')).not.toContain('secret')
-    expect(launch[1]).toEqual([join(enterprise.home, '.workdsh-host.mjs'), '--no-open', '--port', '0'])
+    // 端口改由 runtime-port 补丁层交给官方 Web 内核，CLI 不再传 --port。
+    expect(launch[1]).toEqual([join(enterprise.home, '.workdsh-host.mjs'), '--no-open'])
     // 随包 Python 必须排在 PATH 最前：否则工作区里的 `python` 会命中 Windows 应用执行别名（商店转发器）。
     const [firstPathEntry] = String(launch[2]?.env?.PATH).split(delimiter)
     expect(firstPathEntry?.endsWith(join('dependencies', 'python'))).toBe(true)
