@@ -41,9 +41,16 @@ test('official Agent Sessions receive isolated managed Playwright tools', {
     await Promise.all(handles.map(handle => handle.agent.whenIdle()));
 
     assert.equal(ctx.browserUse.providerName, 'workdsh-playwright');
-    for (const { agent } of handles) {
-      assert.ok(ctx.tools.schemas(agent).some(schema => schema.name === TOOL));
-    }
+    // 浏览器预热不再阻塞会话创建，工具注册会在后台完成。
+    const waitForTools = async agent => {
+      const deadline = Date.now() + 20_000;
+      while (Date.now() < deadline) {
+        if (ctx.tools.schemas(agent).some(schema => schema.name === TOOL)) return;
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      throw new Error('browser tools were not registered');
+    };
+    for (const { agent } of handles) await waitForTools(agent);
     assert.equal(ctx.workdshBrowserSession.active(first.agent), false);
 
     const close = agent => ctx.tools.execute({
@@ -100,9 +107,9 @@ test('official Agent Sessions receive isolated managed Playwright tools', {
     assert.deepEqual(await callRoute(first.agent.id, 'status'), { status: 200, body: { active: true, revision: ctx.workdshBrowserSession.revision(first.agent) } });
     assert.equal((await callRoute('unknown-session', 'capture')).status, 404);
     assert.equal((await callRoute(second.agent.id, 'capture')).body.url.includes('FIRST_SESSION'), false);
-    profile.organization.kind = 'shared';
+    profile.membership.principalId = 'another-owner';
     assert.equal((await callRoute(first.agent.id, 'capture')).status, 403);
-    profile.organization.kind = 'personal';
+    profile.membership.principalId = 'local-owner';
     const remoteFrame = await callRoute(first.agent.id, 'capture');
     assert.equal(remoteFrame.status, 200);
     assert.match(remoteFrame.body.url, /FIRST_SESSION/);

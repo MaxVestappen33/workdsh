@@ -31,9 +31,10 @@ export function registerBrowserSessionConnection(ctx: Context): void {
     methods: ['POST'],
     requestBody: 'buffered',
     fetch: async request => {
+      // 桌面端的浏览器视图只服务本机登录用户自己的会话：任何组织类型（个人/团队/企业账号）
+      // 都允许，但 membership 必须与当前身份一致且处于 active，避免跨主体读取画面。
       const profile = host.workdshIdentity.profile();
-      if (profile.organization.kind !== 'personal'
-        || profile.membership.principalId !== profile.principalId
+      if (profile.membership.principalId !== profile.principalId
         || profile.membership.organizationId !== profile.organization.id
         || profile.membership.state !== 'active') {
         return response({ error: 'browser access is unavailable for this identity' }, 403);
