@@ -12,6 +12,8 @@ import { registerExpertManagementTools } from './tools/management-tools.js';
 import { registerExpertExecutionGuard } from './runtime/execution-guard.js';
 
 export * from './services/experts-manager.js';
+export * from './services/remote-catalog.js';
+export * from './services/endpoints.js';
 export * from './services/connection-api.js';
 export * from './tools/management-tools.js';
 export * from './runtime/execution-guard.js';

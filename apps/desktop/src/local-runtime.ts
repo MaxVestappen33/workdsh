@@ -287,6 +287,31 @@ export function desktopModelMarketPatch(home: string, server: ServerConfig): str
   return patch
 }
 
+/**
+ * 专家市场与上架申请的接口路径注入层。experts 与 skills 一样是 Desktop/Web 共用的 Profile 包，
+ * 不能自己读载体配置，因此由这里把 workdsh-app.json 的 server 段作为插件选项注入。
+ * 节点列表、字典与附件上传和技能上架共用同一批端点，直接复用对应字段。
+ */
+export function desktopExpertMarketPatch(home: string, server: ServerConfig): string | undefined {
+  const rows = ([
+    ['marketAgentList', server.expertMarketAgentListPath],
+    ['marketTeamList', server.expertMarketTeamListPath],
+    ['myListingAgent', server.expertMyListingAgentPath],
+    ['myListingTeam', server.expertMyListingTeamPath],
+    ['submitAgent', server.expertListingSubmitAgentPath],
+    ['submitTeam', server.expertListingSubmitTeamPath],
+    ['withdrawAgent', server.expertListingWithdrawAgentPath],
+    ['withdrawTeam', server.expertListingWithdrawTeamPath],
+    ['upload', server.skillUploadPath],
+    ['nodes', server.skillListingNodePath],
+    ['dict', server.skillDictPath],
+  ] as const).flatMap(([name, value]) => (typeof value === 'string' && /^\//u.test(value) ? [[name, value] as const] : []))
+  if (rows.length === 0) return undefined
+  const patch = join(home, '.expert-market.patch.yml')
+  writeFileSync(patch, `- id: workdsh-experts\n  config:\n    paths:\n${rows.map(([name, value]) => `      ${name}: ${JSON.stringify(value)}\n`).join('')}`, { mode: 0o600 })
+  return patch
+}
+
 export interface AccountActor {
   principalId: string
   organizationId: string

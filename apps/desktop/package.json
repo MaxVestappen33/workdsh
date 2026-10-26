@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-desktop",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "警务助手，面向公安业务场景的智能工作台",
   "homepage": "http://56.82.4.232:3100",
   "license": "MIT",
@@ -24,6 +24,7 @@
     "build/tray-icon*.png",
     "lib/workdsh-main.js",
     "lib/connection-preload.cjs",
+    "lib/update-preload.cjs",
     "README.md",
     "README.zh.md",
     "THIRD_PARTY_NOTICES.md"
@@ -99,6 +100,7 @@
       "build/tray-icon*.png",
       "lib/workdsh-main.js",
       "lib/connection-preload.cjs",
+      "lib/update-preload.cjs",
       "package.json",
       "!node_modules/**"
     ],

@@ -1,7 +1,7 @@
 import {composeInstalledEnterprisePlugins,installedEnterprisePlugins} from './enterprise-plugins.ts'
 /** Minimal Electron carrier for the bundled WorkDSH release profile. */
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, powerMonitor, shell, Tray } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, shell, Tray, type IpcMainInvokeEvent, type MenuItemConstructorOptions } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
 import {
   existsSync,
@@ -20,12 +20,19 @@ import { readAppConfig, type AppEnvironment, type ResolvedAppConfig } from './ap
 import { createDebugLog, type DebugLog } from './debug-log.ts'
 import { AccountLogin, AccountStore, restoreAccountLogin, startAccountAuthority, type AccountAuthority } from './member-auth.ts'
 import { EnterpriseLogin, startEnterpriseAuthority, type Authority } from './enterprise-auth.ts'
-import { desktopEnterprisePatch, desktopAccountPatch, desktopConnectorMarketPatch, desktopSkillMarketPatch, desktopModelMarketPatch, accountSpace, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher, type AccountActor } from './local-runtime.ts'
+import { desktopEnterprisePatch, desktopAccountPatch, desktopConnectorMarketPatch, desktopSkillMarketPatch, desktopModelMarketPatch, desktopExpertMarketPatch, accountSpace, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher, type AccountActor } from './local-runtime.ts'
 import { manageCommand } from './command-management.ts'
 import { createRuntimeOutputRedactor, redactRuntimeOutput, runtimeFailureDetail, runtimeFailureLog } from './runtime-diagnostics.ts'
 import { cleanOwnedProcessTree, reclaimOrphanedToolProcesses, stopOwnedProcess, trackOwnedProcess } from './owned-process.ts'
 import { prepareRuntimePort, runtimePortConflict } from './runtime-port.ts'
 import { runOfficialCommand } from './official-command.ts'
+import { renderMarkdown } from './update-markdown.ts'
+import type { UpdateCandidate } from './update-release.ts'
+import { UpdateService } from './update-service.ts'
+import type { UpdateSnapshot } from './update-state.ts'
+import type { UpdateView } from './update-view.ts'
+import { launchWindowsInstaller } from './update-install.ts'
+import { updateWindowHtml } from './update-window.ts'
 
 const PROFILE_NAME = 'workdsh'
 const READY_PATTERN = /dsh web:\s+(http:\/\/127\.0\.0\.1:\d+\/?\?token=[^\s]+)/u
@@ -46,6 +53,16 @@ let pendingConnection: ReturnType<typeof enterpriseConnection> | undefined
 let enterprise: { login: EnterpriseLogin, root: string, home: string, deviceId: string, authority?: Authority, authFile?: string } | undefined
 let verifyTimer: ReturnType<typeof setInterval> | undefined
 let verifying = false
+
+// ── 客户端在线更新（仅 win32-x64）──────────────────────────────────────────
+let updater: UpdateService | undefined
+let updateWindow: BrowserWindow | undefined
+let updateView: UpdateView = { phase: 'idle' }
+let updaterInstalling = false
+let lastNotifiedVersion: string | undefined
+let updateLog: DebugLog | undefined
+let trayUpdateLabel: string | undefined
+let lastAutoCheckAt = 0
 
 // Account (replaces personal identity) session state.
 let appConfig: ResolvedAppConfig | undefined
@@ -234,20 +251,286 @@ async function resolveCloseRequest(page: BrowserWindow): Promise<void> {
   } finally { closePromptOpen = false }
 }
 
+/** 托盘菜单是唯一常驻入口：更新状态变化时只重建这一份菜单。 */
+function refreshTrayMenu(): void {
+  if (!tray) return
+  const items: MenuItemConstructorOptions[] = [
+    { label: '显示主界面', click: () => revealMainWindow() },
+  ]
+  if (updater !== undefined) {
+    items.push({
+      label: trayUpdateLabel ?? '检查更新…',
+      click: () => {
+        if (trayUpdateLabel !== undefined) showUpdateWindow()
+        else checkForUpdatesManually()
+      },
+    })
+  }
+  items.push({ type: 'separator' }, { label: '退出软件', click: () => app.quit() })
+  tray.setContextMenu(Menu.buildFromTemplate(items))
+}
+
 function installTray(): void {
   if (tray) return
   try {
     const icon = fileURLToPath(new URL(process.platform === 'darwin' ? '../build/tray-iconTemplate.png' : '../build/tray-icon-blue.png', import.meta.url))
     tray = new Tray(icon)
     tray.setToolTip('警务助手')
-    tray.setContextMenu(Menu.buildFromTemplate([
-      { label: '显示主界面', click: () => revealMainWindow() },
-      { type: 'separator' },
-      { label: '退出软件', click: () => app.quit() },
-    ]))
+    refreshTrayMenu()
     tray.on('click', () => revealMainWindow())
     tray.on('double-click', () => revealMainWindow())
   } catch { tray = undefined }
+}
+
+// ── 在线更新 ────────────────────────────────────────────────────────────────
+
+function updateSkippedFile(): string {
+  return join(app.getPath('userData'), 'update-skipped.json')
+}
+
+/** 用户点过“稍后”的版本；自动检查据此不再重复弹窗。 */
+function readSkippedVersion(): string | undefined {
+  try {
+    const value = JSON.parse(readFileSync(updateSkippedFile(), 'utf8')) as { version?: unknown }
+    return typeof value.version === 'string' && value.version.length > 0 ? value.version : undefined
+  } catch { return undefined }
+}
+
+function rememberSkippedVersion(version: string): void {
+  try {
+    mkdirSync(app.getPath('userData'), { recursive: true })
+    writeFileSync(updateSkippedFile(), JSON.stringify({ version }), { mode: 0o600 })
+  } catch { /* 记住忽略版本失败只会多提示一次，不阻断更新 */ }
+}
+
+function releaseTypeLabel(releaseType: string): string {
+  if (releaseType === 'stable') return '正式版'
+  if (releaseType === 'beta') return '公测版'
+  if (releaseType === 'alpha') return '内测版'
+  return releaseType
+}
+
+function viewForUpdate(snapshot: UpdateSnapshot): UpdateView {
+  const candidate = snapshot.candidate
+  const notesHtml = candidate?.notes === undefined ? undefined : renderMarkdown(candidate.notes)
+  return {
+    phase: snapshot.phase,
+    ...(candidate === undefined ? {} : {
+      version: candidate.version,
+      releaseType: candidate.releaseType,
+      mandatory: candidate.mandatory,
+    }),
+    ...(snapshot.percent === undefined ? {} : { percent: snapshot.percent }),
+    ...(notesHtml === undefined ? {} : { notesHtml }),
+    ...(snapshot.failure === undefined ? {} : {
+      failure: { operation: snapshot.failure.operation, code: snapshot.failure.code },
+    }),
+  }
+}
+
+/** 更新状态只通过这一处同步到托盘、更新窗口与系统通知。 */
+function handleUpdateState(snapshot: UpdateSnapshot): void {
+  updateView = viewForUpdate(snapshot)
+  if (updateWindow !== undefined && !updateWindow.isDestroyed()) {
+    updateWindow.webContents.send('workdsh:update-view', updateView)
+    try { updateWindow.setClosable(snapshot.phase !== 'installing') } catch { /* 平台不支持时忽略 */ }
+  }
+
+  const label = snapshot.phase === 'available' || snapshot.phase === 'ready'
+    ? `新版本 ${snapshot.candidate?.version ?? ''}（点击更新）`
+    : snapshot.phase === 'downloading' ? '正在下载更新…'
+      : snapshot.phase === 'installing' ? '正在安装更新…'
+        : undefined
+  if (label !== trayUpdateLabel) {
+    trayUpdateLabel = label
+    refreshTrayMenu()
+  }
+
+  const candidate = snapshot.candidate
+  if (snapshot.phase === 'available' && candidate !== undefined) {
+    if (candidate.mandatory) {
+      // 强制更新直接展示窗口，用户不能只关闭提示。
+      showUpdateWindow()
+    } else if (lastNotifiedVersion !== candidate.version) {
+      lastNotifiedVersion = candidate.version
+      if (Notification.isSupported()) {
+        const notice = new Notification({
+          title: '发现新版本',
+          body: `${candidate.version} ${releaseTypeLabel(candidate.releaseType)}`,
+        })
+        notice.on('click', () => showUpdateWindow())
+        notice.show()
+      }
+    }
+  }
+}
+
+function showUpdateWindow(): void {
+  if (updater === undefined) return
+  if (updateWindow !== undefined && !updateWindow.isDestroyed()) {
+    updateWindow.show()
+    updateWindow.focus()
+    return
+  }
+  // 强制更新使用模态窗口阻止继续操作主界面；普通更新保持独立窗口。
+  const modal = updateView.mandatory === true && window !== undefined && !window.isDestroyed()
+  updateWindow = new BrowserWindow({
+    width: 620,
+    height: 580,
+    minWidth: 480,
+    minHeight: 420,
+    ...(modal ? { parent: window, modal: true } : {}),
+    title: '软件更新',
+    show: false,
+    autoHideMenuBar: true,
+    minimizable: !modal,
+    backgroundColor: '#f5f7fa',
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      preload: fileURLToPath(new URL('./update-preload.cjs', import.meta.url)),
+    },
+  })
+  const page = updateWindow
+  page.setMenuBarVisibility(false)
+  page.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//u.test(url)) void shell.openExternal(url)
+    return { action: 'deny' }
+  })
+  page.on('close', event => {
+    if (quitting || updaterInstalling) return
+    event.preventDefault()
+    // 强制更新不允许只关闭提示；普通更新关闭即隐藏。
+    if (updateView.mandatory !== true) page.hide()
+  })
+  page.on('closed', () => { if (updateWindow === page) updateWindow = undefined })
+  void page.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(updateWindowHtml())).then(() => {
+    if (page.isDestroyed()) return
+    page.webContents.send('workdsh:update-view', updateView)
+    page.show()
+  }).catch(() => { if (!page.isDestroyed()) page.destroy() })
+}
+
+function assertUpdateSender(event: IpcMainInvokeEvent): void {
+  if (updateWindow === undefined || updateWindow.isDestroyed() || event.sender !== updateWindow.webContents) {
+    throw new Error('更新窗口来源无效')
+  }
+}
+
+function installUpdateHandlers(): void {
+  ipcMain.handle('workdsh:update-ready', (event) => {
+    assertUpdateSender(event)
+    return updateView
+  })
+  ipcMain.handle('workdsh:update-action', async (event, action: unknown) => {
+    assertUpdateSender(event)
+    if (typeof action !== 'string' || updater === undefined) return
+    switch (action) {
+      case 'download': void updater.download(); return
+      case 'install': void updater.install(); return
+      case 'cancel': void updater.cancel(); return
+      case 'retry': void updater.retry(); return
+      case 'dismiss':
+        await updater.dismiss()
+        updateWindow?.hide()
+        return
+      case 'close':
+        if (updateView.phase !== 'installing') updateWindow?.hide()
+        return
+      default:
+        return
+    }
+  })
+}
+
+function checkForUpdatesManually(): void {
+  if (updater === undefined) return
+  lastAutoCheckAt = Date.now()
+  showUpdateWindow()
+  void updater.check(true)
+}
+
+function scheduleUpdateChecks(minutes: number): void {
+  const intervalMs = Math.max(5, minutes) * 60_000
+  const jitter = (value: number): number => Math.round(value * (0.9 + Math.random() * 0.2))
+  const tick = (): void => {
+    if (updater === undefined) return
+    lastAutoCheckAt = Date.now()
+    void updater.check(false)
+    setTimeout(tick, jitter(intervalMs))
+  }
+  setTimeout(tick, jitter(30_000))
+  powerMonitor.on('resume', () => {
+    if (updater === undefined || Date.now() - lastAutoCheckAt < 5 * 60_000) return
+    lastAutoCheckAt = Date.now()
+    void updater.check(false)
+  })
+}
+
+/** 更新前停止本机运行，但保留登录态与用户数据。 */
+async function stopRuntimeForUpdate(): Promise<void> {
+  account?.stopSync?.()
+  await account?.authority?.close()
+  account?.login.cancelRequests()
+  if (enterprise !== undefined) {
+    await enterprise.authority?.close()
+    enterprise.login.cancelRequests()
+  }
+  const child = runtime
+  if (child !== undefined) {
+    await stopOwnedProcess(child)
+    if (runtime === child) {
+      runtime = undefined
+      runtimeStarting = false
+    }
+  }
+}
+
+async function installUpdate(candidate: UpdateCandidate, installerPath: string): Promise<void> {
+  updaterInstalling = true
+  updateLog?.write(`[${new Date().toISOString()}] install ${candidate.version}\n`)
+  try {
+    await stopRuntimeForUpdate()
+    await launchWindowsInstaller(installerPath)
+  } catch (error) {
+    updaterInstalling = false
+    throw error
+  }
+  // 安装器已成功启动：关闭所有窗口并退出，由安装器覆盖文件后重新拉起应用。
+  quitting = true
+  for (const page of BrowserWindow.getAllWindows()) {
+    if (!page.isDestroyed()) page.destroy()
+  }
+  app.quit()
+}
+
+function startUpdater(): void {
+  // 第一版只验证 Windows x64；其它平台/架构不显示任何更新入口。
+  if (process.platform !== 'win32' || process.arch !== 'x64') return
+  const config = loadConfig()
+  if (!config.server.updateEnabled) return
+
+  updateLog = createDebugLog(join(app.getPath('userData'), 'logs'), 'update')
+  updater = new UpdateService({
+    baseUrl: config.server.baseUrl,
+    appId: config.server.appId,
+    platform: process.platform,
+    arch: process.arch,
+    currentVersion: app.getVersion(),
+    latestVersionPath: config.server.latestVersionPath,
+    downloadDirectory: join(app.getPath('userData'), 'updates'),
+    // net.fetch 复用 Chromium 网络栈：系统代理、证书库与内网自建 CA 都能生效。
+    fetch: net.fetch as unknown as typeof fetch,
+    onState: handleUpdateState,
+    onInstall: installUpdate,
+    onJournal: (event, detail) => updateLog?.write(`[${new Date().toISOString()}] ${event}${detail === undefined ? '' : ` ${detail}`}\n`),
+    skippedVersion: readSkippedVersion,
+    rememberSkipped: rememberSkippedVersion,
+  })
+  installUpdateHandlers()
+  scheduleUpdateChecks(config.server.updateCheckIntervalMinutes)
+  refreshTrayMenu()
 }
 
 /**
@@ -339,7 +622,7 @@ function openWindow(url: string, connection: DesktopConnection = { mode: 'person
   page.on('closed', () => { enterpriseWindows.delete(page); if (window === page) window = undefined })
   // 点叉号不再直接退出：交给关闭确认弹窗（隐藏到托盘 / 退出软件）。真正的退出/切换流程不受影响。
   page.on('close', event => {
-    if (quitting || switching) return
+    if (quitting || switching || updaterInstalling) return
     event.preventDefault()
     void resolveCloseRequest(page)
   })
@@ -437,7 +720,8 @@ function marketPatchLayers(home: string): string[] {
     const connector = desktopConnectorMarketPatch(home, server, { node: bundledNodeExecutable(), pnpm: join(bundledPrimaryRuntime(), 'dependencies', 'pnpm', 'bin', 'pnpm.cjs') })
     const skill = desktopSkillMarketPatch(home, server)
     const model = desktopModelMarketPatch(home, server)
-    return [connector, skill, model].filter((patch): patch is string => patch !== undefined)
+    const expert = desktopExpertMarketPatch(home, server)
+    return [connector, skill, model, expert].filter((patch): patch is string => patch !== undefined)
   } catch (error) {
     process.stderr.write(`[startup] 市场接口路径与本机包安装配置未注入，插件将使用内置默认值：${error instanceof Error ? error.message : String(error)}\n`)
     return []
@@ -1122,10 +1406,17 @@ if (desktopUserData) {
   app.setPath('userData', desktopUserData)
 }
 app.setName('PoliceAssistant')
+// Windows 通知需要稳定的 AppUserModelId，与安装包 appId 保持一致。
+if (process.platform === 'win32') app.setAppUserModelId('io.techflag.dsh.ssh')
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, commandLine) => {
+    // 安装器覆盖安装前会以该参数请求有序退出；走既有 before-quit 清理路径。
+    if (commandLine.includes('--dsh-installer-quit')) {
+      app.quit()
+      return
+    }
     if (window === undefined) return
     revealMainWindow()
   })
@@ -1145,6 +1436,8 @@ if (!app.requestSingleInstanceLock()) {
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(signal, () => terminateOnSignal(signal))
   app.on('before-quit', event => {
     if (quitting) { stopRuntime(); return }
+    // 安装器交接期间不再接受普通退出请求，避免清理与安装并发。
+    if (updaterInstalling) { event.preventDefault(); return }
     event.preventDefault()
     if (switching) {
       quitRequested = true
@@ -1165,12 +1458,12 @@ if (!app.requestSingleInstanceLock()) {
     }).finally(() => { switching = false })
   })
   app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin' && !switching) app.quit()
+    if (process.platform !== 'darwin' && !switching && !updaterInstalling) app.quit()
   })
   app.on('activate', () => {
     // The entry closes before the official Host is ready. Activating the app
     // during that window must not relaunch and cancel the pending workspace.
-    if (switching || runtimeStarting || installer || quitting || quitRequested) return
+    if (switching || runtimeStarting || installer || quitting || quitRequested || updaterInstalling) return
     if (window === undefined) {
       // A healthy runtime always owns a window. Relaunching keeps the profile
       // lifecycle simple after the last macOS window was closed.
@@ -1179,6 +1472,8 @@ if (!app.requestSingleInstanceLock()) {
     }
   })
   void app.whenReady().then(() => {
+    // 安装器请求退出：不创建窗口，直接走退出清理。
+    if (process.argv.includes('--dsh-installer-quit')) { app.quit(); return }
     startupLogFile = join(app.getPath('userData'), 'startup-timing.log')
     markStartup('app.whenReady 触发')
     const deploymentFile = join(process.resourcesPath ?? '', 'workdsh-config.json')
@@ -1190,6 +1485,8 @@ if (!app.requestSingleInstanceLock()) {
       try { enterprisePortal = enterpriseConnection(JSON.parse(readFileSync(savedBackendFile(), 'utf8')).backend).portalOrigin } catch { /* stale invalid preference is not trusted */ }
     }
     installConnectionMenu()
+    // 先创建更新服务，托盘菜单才能包含“检查更新/新版本”入口。
+    startUpdater()
     installTray()
     installLoginHandlers()
     // 个人使用场景：跳过「选择使用方式」入口页，直接启动个人工作区。

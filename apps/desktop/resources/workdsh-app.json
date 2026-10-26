@@ -8,28 +8,11 @@
     "subtitle": "正在准备好您的工作区，请稍候..."
   },
   "server": {
+    "appId": "police-assistant",
     "baseUrl": "http://127.0.0.1:18080/ytsj-ai",
     "mcpPackageRegistry": "http://56.82.7.213:8081/repository/npm-group/",
-    "loginPath": "/sys/pcClientLogin",
-    "logoutPath": "/sys/logout",
-    "mePath": "/sys/pcClientVerifyUser",
     "syncIntervalSeconds": 300,
-    "mcpMarketListPath": "/desktop-client/mcptool/queryAuthorizedMcpToolList",
-    "mcpMarketCategoriesPath": "/desktop-client/mcptool/queryMcpToolBizSceneList",
-    "mcpMarketInstallPath": "/desktop-client/mcptool/installMcpTool",
-    "mcpMarketUninstallPath": "/desktop-client/mcptool/unInstallMcpTool",
-    "skillMarketListPath": "/desktop-client/skill/queryAuthorizedSkillList",
-    "skillMarketCategoriesPath": "/desktop-client/skill/querySkillBizSceneList",
-    "skillMarketInstallPath": "/desktop-client/skill/installSkill",
-    "skillMarketUninstallPath": "/desktop-client/skill/unInstallSkill",
-    "skillListingSubmitPath": "/desktop-client/skill/listingRequest",
-    "skillListingListPath": "/desktop-client/skill/queryMyListingSkillList",
-    "skillListingNodePath": "/desktop-client/queryAiNodeList",
-    "skillListingScenePath": "/desktop-client/queryAiBizSceneList",
-    "skillDictPath": "/desktop-client/getDictItems",
-    "skillUploadPath": "/desktop-client/upload",
-    "modelMarketListPath": "/desktop-client/model/queryAuthorizedModelList",
-    "modelMarketUsePath": "/desktop-client/model/useModel",
-    "modelMarketUnusePath": "/desktop-client/model/unUseModel"
+    "updateCheckIntervalMinutes": 5,
+    "updateEnabled": true
   }
 }

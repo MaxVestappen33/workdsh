@@ -159,13 +159,13 @@ macOS: /Users/your-name/Downloads/workdsh-enterprise-connection-0.1.0-alpha.2.tg
 Windows: C:\Users\your-name\Downloads\workdsh-enterprise-connection-0.1.0-alpha.2.tgz
 ```
 
-Use your actual username and location. On macOS, select the file in Finder and press `Option + Command + C`; on Windows, right-click and choose Copy as path, removing surrounding quotes before pasting. Paste the full path into Plugins → Add plugin, install, then click Enable now. Do not enter only the package name or upload the archive to the admin backend.
+Use your actual username and location. On macOS, select the file in Finder and press `Option + Command + C`; on Windows, right-click and choose Copy as path, removing surrounding quotes before pasting. Paste the full path into Settings → Built-in plugins → Plugin settings → Open plugin management → Add plugin, install, then click Enable now. Do not enter only the package name or upload the archive to the admin backend.
 
 [Download this release's Enterprise Connection tgz](https://github.com/techflag/workdsh/releases/download/desktop-v3.0.0-alpha.3/workdsh-enterprise-connection-0.1.0-alpha.2.tgz). Retain the original `.tgz` if your browser extracts downloads; an extracted folder path is not the archive path.
 
 The Enterprise Connection package is delivered independently through our [GitHub Releases](https://github.com/techflag/workdsh/releases), without a third-party marketplace. Download `workdsh-enterprise-connection-<version>.tgz` and enter its full path in Add plugin. Starting with Desktop 2.0.6-alpha.5, local plugin archives are copied into the application’s account-specific cache; moving or deleting the original download after successful installation does not block later plugin installations. Release assets include the compatible DSH version manifest and `SHA256SUMS`.
 
-In personal mode, open **Plugins → Add plugin**, enter the administrator-provided Enterprise Connection package path or installation address, verify the source and install, then click **Enable now** when installation finishes. One package provides account and collaboration plugins. Then open **Settings → Enterprise account → Connect enterprise**, enter the backend address and sign in. Installation uses the official progress and error feedback; no terminal command is required. Enterprise plugins are not yet published to a searchable catalog.
+In personal mode, open **Settings → Built-in plugins → Plugin settings → Open plugin management**, choose **Add plugin**, enter the administrator-provided Enterprise Connection package path or installation address, verify the source and install, then click **Enable now** when installation finishes. One package provides account and collaboration plugins. Then open **Settings → Enterprise account → Connect enterprise**, enter the backend address and sign in. Installation uses the official progress and error feedback; no terminal command is required. Enterprise plugins are not yet published to a searchable catalog.
 
 ### Enterprise login and account
 

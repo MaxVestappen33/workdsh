@@ -15,6 +15,8 @@ import * as workbench from 'workdsh-plugin-workbench';
 import { BrandMark, BrandName, DiagnosticsMark } from '../components/Brand.js';
 import { DiagnosticsPanel, type Inventory } from '../components/DiagnosticsPanel.js';
 import { NavigationLocation } from '../components/NavigationLocation.js';
+import { OfficialEntriesHidden } from '../components/OfficialEntriesHidden.js';
+import { pluginsSettingsTab } from '../components/PluginsSettingsTab.js';
 import { AgentBrowserPage, agentBrowserKind, readAgentBrowserFrame } from '../components/AgentBrowserPage.js';
 
 declare module '@deepseek-ai/cordis' {
@@ -44,6 +46,14 @@ export function apply(ctx: Context): void {
       label: '发现社区插件',
     }, communityMarketView(scope.market)));
   });
+  // 设置 → 内置插件：把官方插件页收进设置入口，并隐藏侧栏「插件」行与第三方「插件市场」tab。
+  // 插件页本身不重建，功能仍由官方 ui-plugin-manager 提供。
+  ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register({
+    name: 'settings.plugins.tab', id: 'workdsh-plugins', order: 20, label: '插件设置',
+  }, pluginsSettingsTab(ctx)));
+  ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+    name: 'shell.overlay', id: 'workdsh-official-entries-hidden',
+  }, OfficialEntriesHidden));
   // SkillHub keeps the plaza as a third-party overlay that positions itself
   // against the conversation. Its sidebar row duplicates the account-menu
   // entry that opens that same overlay, so hide the row and keep the overlay.

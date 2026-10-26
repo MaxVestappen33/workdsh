@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { load } from 'js-yaml'
 import { afterEach, expect, it } from 'vitest'
-import { desktopConnectorMarketPatch, desktopSkillMarketPatch, desktopModelMarketPatch, desktopEnterprisePatch, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher } from '../src/local-runtime.ts'
+import { desktopConnectorMarketPatch, desktopSkillMarketPatch, desktopModelMarketPatch, desktopExpertMarketPatch, desktopEnterprisePatch, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher } from '../src/local-runtime.ts'
 import type { ServerConfig } from '../src/app-config.ts'
 
 const roots: string[] = []
@@ -255,6 +255,47 @@ it('skips the model-market patch layer when no legal path is configured', () => 
   const { home } = fixture()
   expect(desktopModelMarketPatch(home, asServer({}))).toBeUndefined()
   expect(desktopModelMarketPatch(home, asServer({ modelMarketListPath: 'desktop-client/model/queryAuthorizedModelList' }))).toBeUndefined()
+})
+
+it('injects expert catalog, listing and shared upload paths as one experts patch layer', () => {
+  const { home } = fixture()
+  mkdirSync(home, { recursive: true })
+  const patch = desktopExpertMarketPatch(home, asServer({
+    expertMarketAgentListPath: '/desktop-client/expert/queryAuthorizedExpertList',
+    expertMarketTeamListPath: '/desktop-client/expertgroup/queryAuthorizedExpertGroupList',
+    expertMyListingAgentPath: '/desktop-client/expert/queryMyListingExpertList',
+    expertMyListingTeamPath: '/desktop-client/expertgroup/queryMyListingExpertGroupList',
+    expertListingSubmitAgentPath: '/desktop-client/expert/listingRequest',
+    expertListingSubmitTeamPath: '/desktop-client/expertgroup/listingRequest',
+    expertListingWithdrawAgentPath: '/desktop-client/expert/withdrawListingRequest',
+    expertListingWithdrawTeamPath: '/desktop-client/expertgroup/withdrawListingRequest',
+    skillUploadPath: '/desktop-client/upload',
+    skillListingNodePath: '/desktop-client/queryAiNodeList',
+    skillDictPath: '/desktop-client/getDictItems',
+  }))
+  expect(patch).toBeTruthy()
+  const rows = load(readFileSync(patch!, 'utf8')) as { id: string, config: { paths: Record<string, unknown> } }[]
+  expect(rows).toHaveLength(1)
+  expect(rows[0]?.id).toBe('workdsh-experts')
+  expect(rows[0]?.config.paths).toEqual({
+    marketAgentList: '/desktop-client/expert/queryAuthorizedExpertList',
+    marketTeamList: '/desktop-client/expertgroup/queryAuthorizedExpertGroupList',
+    myListingAgent: '/desktop-client/expert/queryMyListingExpertList',
+    myListingTeam: '/desktop-client/expertgroup/queryMyListingExpertGroupList',
+    submitAgent: '/desktop-client/expert/listingRequest',
+    submitTeam: '/desktop-client/expertgroup/listingRequest',
+    withdrawAgent: '/desktop-client/expert/withdrawListingRequest',
+    withdrawTeam: '/desktop-client/expertgroup/withdrawListingRequest',
+    upload: '/desktop-client/upload',
+    nodes: '/desktop-client/queryAiNodeList',
+    dict: '/desktop-client/getDictItems',
+  })
+})
+
+it('skips the experts patch layer when no legal expert path is configured', () => {
+  const { home } = fixture()
+  expect(desktopExpertMarketPatch(home, asServer({}))).toBeUndefined()
+  expect(desktopExpertMarketPatch(home, asServer({ expertMarketAgentListPath: 'desktop-client/expert/queryAuthorizedExpertList' }))).toBeUndefined()
 })
 
 it('migrates an unchanged platform package manager and retains a pending install until success', () => {

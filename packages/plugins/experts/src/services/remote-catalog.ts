@@ -12,6 +12,7 @@ import type {
 } from 'workdsh-contracts';
 import { ExpertsError } from '../domain/values.js';
 import { EXPERT_IMPORT_LIMITS } from './portability.js';
+import { DEFAULT_EXPERT_API_PATHS, type ExpertApiPaths } from './endpoints.js';
 
 /**
  * Backend expert catalog adapter (read-only).
@@ -31,16 +32,14 @@ export interface BackendChannelLike {
 }
 
 /** `AiClientController` list routes; the doc requires `status=3` to mean "listed". */
-export const REMOTE_EXPERT_PATHS: Readonly<Record<RemoteExpertType, string>> = {
-  agent: '/desktop-client/expert/queryAuthorizedExpertList',
-  team: '/desktop-client/expertgroup/queryAuthorizedExpertGroupList',
-};
+function marketPath(paths: ExpertApiPaths, expertType: RemoteExpertType): string {
+  return expertType === 'team' ? paths.marketTeamList : paths.marketAgentList;
+}
 
 /** Ledger of assets the current member submitted for review. */
-export const MY_LISTING_PATHS: Readonly<Record<RemoteExpertType, string>> = {
-  agent: '/desktop-client/expert/queryMyListingExpertList',
-  team: '/desktop-client/expertgroup/queryMyListingExpertGroupList',
-};
+function listingPath(paths: ExpertApiPaths, expertType: RemoteExpertType): string {
+  return expertType === 'team' ? paths.myListingTeam : paths.myListingAgent;
+}
 
 const LISTING_STATUS_LABELS: Readonly<Record<string, string>> = {
   '1': '草稿', '2': '待审批', '3': '已上架', '4': '已驳回', '5': '已下架',
@@ -183,7 +182,10 @@ function remoteFailure(error: unknown): ExpertsError {
 }
 
 export class RemoteExpertCatalog {
-  constructor(private readonly channel: () => BackendChannelLike | undefined) {}
+  constructor(
+    private readonly channel: () => BackendChannelLike | undefined,
+    private readonly paths: ExpertApiPaths = DEFAULT_EXPERT_API_PATHS,
+  ) {}
 
   private backend(): BackendChannelLike | undefined {
     return this.channel();
@@ -209,7 +211,7 @@ export class RemoteExpertCatalog {
     }
     let result: unknown;
     try {
-      result = await channel.get(REMOTE_EXPERT_PATHS[expertType], {
+      result = await channel.get(marketPath(this.paths, expertType), {
         pageNo, pageSize, status: listedStatus,
         ...(query.keyword ? { keyword: query.keyword } : {}),
         ...(query.bizScene ? { bizScene: query.bizScene } : {}),
@@ -254,7 +256,7 @@ export class RemoteExpertCatalog {
     }
     let result: unknown;
     try {
-      result = await channel.get(MY_LISTING_PATHS[expertType], {
+      result = await channel.get(listingPath(this.paths, expertType), {
         pageNo, pageSize,
         ...(query.keyword ? { keyword: query.keyword } : {}),
       }, signal);
@@ -289,7 +291,7 @@ export class RemoteExpertCatalog {
     if (!channel || !(await this.available())) throw new ExpertsError('experts/remote-unavailable', '当前环境未接入业务后台。');
     let result: unknown;
     try {
-      result = await channel.get(REMOTE_EXPERT_PATHS[expertType], { id: remoteId, status: listedStatus, pageNo: 1, pageSize: 1 }, signal);
+      result = await channel.get(marketPath(this.paths, expertType), { id: remoteId, status: listedStatus, pageNo: 1, pageSize: 1 }, signal);
     } catch (error) {
       throw remoteFailure(error);
     }

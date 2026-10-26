@@ -64,6 +64,30 @@ export interface ServerConfig {
   modelMarketUsePath: string
   /** 模型市场：卸载模型上报接口路径（后台当前为预留实现）。 */
   modelMarketUnusePath: string
+  /** 专家市场：已授权专家（个人）列表接口路径。 */
+  expertMarketAgentListPath: string
+  /** 专家市场：已授权专家团列表接口路径。 */
+  expertMarketTeamListPath: string
+  /** 专家上架申请：我的申请列表（个人专家）接口路径。 */
+  expertMyListingAgentPath: string
+  /** 专家上架申请：我的申请列表（专家团）接口路径。 */
+  expertMyListingTeamPath: string
+  /** 专家上架申请：提交（个人专家）接口路径。 */
+  expertListingSubmitAgentPath: string
+  /** 专家上架申请：提交（专家团）接口路径。 */
+  expertListingSubmitTeamPath: string
+  /** 专家上架申请：撤回（个人专家）接口路径。 */
+  expertListingWithdrawAgentPath: string
+  /** 专家上架申请：撤回（专家团）接口路径。 */
+  expertListingWithdrawTeamPath: string
+  /** 正在使用的客户端发布接口路径（相对 baseUrl）。 */
+  latestVersionPath: string
+  /** 发布记录中的应用标识，与服务端表 app_id 对应。 */
+  appId: string
+  /** 自动检查更新的间隔（分钟），默认 360。 */
+  updateCheckIntervalMinutes: number
+  /** 是否启用客户端在线更新；默认启用。 */
+  updateEnabled: boolean
   /** 内网 npm registry 基址（Sonatype Nexus），用于离线安装基于 stdio 的 npm MCP；未配置表示该部署不支持本机包安装。 */
   mcpPackageRegistry?: string
 }
@@ -86,40 +110,67 @@ interface ConfigSource {
   dir: string
 }
 
-const DEFAULTS: AppConfig = {
+/**
+ * 代码内置的缺省值，也是接口路径的唯一维护点：随包 workdsh-app.json 只保留部署差异
+ * 与运维可调项（appId、会话校验间隔、在线更新开关），不再重复声明与这里相同的接口路径
+ * （由 tests/app-config.spec.ts 锁定）。
+ */
+export const APP_CONFIG_DEFAULTS: AppConfig = {
   logo: 'logo.png',
   environment: 'prod',
   splash: {
     title: '环境准备中',
-    subtitle: '正在准备好你的工作区，请稍候...',
+    subtitle: '正在准备好您的工作区，请稍候...',
   },
   server: {
+    /** 版本发布记录中的应用标识（后台表 app_id）：决定向后台查询哪一条客户端发布记录。 */
+    appId: 'police-assistant',
+    /** 后台管理平台根地址；运行时还会被 WORKDSH_SERVER_BASE 环境变量覆盖。 */
     baseUrl: 'http://127.0.0.1:18080/ytsj-ai',
+    /** 自动检查更新的间隔，单位「分钟」：360 分钟 = 6 小时检查一次（允许 5-10080）。 */
+    updateCheckIntervalMinutes: 5,
+    /** 账号模式运行中校验会话的轮询间隔，单位「秒」：300 秒一次（允许 1-3600）。 */
+    syncIntervalSeconds: 300,
+    /** 是否启用客户端在线更新：false 时完全不检查、不提示新版本。 */
+    updateEnabled: true,
+    /** 登录接口路径。 */
     loginPath: '/sys/pcClientLogin',
+    /** 注销接口路径。 */
     logoutPath: '/sys/logout',
+    /** 获取当前登录用户信息接口路径。 */
     mePath: '/sys/pcClientVerifyUser',
-    syncIntervalSeconds: 30,
-    // 四个市场接口都在 desktop-client 命名空间；安装不再从后台取连接配置（连接字段全部来自市场列表）。
+    /** 四个市场接口都在 desktop-client 命名空间；安装不再从后台取连接配置（连接字段全部来自市场列表）。 */
     mcpMarketListPath: '/desktop-client/mcptool/queryAuthorizedMcpToolList',
     mcpMarketCategoriesPath: '/desktop-client/mcptool/queryMcpToolBizSceneList',
     mcpMarketInstallPath: '/desktop-client/mcptool/installMcpTool',
     mcpMarketUninstallPath: '/desktop-client/mcptool/unInstallMcpTool',
-    // 技能市场的查询与安装/卸载接口与 MCP 市场同属 desktop-client 命名空间。
+    /** 技能市场的查询与安装/卸载接口与 MCP 市场同属 desktop-client 命名空间。 */
     skillMarketListPath: '/desktop-client/skill/queryAuthorizedSkillList',
     skillMarketCategoriesPath: '/desktop-client/skill/querySkillBizSceneList',
     skillMarketInstallPath: '/desktop-client/skill/installSkill',
     skillMarketUninstallPath: '/desktop-client/skill/unInstallSkill',
-    // 技能上架申请与表单字典：同属 desktop-client 命名空间，上传接口免签。
+    /** 技能上架申请与表单字典：同属 desktop-client 命名空间，上传接口免签。 */
     skillListingSubmitPath: '/desktop-client/skill/listingRequest',
     skillListingListPath: '/desktop-client/skill/queryMyListingSkillList',
     skillListingNodePath: '/desktop-client/queryAiNodeList',
     skillListingScenePath: '/desktop-client/queryAiBizSceneList',
     skillDictPath: '/desktop-client/getDictItems',
     skillUploadPath: '/desktop-client/upload',
-    // 模型市场与技能/MCP 市场同属 desktop-client 命名空间；安装与卸载只做后台上报。
+    /** 模型市场与技能/MCP 市场同属 desktop-client 命名空间；安装与卸载只做后台上报。 */
     modelMarketListPath: '/desktop-client/model/queryAuthorizedModelList',
     modelMarketUsePath: '/desktop-client/model/useModel',
     modelMarketUnusePath: '/desktop-client/model/unUseModel',
+    /** 专家目录、上架申请与撤回都在 desktop-client 命名空间，个人专家与专家团各一套端点。 */
+    expertMarketAgentListPath: '/desktop-client/expert/queryAuthorizedExpertList',
+    expertMarketTeamListPath: '/desktop-client/expertgroup/queryAuthorizedExpertGroupList',
+    expertMyListingAgentPath: '/desktop-client/expert/queryMyListingExpertList',
+    expertMyListingTeamPath: '/desktop-client/expertgroup/queryMyListingExpertGroupList',
+    expertListingSubmitAgentPath: '/desktop-client/expert/listingRequest',
+    expertListingSubmitTeamPath: '/desktop-client/expertgroup/listingRequest',
+    expertListingWithdrawAgentPath: '/desktop-client/expert/withdrawListingRequest',
+    expertListingWithdrawTeamPath: '/desktop-client/expertgroup/withdrawListingRequest',
+    /** 客户端版本检查与后台版本管理表共用 desktop-client 命名空间。 */
+    latestVersionPath: '/desktop-client/queryLatestVersionApp',
   },
 }
 
@@ -132,6 +183,24 @@ type PartialAppConfig = {
   splash?: Partial<SplashCopy>
   server?: Partial<ServerConfig>
 }
+
+/** 所有相对接口路径字段：统一要求以单个 `/` 开头，避免协议相对地址或外站路径。 */
+export const SERVER_PATH_FIELDS = [
+  'loginPath', 'logoutPath', 'mePath',
+  'mcpMarketListPath', 'mcpMarketCategoriesPath', 'mcpMarketInstallPath', 'mcpMarketUninstallPath',
+  'skillMarketListPath', 'skillMarketCategoriesPath', 'skillMarketInstallPath', 'skillMarketUninstallPath',
+  'skillListingSubmitPath', 'skillListingListPath', 'skillListingNodePath', 'skillListingScenePath',
+  'skillDictPath', 'skillUploadPath',
+  'modelMarketListPath', 'modelMarketUsePath', 'modelMarketUnusePath',
+  'expertMarketAgentListPath', 'expertMarketTeamListPath',
+  'expertMyListingAgentPath', 'expertMyListingTeamPath',
+  'expertListingSubmitAgentPath', 'expertListingSubmitTeamPath',
+  'expertListingWithdrawAgentPath', 'expertListingWithdrawTeamPath',
+  'latestVersionPath',
+] as const
+
+/** server 段中非路径的标量字段，各自有独立校验。 */
+const SERVER_SCALAR_FIELDS = ['baseUrl', 'appId', 'updateCheckIntervalMinutes', 'updateEnabled', 'syncIntervalSeconds', 'mcpPackageRegistry'] as const
 
 /** Highest-priority declared value for the first matching field, override files first. */
 function pickLogo(sources: ConfigSource[], fields: LogoField[]): { value: string, dir: string } | undefined {
@@ -173,31 +242,26 @@ export function parseAppConfig(value: unknown): PartialAppConfig {
   if (root.server !== undefined) {
     if (!root.server || typeof root.server !== 'object' || Array.isArray(root.server)) throw new Error('server 配置无效')
     const a = root.server as Record<string, unknown>
-    for (const k of Object.keys(a)) if (k !== 'baseUrl' && k !== 'loginPath' && k !== 'logoutPath' && k !== 'mePath' && k !== 'syncIntervalSeconds' && k !== 'mcpMarketListPath' && k !== 'mcpMarketCategoriesPath' && k !== 'mcpMarketInstallPath' && k !== 'mcpMarketUninstallPath' && k !== 'skillMarketListPath' && k !== 'skillMarketCategoriesPath' && k !== 'skillMarketInstallPath' && k !== 'skillMarketUninstallPath' && k !== 'skillListingSubmitPath' && k !== 'skillListingListPath' && k !== 'skillListingNodePath' && k !== 'skillListingScenePath' && k !== 'skillDictPath' && k !== 'skillUploadPath' && k !== 'modelMarketListPath' && k !== 'modelMarketUsePath' && k !== 'modelMarketUnusePath' && k !== 'mcpPackageRegistry') throw new Error(`server 配置不接受字段 ${k}`)
+    const known = new Set<string>([...SERVER_PATH_FIELDS, ...SERVER_SCALAR_FIELDS])
+    for (const k of Object.keys(a)) if (!known.has(k)) throw new Error(`server 配置不接受字段 ${k}`)
     if (a.baseUrl !== undefined) {
       if (typeof a.baseUrl !== 'string') throw new Error('server.baseUrl 必须是字符串')
       result.server = { ...(result.server ?? {}), baseUrl: normalizeBase(a.baseUrl) }
     }
-    if (a.loginPath !== undefined) { if (typeof a.loginPath !== 'string' || !/^\//u.test(a.loginPath)) throw new Error('server.loginPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), loginPath: a.loginPath } }
-    if (a.logoutPath !== undefined) { if (typeof a.logoutPath !== 'string' || !/^\//u.test(a.logoutPath)) throw new Error('server.logoutPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), logoutPath: a.logoutPath } }
-    if (a.mePath !== undefined) { if (typeof a.mePath !== 'string' || !/^\//u.test(a.mePath)) throw new Error('server.mePath 必须以 / 开头'); result.server = { ...(result.server ?? {}), mePath: a.mePath } }
-    if (a.mcpMarketListPath !== undefined) { if (typeof a.mcpMarketListPath !== 'string' || !/^\//u.test(a.mcpMarketListPath)) throw new Error('server.mcpMarketListPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), mcpMarketListPath: a.mcpMarketListPath } }
-    if (a.mcpMarketCategoriesPath !== undefined) { if (typeof a.mcpMarketCategoriesPath !== 'string' || !/^\//u.test(a.mcpMarketCategoriesPath)) throw new Error('server.mcpMarketCategoriesPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), mcpMarketCategoriesPath: a.mcpMarketCategoriesPath } }
-    if (a.mcpMarketInstallPath !== undefined) { if (typeof a.mcpMarketInstallPath !== 'string' || !/^\//u.test(a.mcpMarketInstallPath)) throw new Error('server.mcpMarketInstallPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), mcpMarketInstallPath: a.mcpMarketInstallPath } }
-    if (a.mcpMarketUninstallPath !== undefined) { if (typeof a.mcpMarketUninstallPath !== 'string' || !/^\//u.test(a.mcpMarketUninstallPath)) throw new Error('server.mcpMarketUninstallPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), mcpMarketUninstallPath: a.mcpMarketUninstallPath } }
-    if (a.skillMarketListPath !== undefined) { if (typeof a.skillMarketListPath !== 'string' || !/^\//u.test(a.skillMarketListPath)) throw new Error('server.skillMarketListPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), skillMarketListPath: a.skillMarketListPath } }
-    if (a.skillMarketCategoriesPath !== undefined) { if (typeof a.skillMarketCategoriesPath !== 'string' || !/^\//u.test(a.skillMarketCategoriesPath)) throw new Error('server.skillMarketCategoriesPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), skillMarketCategoriesPath: a.skillMarketCategoriesPath } }
-    if (a.skillMarketInstallPath !== undefined) { if (typeof a.skillMarketInstallPath !== 'string' || !/^\//u.test(a.skillMarketInstallPath)) throw new Error('server.skillMarketInstallPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), skillMarketInstallPath: a.skillMarketInstallPath } }
-    if (a.skillMarketUninstallPath !== undefined) { if (typeof a.skillMarketUninstallPath !== 'string' || !/^\//u.test(a.skillMarketUninstallPath)) throw new Error('server.skillMarketUninstallPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), skillMarketUninstallPath: a.skillMarketUninstallPath } }
-    if (a.skillListingSubmitPath !== undefined) { if (typeof a.skillListingSubmitPath !== 'string' || !/^\//u.test(a.skillListingSubmitPath)) throw new Error('server.skillListingSubmitPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), skillListingSubmitPath: a.skillListingSubmitPath } }
-    if (a.skillListingListPath !== undefined) { if (typeof a.skillListingListPath !== 'string' || !/^\//u.test(a.skillListingListPath)) throw new Error('server.skillListingListPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), skillListingListPath: a.skillListingListPath } }
-    if (a.skillListingNodePath !== undefined) { if (typeof a.skillListingNodePath !== 'string' || !/^\//u.test(a.skillListingNodePath)) throw new Error('server.skillListingNodePath 必须以 / 开头'); result.server = { ...(result.server ?? {}), skillListingNodePath: a.skillListingNodePath } }
-    if (a.skillListingScenePath !== undefined) { if (typeof a.skillListingScenePath !== 'string' || !/^\//u.test(a.skillListingScenePath)) throw new Error('server.skillListingScenePath 必须以 / 开头'); result.server = { ...(result.server ?? {}), skillListingScenePath: a.skillListingScenePath } }
-    if (a.skillDictPath !== undefined) { if (typeof a.skillDictPath !== 'string' || !/^\//u.test(a.skillDictPath)) throw new Error('server.skillDictPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), skillDictPath: a.skillDictPath } }
-    if (a.skillUploadPath !== undefined) { if (typeof a.skillUploadPath !== 'string' || !/^\//u.test(a.skillUploadPath)) throw new Error('server.skillUploadPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), skillUploadPath: a.skillUploadPath } }
-    if (a.modelMarketListPath !== undefined) { if (typeof a.modelMarketListPath !== 'string' || !/^\//u.test(a.modelMarketListPath)) throw new Error('server.modelMarketListPath 必须以 / 开头'); result.server = { ...(result.server ?? {}), modelMarketListPath: a.modelMarketListPath } }
-    if (a.modelMarketUsePath !== undefined) { if (typeof a.modelMarketUsePath !== 'string' || !/^\//u.test(a.modelMarketUsePath)) throw new Error('server.modelMarketUsePath 必须以 / 开头'); result.server = { ...(result.server ?? {}), modelMarketUsePath: a.modelMarketUsePath } }
-    if (a.modelMarketUnusePath !== undefined) { if (typeof a.modelMarketUnusePath !== 'string' || !/^\//u.test(a.modelMarketUnusePath)) throw new Error('server.modelMarketUnusePath 必须以 / 开头'); result.server = { ...(result.server ?? {}), modelMarketUnusePath: a.modelMarketUnusePath } }
+    for (const k of SERVER_PATH_FIELDS) {
+      const raw = a[k]
+      if (raw === undefined) continue
+      // 所有端点都拼在 baseUrl 之后，必须是单个 / 开头的相对路径。
+      if (typeof raw !== 'string' || !/^\/(?!\/)/u.test(raw)) throw new Error(`server.${k} 必须以单个 / 开头`)
+      result.server = { ...(result.server ?? {}), [k]: raw }
+    }
+    if (a.appId !== undefined) { if (typeof a.appId !== 'string' || !/^[a-z0-9][a-z0-9._-]{0,63}$/u.test(a.appId)) throw new Error('server.appId 只能使用小写字母、数字、点、短横线'); result.server = { ...(result.server ?? {}), appId: a.appId } }
+    if (a.updateCheckIntervalMinutes !== undefined) {
+      // 5 分钟到 7 天：过短会给后台造成无意义压力，过长会让补丁迟迟不到位。
+      if (typeof a.updateCheckIntervalMinutes !== 'number' || !Number.isInteger(a.updateCheckIntervalMinutes) || a.updateCheckIntervalMinutes < 5 || a.updateCheckIntervalMinutes > 10080) throw new Error('server.updateCheckIntervalMinutes 必须是 5-10080 的整数')
+      result.server = { ...(result.server ?? {}), updateCheckIntervalMinutes: a.updateCheckIntervalMinutes }
+    }
+    if (a.updateEnabled !== undefined) { if (typeof a.updateEnabled !== 'boolean') throw new Error('server.updateEnabled 必须是布尔值'); result.server = { ...(result.server ?? {}), updateEnabled: a.updateEnabled } }
     if (a.mcpPackageRegistry !== undefined) { if (typeof a.mcpPackageRegistry !== 'string' || !/^https?:\/\//u.test(a.mcpPackageRegistry)) throw new Error('server.mcpPackageRegistry 必须是 http(s) 地址'); result.server = { ...(result.server ?? {}), mcpPackageRegistry: a.mcpPackageRegistry } }
     if (a.syncIntervalSeconds !== undefined) {
       // 轮询间隔需为正整数秒，且不超过 1 小时，避免配置错误导致请求风暴或长期不校验。
@@ -239,25 +303,25 @@ export function readAppConfig(resources: string, userData: string): ResolvedAppC
   // Override first, then packaged: the first declared value wins per field.
   const sources = [override, packaged].filter((source): source is ConfigSource => source !== undefined)
 
-  const splash: SplashCopy = { ...DEFAULTS.splash, ...packaged?.parsed.splash, ...override?.parsed.splash }
+  const splash: SplashCopy = { ...APP_CONFIG_DEFAULTS.splash, ...packaged?.parsed.splash, ...override?.parsed.splash }
   // 后台平台地址可由管理员经 WORKDSH_SERVER_BASE 环境变量提供，否则取配置文件。
-  const serverBase = process.env.WORKDSH_SERVER_BASE ?? override?.parsed.server?.baseUrl ?? packaged?.parsed.server?.baseUrl ?? DEFAULTS.server.baseUrl
+  const serverBase = process.env.WORKDSH_SERVER_BASE ?? override?.parsed.server?.baseUrl ?? packaged?.parsed.server?.baseUrl ?? APP_CONFIG_DEFAULTS.server.baseUrl
   const server: ServerConfig = {
-    ...DEFAULTS.server,
+    ...APP_CONFIG_DEFAULTS.server,
     ...packaged?.parsed.server,
     ...override?.parsed.server,
     ...(serverBase ? { baseUrl: normalizeBase(serverBase) } : {}),
   }
   const resolveLogo = (fields: LogoField[]): string => {
     const hit = pickLogo(sources, fields)
-    if (!hit) return resolve(resources, DEFAULTS.logo)
+    if (!hit) return resolve(resources, APP_CONFIG_DEFAULTS.logo)
     return isAbsolute(hit.value) ? hit.value : resolve(hit.dir || resources, hit.value)
   }
   return {
     logoPath: resolveLogo(['logo']),
     loginLogoPath: resolveLogo(['loginLogo', 'logo']),
     splashLogoPath: resolveLogo(['splashLogo', 'logo']),
-    environment: override?.parsed.environment ?? packaged?.parsed.environment ?? DEFAULTS.environment,
+    environment: override?.parsed.environment ?? packaged?.parsed.environment ?? APP_CONFIG_DEFAULTS.environment,
     splash,
     server,
   }

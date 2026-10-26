@@ -77,6 +77,7 @@ import { DEFAULT_TEMPLATES } from '../domain/templates.js';
 import { assertUploadWithinLimit, buildExport, preflightPackage } from './portability.js';
 import { installationsDomainSpec, installationKey } from '../storage/installations.js';
 import { RemoteExpertCatalog, type BackendChannelLike } from './remote-catalog.js';
+import { resolveExpertApiPaths, type ExpertApiPaths } from './endpoints.js';
 
 /**
  * The single Host domain service for experts (D04 / P1-02, expert module 0.1).
@@ -291,6 +292,11 @@ export interface ExpertsManagerOptions {
   agentsHome?: string;
   includeDefaultSkillRoots?: boolean;
   /**
+   * 业务后台接口路径。由宿主（Desktop）从 `workdsh-app.json` 的 server 段注入；
+   * 未配置时回退到内置默认值，以兼容 Desktop/Web 共用的 Profile 包。
+   */
+  paths?: Partial<ExpertApiPaths>;
+  /**
    * 出厂不预置默认专家：随包模板只在显式开启时写入本地目录，供探针与本地调试
    * 当夹具使用。未开启时，旧版本种下且用户未改过的默认专家会被一次性归档，
    * 使升级后的目录与全新安装一致。
@@ -334,6 +340,7 @@ export class ExpertsManager extends Service implements ExpertsService {
   private readonly includeDefaultSkillRoots?: boolean;
   private readonly seedDefaults?: boolean;
   private readonly requireInstalledExpert: boolean;
+  private readonly paths: ExpertApiPaths;
 
   constructor(ctx: Context, options: ExpertsManagerOptions = {}) {
     super(ctx, 'workdshExperts');
@@ -342,10 +349,11 @@ export class ExpertsManager extends Service implements ExpertsService {
     this.includeDefaultSkillRoots = options.includeDefaultSkillRoots;
     this.seedDefaults = options.seedDefaults;
     this.requireInstalledExpert = options.requireInstalledExpert !== false;
+    this.paths = resolveExpertApiPaths(options.paths);
     this.stagingRoot = join(agentsHome, '.workdsh-state', 'experts', 'staging');
     // The business backend is optional: personal mode has no binding and the
     // catalog degrades to "unavailable" instead of failing plugin load.
-    this.remote = new RemoteExpertCatalog(() => this.ctx.reflect.get('workdshBackend') as BackendChannelLike | undefined);
+    this.remote = new RemoteExpertCatalog(() => this.ctx.reflect.get('workdshBackend') as BackendChannelLike | undefined, this.paths);
   }
 
   private compilePreset(input: Parameters<typeof compileExpertPreset>[1]) {
@@ -2055,7 +2063,7 @@ export class ExpertsManager extends Service implements ExpertsService {
     let result: unknown;
     try {
       result = await channel.post(
-        isTeam ? '/desktop-client/expertgroup/withdrawListingRequest' : '/desktop-client/expert/withdrawListingRequest',
+        isTeam ? this.paths.withdrawTeam : this.paths.withdrawAgent,
         { id: request.remoteId, ...(request.reason?.trim() ? { reason: request.reason.trim() } : {}) },
         undefined, signal,
       );
@@ -2252,9 +2260,9 @@ export class ExpertsManager extends Service implements ExpertsService {
     }
     try {
       const [nodes, publicItems, domains] = await Promise.all([
-        channel.get<unknown>('/desktop-client/queryAiNodeList', undefined, signal),
-        channel.get<unknown>('/desktop-client/getDictItems/yn', undefined, signal),
-        channel.get<unknown>('/desktop-client/getDictItems/ai_expert_domain', undefined, signal),
+        channel.get<unknown>(this.paths.nodes, undefined, signal),
+        channel.get<unknown>(`${this.paths.dict}/yn`, undefined, signal),
+        channel.get<unknown>(`${this.paths.dict}/ai_expert_domain`, undefined, signal),
       ]);
       return {
         available: true,
@@ -2304,7 +2312,7 @@ export class ExpertsManager extends Service implements ExpertsService {
         const iconForm = new FormData();
         iconForm.append('biz', isTeam ? 'desktop-client/expertgroup' : 'desktop-client/expert');
         iconForm.append('file', new Blob([new Uint8Array(iconBytes)], { type: match[1] }), match[1] === 'image/png' ? 'icon.png' : 'icon.jpg');
-        iconUrl = uploadPathOf(await channel.postForm('/desktop-client/upload', iconForm, signal, 60_000));
+        iconUrl = uploadPathOf(await channel.postForm(this.paths.upload, iconForm, signal, 60_000));
       } catch (error) {
         throw new ExpertsError('experts/remote-unavailable', listingFailure(error));
       }
@@ -2315,7 +2323,7 @@ export class ExpertsManager extends Service implements ExpertsService {
       const form = new FormData();
       form.append('biz', isTeam ? 'desktop-client/expertgroup' : 'desktop-client/expert');
       form.append('file', new Blob([bytes], { type: 'application/zip' }), fileName);
-      uploaded = await channel.postForm('/desktop-client/upload', form, signal, 180_000);
+      uploaded = await channel.postForm(this.paths.upload, form, signal, 180_000);
     } catch (error) {
       throw new ExpertsError('experts/remote-unavailable', listingFailure(error));
     }
@@ -2340,7 +2348,7 @@ export class ExpertsManager extends Service implements ExpertsService {
     };
     let result: unknown;
     try {
-      result = await channel.post(isTeam ? '/desktop-client/expertgroup/listingRequest' : '/desktop-client/expert/listingRequest', body, undefined, signal);
+      result = await channel.post(isTeam ? this.paths.submitTeam : this.paths.submitAgent, body, undefined, signal);
     } catch (error) {
       throw new ExpertsError('experts/remote-unavailable', listingFailure(error));
     }
