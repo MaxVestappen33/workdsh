@@ -42,11 +42,10 @@
   name: "@deepseek-ai/dsh-client-ui-settings-models"
   config:
     credentialOnboarding: false
-# WorkDSH 定制：预置的「本地模型」与默认模型不在此文件。
-# 本文件会被桌面载体当作 --patch overlay 传入，而 overlay 对同 id 的 config 整体替换，
-# 会盖掉设置页写入 profile 用户层的修改，导致用户无法再添加自定义大模型。
-# 这两行属于「设置页可改写的安装方默认值」，见 cordis.defaults.patch.yml，
-# 由 Desktop 在创建/迁移 Profile 时一次性种子进 profile 用户层。
+# WorkDSH 定制：载体不预置任何模型或默认模型，首次创建/安装后的模型配置完全由用户
+# 在「设置 → 模型」中完成。本文件会被桌面载体当作 --patch overlay 传入，而 overlay 对
+# 同 id 的 config 整体替换，会盖掉设置页写入 profile 用户层的修改，因此这里不能出现
+# 任何模型相关配置。
 # WorkDSH 定制：内网离线部署不挂载官方 DeepSeek 直连路由，设置页与模型选择器里
 # 不再出现「DeepSeek」那一条。要在互联网上使用：删掉下面这两行重新出包即可恢复；
 # 端点默认走官方根地址（https://api.deepseek.com/anthropic），只需在

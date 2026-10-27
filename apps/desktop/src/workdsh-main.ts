@@ -1112,8 +1112,8 @@ function runtimeEnvironment(home: string): NodeJS.ProcessEnv {
     // A packaged carrier embeds the WorkDSH entry point, but a development
     // Electron binary needs the app directory as the worker's first argument.
     WORKDSH_ELECTRON_APP: app.isPackaged ? undefined : app.getAppPath(),
-    // WorkDSH 定制：注入随包交付的默认模型访问值（安装包 Resources 下的 model-credentials.json）。
-    // 与 cordis.defaults.patch.yml 里预置 provider 的 apiKeyEnv 引用名一一对应，让个人工作区开箱即用。
+    // WorkDSH 定制：注入随包交付的模型访问凭据（安装包 Resources 下的 model-credentials.json）。
+    // 载体不再预置模型或默认模型，这些变量只供用户自建 provider 的 apiKeyEnv 引用时使用。
     // 仅个人工作区注入：企业运行的模型配置由企业侧提供，载体不代注入（enterpriseEnvironment 走白名单）。
     // 启动环境显式提供的同名变量优先，文件值只作兜底（见 readModelCredentials）。
     ...(enterprise ? {} : readModelCredentials(process.resourcesPath ?? '', process.env)),
