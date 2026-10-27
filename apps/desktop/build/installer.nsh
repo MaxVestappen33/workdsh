@@ -1,6 +1,13 @@
 ﻿; Check the exact app process before launching the quit handoff. This preserves
 ; the #469 fix: unrelated helpers under $INSTDIR must never block an upgrade.
 Var pid
+; 升级流程标记：$dshUpdating 来自命令行 --updated，$dshInstallCompleted 由安装段置位。
+; 两者只在安装器构建里使用；卸载器会展开 customCheckAppRunning，所以那里改为
+; 现场解析命令行，避免在卸载器里声明未使用变量（构建把警告当错误）。
+!ifndef BUILD_UNINSTALLER
+  Var dshInstallCompleted
+  Var dshUpdating
+!endif
 ; Set by the uninstall page below; "1" means the user asked to remove local data.
 ; Declared only for the uninstaller pass: the installer pass never expands the
 ; uninstall pages, and an unreferenced variable is a build-breaking warning.
@@ -18,9 +25,41 @@ Var pid
     MessageBox MB_OK|MB_ICONSTOP "警务助手 不支持当前操作系统版本。$\r$\n$\r$\n当前系统低于 Windows 10。$\r$\n警务助手 需要 Windows 10 或更高版本（Windows 10 / 11 / Server 2016 及以上）才能正常运行，$\r$\n安装已中止。$\r$\n$\r$\n请升级到 Windows 10 或更高版本后，再重新运行安装程序。" /SD IDOK
     Quit
   ${EndIf}
+  ; 记录本次是否为覆盖升级：--updated 由客户端更新流程传入。
+  StrCpy $dshUpdating "0"
+  ${GetParameters} $R0
+  ClearErrors
+  ${GetOptions} $R0 "--updated" $R1
+  ${IfNot} ${Errors}
+    StrCpy $dshUpdating "1"
+  ${EndIf}
+!macroend
+
+!macro customInstall
+  StrCpy $dshInstallCompleted "1"
+!macroend
+
+; 升级时强制按“仅为我安装”并跳过安装范围页：覆盖升级只能落在原安装位置，
+; 再让用户选一次范围既没有意义，也会像许可页一样挡住无人值守的升级流程。
+!macro customInstallmode
+  StrCpy $isForceCurrentInstall "0"
+  ${GetParameters} $R0
+  ClearErrors
+  ${GetOptions} $R0 "--updated" $R1
+  ${IfNot} ${Errors}
+    StrCpy $isForceCurrentInstall "1"
+  ${EndIf}
 !macroend
 
 !macro customCheckAppRunning
+  ; 客户端在线升级：主程序已主动退出，安装期间保留的是独立的进度进程（同名 exe）。
+  ; 这种情况下不能再按可执行文件名判定“应用仍在运行”，否则会强杀进度页并多等 30 秒。
+  ${GetParameters} $R0
+  ClearErrors
+  ${GetOptions} $R0 "--updated" $R1
+  ${IfNot} ${Errors}
+    Goto dsh_installer_app_stopped
+  ${EndIf}
   !insertmacro IS_POWERSHELL_AVAILABLE
   !insertmacro FIND_PROCESS "${APP_EXECUTABLE_FILENAME}" $R0
   ${if} $R0 != 0
@@ -80,6 +119,36 @@ Var pid
 
   dsh_installer_app_stopped:
 !macroend
+
+; ── 升级体验：只保留“正在安装”进度页，装完自动重启 ──────────────────────
+; 调用方以 `--updated` 且不传 `/S` 启动安装器时，许可页/安装模式页/目录页会被
+; skipPageIfUpdated 跳过，完成页由下面替换为“升级时跳过”，用户看到的就是
+; 解压进度页；安装段完成后由 .onGUIEnd 拉起新版本，无需用户再去找图标。
+!ifndef BUILD_UNINSTALLER
+  !macro customFinishPage
+    !insertmacro skipPageIfUpdated
+    Function dshStartApp
+      ${if} ${isUpdated}
+        StrCpy $R1 "--updated"
+      ${else}
+        StrCpy $R1 ""
+      ${endif}
+      ${StdUtils.ExecShellAsUser} $0 "$launchLink" "open" "$R1"
+    FunctionEnd
+    !define MUI_FINISHPAGE_RUN
+    !define MUI_FINISHPAGE_RUN_FUNCTION "dshStartApp"
+    !insertmacro MUI_PAGE_FINISH
+  !macroend
+
+  ; 静默升级没有 GUI 回调（.onGUIEnd 不执行），用 .onInstSuccess 在安装成功后
+  ; 拉起新版本；普通静默安装（无 --updated）保持装完即退。
+  Function .onInstSuccess
+    StrCmp $dshUpdating "1" 0 dsh_instsuccess_done
+    StrCmp $dshInstallCompleted "1" 0 dsh_instsuccess_done
+    ExecShell "open" "$INSTDIR\${PRODUCT_FILENAME}.exe" "--updated"
+  dsh_instsuccess_done:
+  FunctionEnd
+!endif
 
 ; Uninstall option: let the user remove the local data directory.
 ; app-builder-lib only deletes user data when "--delete-app-data" is passed or

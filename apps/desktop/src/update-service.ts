@@ -69,6 +69,8 @@ export class UpdateService {
   private queue: Promise<void> = Promise.resolve()
   private controller: AbortController | undefined
   private disposed = false
+  /** 仅由 downloadAndInstall 置位：下载成功后自动接安装。 */
+  private installAfterDownload = false
 
   constructor(private readonly options: UpdateServiceOptions) {}
 
@@ -84,6 +86,14 @@ export class UpdateService {
   download(): Promise<void> {
     const candidate = this.state.snapshot.candidate
     if (candidate === undefined) return Promise.resolve()
+    return this.enqueue({ type: 'download', version: candidate.version })
+  }
+
+  /** 用户确认“重启升级”后：下载完成立即进入安装，不再等待第二次点击。 */
+  downloadAndInstall(): Promise<void> {
+    const candidate = this.state.snapshot.candidate
+    if (candidate === undefined) return Promise.resolve()
+    this.installAfterDownload = true
     return this.enqueue({ type: 'download', version: candidate.version })
   }
 
@@ -242,6 +252,7 @@ export class UpdateService {
     if (this.disposed) return
 
     if (!result.ok) {
+      this.installAfterDownload = false
       if (result.failure === 'cancelled') {
         this.journal('download-cancelled', candidate.version)
         await this.apply({ type: 'cancel' })
@@ -254,6 +265,12 @@ export class UpdateService {
 
     this.journal('download-completed', candidate.version)
     await this.apply({ type: 'downloaded' })
+
+    // 用户从“重启升级”入口确认过：校验完成就直接安装，不再要求第二次点击。
+    if (!this.installAfterDownload) return
+    this.installAfterDownload = false
+    const ready = this.state.snapshot.candidate
+    if (ready !== undefined) await this.apply({ type: 'install', version: ready.version })
   }
 
   private async runInstall(candidate: UpdateCandidate): Promise<void> {

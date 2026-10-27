@@ -33,8 +33,10 @@ export function apply(ctx: Context): void {
 
 /** 读取当前登录账号；失败或不存在时保持 undefined，由入口退化为「设置」。
  *  首次在挂载时读取，之后可由调用方（打开菜单）触发刷新，避免后端改了头像/组织名却要重启才生效。 */
-function useAccountProfile(): { profile?: AccountProfile, refresh: () => void } {
+function useAccountProfile(): { profile?: AccountProfile, desktop: boolean, refresh: () => void } {
   const [profile, setProfile] = useState<AccountProfile>();
+  // 桌面身份提供方在 /api/auth/me 里带 desktop: true；浏览器形态没有这条路由。
+  const [desktop, setDesktop] = useState(false);
   const pending = useRef<AbortController | undefined>(undefined);
   const read = useCallback((): void => {
     // 已有请求在途时忽略本次触发，避免连点菜单产生并发请求。
@@ -48,8 +50,9 @@ function useAccountProfile(): { profile?: AccountProfile, refresh: () => void } 
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(ACCOUNT_TIMEOUT_MS)]),
         });
         if (!response.ok) return;
-        const value = await response.json() as { displayName?: unknown, organizationName?: unknown, avatar?: unknown, backendUrl?: unknown };
+        const value = await response.json() as { displayName?: unknown, organizationName?: unknown, avatar?: unknown, backendUrl?: unknown, desktop?: unknown };
         if (controller.signal.aborted) return;
+        setDesktop(value?.desktop === true);
         // 身份显示是可选信息：字段不完整时不猜、不降级成假账号，直接保持「设置」形态。
         if (typeof value?.displayName !== 'string' || !value.displayName) return;
         const organizationName = organizationLabel(value.organizationName, value.backendUrl);
@@ -69,7 +72,7 @@ function useAccountProfile(): { profile?: AccountProfile, refresh: () => void } 
     const timer = setInterval(() => read(), 60_000);
     return () => clearInterval(timer);
   }, [read]);
-  return { profile, refresh: read };
+  return { profile, desktop, refresh: read };
 }
 
 /** 后端头像可能是相对路径；统一成绝对地址。相对路径按后台地址(backendUrl)解析，
@@ -153,9 +156,20 @@ function PlazaIcon() {
   );
 }
 
+function UpdateIcon() {
+  return (
+    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden focusable={false}>
+      <path d="M20 12a8 8 0 11-2.34-5.66M20 5v5h-5" />
+    </svg>
+  );
+}
+
+/** 桌面载体的窄通道：工作台里用一次 workdsh:// 导航触发检查更新，不往官方页面注入桥。 */
+const CHECK_UPDATE_PATH = 'workdsh://check-update';
+
 /** 侧栏底部入口：账号可用时为头像 + 姓名，否则复用官方「设置」外观。 */
 function AccountLauncher({ wide, settingsShortcut, openSettings }: PropsRuntime<'settings.launcher'>) {
-  const { profile, refresh } = useAccountProfile();
+  const { profile, desktop, refresh } = useAccountProfile();
   const [open, setOpen] = useState(false);
   const [plazaReady, setPlazaReady] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -240,6 +254,14 @@ function AccountLauncher({ wide, settingsShortcut, openSettings }: PropsRuntime<
         >
           设置
         </MenuItemButton>
+        {desktop && (
+          <MenuItemButton
+            icon={<UpdateIcon />}
+            onSelect={() => { setOpen(false); window.location.assign(CHECK_UPDATE_PATH); }}
+          >
+            检查更新
+          </MenuItemButton>
+        )}
         {/* {plazaReady && (
           <MenuItemButton
             icon={<PlazaIcon />}

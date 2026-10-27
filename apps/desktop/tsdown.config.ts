@@ -20,5 +20,9 @@ export default defineConfig([{
   outDir: 'lib', format: 'cjs', platform: 'node', target: 'es2024',
   fixedExtension: true, dts: false, clean: false,
 }, {
+  entry: { 'update-toast-preload': 'src/update-toast-preload.ts' },
+  outDir: 'lib', format: 'cjs', platform: 'node', target: 'es2024',
+  fixedExtension: true, dts: false, clean: false,
+}, {
   entry: { 'command-cli': 'src/command-cli.ts' }, outDir: 'lib', format: 'esm', platform: 'node', target: 'es2024', fixedExtension: false, dts: false, clean: false,
 }])

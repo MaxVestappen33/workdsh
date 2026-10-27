@@ -1,8 +1,8 @@
 import {composeInstalledEnterprisePlugins,installedEnterprisePlugins} from './enterprise-plugins.ts'
 /** Minimal Electron carrier for the bundled WorkDSH release profile. */
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, powerMonitor, shell, Tray, type IpcMainInvokeEvent, type MenuItemConstructorOptions } from 'electron'
-import { spawn, type ChildProcess } from 'node:child_process'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, net, powerMonitor, shell, Tray, type IpcMainInvokeEvent, type MenuItemConstructorOptions } from 'electron'
+import { exec, spawn, type ChildProcess } from 'node:child_process'
 import {
   existsSync,
   mkdirSync,
@@ -10,7 +10,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs'
-import { isAbsolute, join } from 'node:path'
+import { basename, dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { connectionEntryHtml, enterpriseLoginHtml, connectionLoadingHtml, accountSplashHtml, accountLoginHtml } from './connection-entry.ts'
 import { connectionPartition, enterpriseConnection, type DesktopConnection } from './connection-mode.ts'
@@ -31,8 +31,9 @@ import type { UpdateCandidate } from './update-release.ts'
 import { UpdateService } from './update-service.ts'
 import type { UpdateSnapshot } from './update-state.ts'
 import type { UpdateView } from './update-view.ts'
-import { launchWindowsInstaller } from './update-install.ts'
+import { verifyWindowsInstaller } from './update-install.ts'
 import { updateWindowHtml } from './update-window.ts'
+import { updateToastHtml } from './update-toast.ts'
 
 const PROFILE_NAME = 'workdsh'
 const READY_PATTERN = /dsh web:\s+(http:\/\/127\.0\.0\.1:\d+\/?\?token=[^\s]+)/u
@@ -58,8 +59,8 @@ let verifying = false
 let updater: UpdateService | undefined
 let updateWindow: BrowserWindow | undefined
 let updateView: UpdateView = { phase: 'idle' }
+let updateWindowPhase: UpdateView['phase'] | undefined
 let updaterInstalling = false
-let lastNotifiedVersion: string | undefined
 let updateLog: DebugLog | undefined
 let trayUpdateLabel: string | undefined
 let lastAutoCheckAt = 0
@@ -261,8 +262,13 @@ function refreshTrayMenu(): void {
     items.push({
       label: trayUpdateLabel ?? '检查更新…',
       click: () => {
-        if (trayUpdateLabel !== undefined) showUpdateWindow()
-        else checkForUpdatesManually()
+        // 有更新时只保证左下角提醒条可见（已显示则不重复）；更新窗口只由提醒条的
+        // “更新日志”打开。无更新或检查失败才用窗口告知结果。
+        if (trayUpdateLabel !== undefined) {
+          syncUpdateToast()
+          return
+        }
+        checkForUpdatesManually()
       },
     })
   }
@@ -303,13 +309,6 @@ function rememberSkippedVersion(version: string): void {
   } catch { /* 记住忽略版本失败只会多提示一次，不阻断更新 */ }
 }
 
-function releaseTypeLabel(releaseType: string): string {
-  if (releaseType === 'stable') return '正式版'
-  if (releaseType === 'beta') return '公测版'
-  if (releaseType === 'alpha') return '内测版'
-  return releaseType
-}
-
 function viewForUpdate(snapshot: UpdateSnapshot): UpdateView {
   const candidate = snapshot.candidate
   const notesHtml = candidate?.notes === undefined ? undefined : renderMarkdown(candidate.notes)
@@ -319,7 +318,10 @@ function viewForUpdate(snapshot: UpdateSnapshot): UpdateView {
       version: candidate.version,
       releaseType: candidate.releaseType,
       mandatory: candidate.mandatory,
+      size: candidate.size,
+      ...(candidate.publishedAt === undefined ? {} : { publishedAt: candidate.publishedAt }),
     }),
+    currentVersion: app.getVersion(),
     ...(snapshot.percent === undefined ? {} : { percent: snapshot.percent }),
     ...(notesHtml === undefined ? {} : { notesHtml }),
     ...(snapshot.failure === undefined ? {} : {
@@ -328,12 +330,33 @@ function viewForUpdate(snapshot: UpdateSnapshot): UpdateView {
   }
 }
 
+/** 更新窗口尺寸：宽度固定，高度随状态收缩，避免“一片空白里嵌一张小卡片”。 */
+const UPDATE_WINDOW_WIDTH = 560
+function updateWindowHeight(phase: UpdateView['phase']): number {
+  switch (phase) {
+    case 'checking': return 300
+    case 'idle': return 320
+    case 'available': return 520
+    case 'ready': return 340
+    case 'downloading': return 340
+    case 'verifying': return 340
+    case 'installing': return 340
+    case 'error': return 360
+  }
+}
+
 /** 更新状态只通过这一处同步到托盘、更新窗口与系统通知。 */
 function handleUpdateState(snapshot: UpdateSnapshot): void {
   updateView = viewForUpdate(snapshot)
+  const phaseChanged = snapshot.phase !== updateWindowPhase
+  updateWindowPhase = snapshot.phase
   if (updateWindow !== undefined && !updateWindow.isDestroyed()) {
     updateWindow.webContents.send('workdsh:update-view', updateView)
     try { updateWindow.setClosable(snapshot.phase !== 'installing') } catch { /* 平台不支持时忽略 */ }
+    // 用户手动拖动过尺寸时不再干预；最大化期间也不改，避免把用户的操作顶掉。
+    if (phaseChanged && !updateWindow.isMaximized()) {
+      try { updateWindow.setContentSize(UPDATE_WINDOW_WIDTH, updateWindowHeight(snapshot.phase)) } catch { /* 忽略尺寸调整失败 */ }
+    }
   }
 
   const label = snapshot.phase === 'available' || snapshot.phase === 'ready'
@@ -347,22 +370,11 @@ function handleUpdateState(snapshot: UpdateSnapshot): void {
   }
 
   const candidate = snapshot.candidate
-  if (snapshot.phase === 'available' && candidate !== undefined) {
-    if (candidate.mandatory) {
-      // 强制更新直接展示窗口，用户不能只关闭提示。
-      showUpdateWindow()
-    } else if (lastNotifiedVersion !== candidate.version) {
-      lastNotifiedVersion = candidate.version
-      if (Notification.isSupported()) {
-        const notice = new Notification({
-          title: '发现新版本',
-          body: `${candidate.version} ${releaseTypeLabel(candidate.releaseType)}`,
-        })
-        notice.on('click', () => showUpdateWindow())
-        notice.show()
-      }
-    }
+  if (snapshot.phase === 'available' && candidate?.mandatory === true) {
+    // 强制更新直接展示窗口，用户不能只关闭提示。
+    showUpdateWindow()
   }
+  syncUpdateToast()
 }
 
 function showUpdateWindow(): void {
@@ -373,18 +385,24 @@ function showUpdateWindow(): void {
     return
   }
   // 强制更新使用模态窗口阻止继续操作主界面；普通更新保持独立窗口。
-  const modal = updateView.mandatory === true && window !== undefined && !window.isDestroyed()
+  const parent = window !== undefined && !window.isDestroyed() ? window : undefined
+  const modal = updateView.mandatory === true && parent !== undefined
   updateWindow = new BrowserWindow({
-    width: 620,
-    height: 580,
+    width: UPDATE_WINDOW_WIDTH,
+    height: updateWindowHeight(updateView.phase),
     minWidth: 480,
-    minHeight: 420,
-    ...(modal ? { parent: window, modal: true } : {}),
+    minHeight: 260,
+    ...(modal && parent !== undefined ? { parent, modal: true } : {}),
     title: '软件更新',
+    // 自绘标题栏：系统蓝色标题条与观感不一致，这里只保留我们自己的控件。
+    frame: false,
+    resizable: true,
+    maximizable: true,
+    fullscreenable: false,
     show: false,
     autoHideMenuBar: true,
     minimizable: !modal,
-    backgroundColor: '#f5f7fa',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#101216' : '#f6f8fb',
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -394,6 +412,11 @@ function showUpdateWindow(): void {
   })
   const page = updateWindow
   page.setMenuBarVisibility(false)
+  const sendMaximized = (): void => {
+    if (!page.isDestroyed()) page.webContents.send('workdsh:update-maximized', page.isMaximized())
+  }
+  page.on('maximize', sendMaximized)
+  page.on('unmaximize', sendMaximized)
   page.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//u.test(url)) void shell.openExternal(url)
     return { action: 'deny' }
@@ -404,7 +427,12 @@ function showUpdateWindow(): void {
     // 强制更新不允许只关闭提示；普通更新关闭即隐藏。
     if (updateView.mandatory !== true) page.hide()
   })
-  page.on('closed', () => { if (updateWindow === page) updateWindow = undefined })
+  page.on('closed', () => {
+    if (updateWindow === page) {
+      updateWindow = undefined
+      updateWindowPhase = undefined
+    }
+  })
   void page.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(updateWindowHtml())).then(() => {
     if (page.isDestroyed()) return
     page.webContents.send('workdsh:update-view', updateView)
@@ -412,9 +440,185 @@ function showUpdateWindow(): void {
   }).catch(() => { if (!page.isDestroyed()) page.destroy() })
 }
 
+// ── 左下角“新版本可用”提醒条 ────────────────────────────────────────────────
+/** 提醒条固定尺寸；高度含透明窗口的留白，实际可见条更矮。 */
+const UPDATE_TOAST_WIDTH = 396
+const UPDATE_TOAST_HEIGHT = 64
+const UPDATE_TOAST_MARGIN = 12
+
+let updateToast: BrowserWindow | undefined
+let updateToastParent: BrowserWindow | undefined
+let toastParentHandlers: {
+  move: () => void
+  resize: () => void
+  minimize: () => void
+  restore: () => void
+  hide: () => void
+  show: () => void
+} | undefined
+
+/** 只有“可更新”才提示；强制更新走独立窗口，已最新不打扰。 */
+function toastVisibleFor(view: UpdateView): boolean {
+  if (view.mandatory === true) return false
+  return view.phase === 'available' || view.phase === 'ready'
+}
+
+function positionUpdateToast(): void {
+  const toast = updateToast
+  const parent = updateToastParent
+  if (toast === undefined || parent === undefined || toast.isDestroyed() || parent.isDestroyed()) return
+  const bounds = parent.getContentBounds()
+  toast.setPosition(
+    bounds.x + UPDATE_TOAST_MARGIN,
+    bounds.y + bounds.height - UPDATE_TOAST_HEIGHT - UPDATE_TOAST_MARGIN,
+  )
+}
+
+function detachToastParent(): void {
+  const parent = updateToastParent
+  const handlers = toastParentHandlers
+  if (parent !== undefined && !parent.isDestroyed() && handlers !== undefined) {
+    parent.off('move', handlers.move)
+    parent.off('resize', handlers.resize)
+    parent.off('minimize', handlers.minimize)
+    parent.off('restore', handlers.restore)
+    parent.off('hide', handlers.hide)
+    parent.off('show', handlers.show)
+  }
+  toastParentHandlers = undefined
+}
+
+function destroyUpdateToast(): void {
+  detachToastParent()
+  const toast = updateToast
+  updateToast = undefined
+  updateToastParent = undefined
+  if (toast !== undefined && !toast.isDestroyed()) toast.destroy()
+}
+
+function hideUpdateToast(): void {
+  if (updateToast !== undefined && !updateToast.isDestroyed()) updateToast.hide()
+}
+
+/**
+ * 提醒条挂在当前应用窗口下：登录页也能看到，主窗口移动/缩放/最小化时跟随。
+ * 登录页与工作台会切换窗口对象，这时按新的父窗口重建一次。
+ */
+function ensureUpdateToast(): void {
+  const parent = window
+  if (parent === undefined || parent.isDestroyed()) return
+  if (updateToast !== undefined && !updateToast.isDestroyed() && updateToastParent === parent) {
+    positionUpdateToast()
+    if (!updateToast.isVisible()) updateToast.showInactive()
+    return
+  }
+  destroyUpdateToast()
+  updateToastParent = parent
+  const toast = new BrowserWindow({
+    width: UPDATE_TOAST_WIDTH,
+    height: UPDATE_TOAST_HEIGHT,
+    parent,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    hasShadow: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    show: false,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      preload: fileURLToPath(new URL('./update-toast-preload.cjs', import.meta.url)),
+    },
+  })
+  updateToast = toast
+  toast.setMenuBarVisibility(false)
+  const drop = (): void => {
+    if (updateToast !== toast) return
+    updateToast = undefined
+    updateToastParent = undefined
+    toastParentHandlers = undefined
+  }
+  toast.on('closed', drop)
+  parent.once('closed', drop)
+  const show = (): void => {
+    if (!toastVisibleFor(updateView) || toast.isDestroyed()) return
+    positionUpdateToast()
+    toast.showInactive()
+  }
+  const handlers = {
+    move: positionUpdateToast,
+    resize: positionUpdateToast,
+    minimize: () => { if (!toast.isDestroyed()) toast.hide() },
+    restore: show,
+    hide: () => { if (!toast.isDestroyed()) toast.hide() },
+    show,
+  }
+  toastParentHandlers = handlers
+  parent.on('move', handlers.move)
+  parent.on('resize', handlers.resize)
+  parent.on('minimize', handlers.minimize)
+  parent.on('restore', handlers.restore)
+  parent.on('hide', handlers.hide)
+  parent.on('show', handlers.show)
+  void toast.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(updateToastHtml())).then(() => {
+    if (toast.isDestroyed()) return
+    toast.webContents.send('workdsh:update-view', updateView)
+    show()
+  }).catch(() => { if (!toast.isDestroyed()) toast.destroy() })
+}
+
+function syncUpdateToast(): void {
+  if (!toastVisibleFor(updateView)) {
+    hideUpdateToast()
+    return
+  }
+  ensureUpdateToast()
+  if (updateToast !== undefined && !updateToast.isDestroyed()) {
+    updateToast.webContents.send('workdsh:update-view', updateView)
+  }
+}
+
+/** “重启升级”：先提醒会重启，确认后自动下载、安装并重启。 */
+async function confirmAndRestartUpgrade(parentWindow?: BrowserWindow): Promise<void> {
+  if (updater === undefined || updateView.phase === 'installing') return
+  const version = updateView.version ?? '新版本'
+  const options = {
+    type: 'question' as const,
+    title: '重启升级',
+    message: `升级到 ${version} 需要重启软件`,
+    detail: '升级过程中软件会自动关闭并重新启动，请先保存正在编辑的内容。',
+    buttons: ['取消', '确定'],
+    defaultId: 1,
+    cancelId: 0,
+    noLink: true,
+  }
+  // 弹窗挂在触发它的窗口上：提醒条的按钮挂在主窗口，更新窗口的按钮挂在更新窗口。
+  const owner = parentWindow !== undefined && !parentWindow.isDestroyed() ? parentWindow : undefined
+  const parent = owner ?? (window !== undefined && !window.isDestroyed() ? window : undefined)
+  const result = parent === undefined
+    ? await dialog.showMessageBox(options)
+    : await dialog.showMessageBox(parent, options)
+  if (result.response !== 1) return
+  hideUpdateToast()
+  showUpdateWindow()
+  void updater.downloadAndInstall()
+}
+
 function assertUpdateSender(event: IpcMainInvokeEvent): void {
   if (updateWindow === undefined || updateWindow.isDestroyed() || event.sender !== updateWindow.webContents) {
     throw new Error('更新窗口来源无效')
+  }
+}
+
+function assertToastSender(event: IpcMainInvokeEvent): void {
+  if (updateToast === undefined || updateToast.isDestroyed() || event.sender !== updateToast.webContents) {
+    throw new Error('更新提醒来源无效')
   }
 }
 
@@ -429,8 +633,13 @@ function installUpdateHandlers(): void {
     switch (action) {
       case 'download': void updater.download(); return
       case 'install': void updater.install(); return
+      case 'upgrade':
+        // 与提醒条的“重启升级”一致：先确认会重启，再开始下载安装。
+        await confirmAndRestartUpgrade(updateWindow)
+        return
       case 'cancel': void updater.cancel(); return
       case 'retry': void updater.retry(); return
+      case 'check': void updater.check(true); return
       case 'dismiss':
         await updater.dismiss()
         updateWindow?.hide()
@@ -442,13 +651,58 @@ function installUpdateHandlers(): void {
         return
     }
   })
+  ipcMain.handle('workdsh:update-window', (event, action: unknown) => {
+    assertUpdateSender(event)
+    const page = updateWindow
+    if (page === undefined || page.isDestroyed() || typeof action !== 'string') return false
+    switch (action) {
+      case 'minimize':
+        page.minimize()
+        break
+      case 'maximize':
+        if (page.isMaximized()) page.unmaximize()
+        else page.maximize()
+        break
+      case 'close':
+        // 强制更新不能只关掉提示；安装阶段窗口也不允许自行关闭。
+        if (updateView.mandatory !== true && updateView.phase !== 'installing') page.hide()
+        break
+      default:
+        break
+    }
+    return page.isMaximized()
+  })
+  ipcMain.handle('workdsh:update-toast-ready', (event) => {
+    assertToastSender(event)
+    return updateView
+  })
+  ipcMain.handle('workdsh:update-toast-action', async (event, action: unknown) => {
+    assertToastSender(event)
+    if (typeof action !== 'string' || updater === undefined) return
+    switch (action) {
+      case 'notes':
+        showUpdateWindow()
+        return
+      case 'restart':
+        await confirmAndRestartUpgrade()
+        return
+      case 'dismiss':
+        await updater.dismiss()
+        hideUpdateToast()
+        return
+      default:
+        return
+    }
+  })
 }
 
 function checkForUpdatesManually(): void {
   if (updater === undefined) return
   lastAutoCheckAt = Date.now()
-  showUpdateWindow()
-  void updater.check(true)
+  // 有更新时只显示左下角提醒条；已最新或失败才用独立窗口告知。
+  void updater.check(true).then(() => {
+    if (updateView.phase === 'idle' || updateView.phase === 'error') showUpdateWindow()
+  })
 }
 
 function scheduleUpdateChecks(minutes: number): void {
@@ -487,17 +741,210 @@ async function stopRuntimeForUpdate(): Promise<void> {
   }
 }
 
+/** 安装阶段进度进程的命令行参数：主程序退出后由它接管同一张进度页。 */
+interface UpdateProgressRequest {
+  readonly installer: string
+  readonly version: string
+  /** 进度页显示完成后写入的标记文件：主程序据此在交接时不留空白。 */
+  readonly readyFlag: string
+  /** 主程序更新窗口当前的位置与尺寸，交接后进度页停留在原处。 */
+  readonly bounds?: { readonly x: number, readonly y: number, readonly width: number, readonly height: number }
+}
+
+function parseWindowBounds(value: string | undefined): UpdateProgressRequest['bounds'] {
+  if (value === undefined || value.length === 0) return undefined
+  const parts = value.split(',').map(part => Number.parseInt(part, 10))
+  if (parts.length !== 4) return undefined
+  const [x, y, width, height] = parts
+  if (x === undefined || y === undefined || width === undefined || height === undefined) return undefined
+  if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) return undefined
+  return { x, y, width, height }
+}
+
+function updateProgressRequest(): UpdateProgressRequest | undefined {
+  const flag = process.argv.find(argument => argument.startsWith('--update-progress='))
+  if (flag === undefined) return undefined
+  const installer = flag.slice('--update-progress='.length)
+  if (installer.length === 0) return undefined
+  const target = process.argv.find(argument => argument.startsWith('--update-target='))
+  const ready = process.argv.find(argument => argument.startsWith('--update-ready='))
+  const bounds = process.argv.find(argument => argument.startsWith('--update-bounds='))
+  const parsedBounds = parseWindowBounds(bounds === undefined ? undefined : bounds.slice('--update-bounds='.length))
+  return {
+    installer,
+    version: target === undefined ? '' : target.slice('--update-target='.length),
+    readyFlag: ready === undefined ? '' : ready.slice('--update-ready='.length),
+    ...(parsedBounds === undefined ? {} : { bounds: parsedBounds }),
+  }
+}
+
+/** 等标记文件出现；超时返回 false，让主程序照常退出，不至于卡在安装页。 */
+async function waitForMarker(path: string, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (existsSync(path)) return true
+    await new Promise(resolve => setTimeout(resolve, 60))
+  }
+  return false
+}
+
+/**
+ * 安装阶段的“同一张进度页”：主程序先退出（文件才能被替换），由这个独立进程继续
+ * 展示“正在安装更新”，静默跑完安装器后再一并退出，避免中途跳出 NSIS 安装界面。
+ */
+async function startUpdateProgressWindow(request: UpdateProgressRequest): Promise<void> {
+  await app.whenReady()
+  const view: UpdateView = {
+    phase: 'installing',
+    ...(request.version.length === 0 ? {} : { version: request.version }),
+    currentVersion: '',
+  }
+  const page = new BrowserWindow({
+    ...(request.bounds === undefined
+      ? { width: UPDATE_WINDOW_WIDTH, height: updateWindowHeight('installing') }
+      : request.bounds),
+    frame: false,
+    resizable: false,
+    // 安装期间允许最小化，并且出现在任务栏：用户随时能把进度页找回来。
+    minimizable: true,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: false,
+    show: false,
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#101216' : '#f6f8fb',
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      preload: fileURLToPath(new URL('./update-preload.cjs', import.meta.url)),
+    },
+  })
+  page.setMenuBarVisibility(false)
+  ipcMain.handle('workdsh:update-ready', () => view)
+  ipcMain.handle('workdsh:update-action', () => undefined)
+  ipcMain.handle('workdsh:update-window', (_event, action: unknown) => {
+    if (action === 'minimize' && !page.isDestroyed()) page.minimize()
+    return false
+  })
+  try {
+    await page.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(updateWindowHtml({ progressOnly: true })))
+    if (page.isDestroyed()) return
+    // 加载文档会覆盖标题，这里在加载完成后再设一次，任务栏显示的是安装进度。
+    page.setTitle('警务助手 · 正在安装更新')
+    page.webContents.send('workdsh:update-view', view)
+    page.show()
+    // 告诉主程序“进度页已经显示出来了”，它再关掉自己那张，避免闪一下再消失。
+    if (request.readyFlag.length > 0) {
+      try { writeFileSync(request.readyFlag, '1') } catch { /* 标记失败只会多一次窗口切换 */ }
+    }
+    // 等主程序完全退出，避免安装器认为应用仍在运行而先杀进程。
+    await new Promise(resolve => setTimeout(resolve, 1500))
+    await new Promise<void>(resolve => {
+      const child = spawn(request.installer, ['/S', '--updated'], { stdio: 'ignore', windowsHide: true })
+      child.once('error', () => resolve())
+      child.once('exit', () => resolve())
+    })
+  } finally {
+    if (!page.isDestroyed()) page.destroy()
+    app.quit()
+  }
+}
+
+/** 安装阶段进度页的工作目录：必须是安装目录之外的副本，安装器才能覆盖 $INSTDIR。 */
+const PROGRESS_HELPER_DIRECTORY = 'workdsh-update-progress-app'
+
+function progressHelperDirectory(): string {
+  return join(app.getPath('temp'), PROGRESS_HELPER_DIRECTORY)
+}
+
+/** 用系统命令删除目录：Electron 的 fs 把 app.asar 当目录，fs.rm 删除整棵副本会报 EPERM。 */
+function removeDirectory(target: string): Promise<void> {
+  return new Promise(resolve => {
+    exec(`rd /s /q "${target}"`, { windowsHide: true }, () => resolve())
+  })
+}
+
+/** 清掉上一次升级留下的进度页副本与缓存；新版本启动时调用。 */
+async function cleanProgressHelper(): Promise<void> {
+  const helperDirectory = progressHelperDirectory()
+  const dataDirectory = join(app.getPath('temp'), 'workdsh-update-progress')
+  if (existsSync(helperDirectory)) await removeDirectory(helperDirectory)
+  if (existsSync(dataDirectory)) await removeDirectory(dataDirectory)
+}
+
+/**
+ * 安装器要覆盖 $INSTDIR 下的 exe 与 app.asar，从安装目录启动的进度进程会把文件锁住，
+ * 所以进度页必须来自副本。Electron 把 app.asar 当目录读，fs.cp 无法复制它；
+ * 交给 robocopy 在系统层复制，并跳过 resources/workdsh-runtime（约 900MB）。
+ */
+function copyShellForProgress(installDirectory: string, helperDirectory: string, runtimeDirectory: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('robocopy', [
+      installDirectory,
+      helperDirectory,
+      '/E',
+      '/XD', runtimeDirectory,
+      '/NFL', '/NDL', '/NJH', '/NJS', '/NP',
+    ], { windowsHide: true })
+    child.once('error', reject)
+    // robocopy 以 0–7 表示成功（0 为无变化、1 为已复制），8 及以上才是失败。
+    child.once('exit', code => {
+      if (code !== null && code < 8) resolve()
+      else reject(new Error(`无法准备更新进度页（robocopy ${String(code)}）`))
+    })
+  })
+}
+
+async function prepareProgressHelper(): Promise<string> {
+  const installDirectory = dirname(process.resourcesPath)
+  const helperDirectory = progressHelperDirectory()
+  const runtimeDirectory = join(installDirectory, 'resources', 'workdsh-runtime')
+  await cleanProgressHelper()
+  try {
+    await copyShellForProgress(installDirectory, helperDirectory, runtimeDirectory)
+  } catch (error) {
+    await cleanProgressHelper()
+    throw error
+  }
+  return join(helperDirectory, basename(process.execPath))
+}
+
 async function installUpdate(candidate: UpdateCandidate, installerPath: string): Promise<void> {
   updaterInstalling = true
   updateLog?.write(`[${new Date().toISOString()}] install ${candidate.version}\n`)
   try {
     await stopRuntimeForUpdate()
-    await launchWindowsInstaller(installerPath)
+    if (!await verifyWindowsInstaller(installerPath)) throw new Error('安装包不是有效的 Windows 安装程序')
+    // 交给独立进度进程：它先展示同一张进度页，再静默运行安装器，装完自行退出。
+    // 进度进程从安装目录之外的副本启动，避免锁住待覆盖的文件；
+    // 独立 userData 目录，避免与主程序共用 Chromium 单例锁而无法显示窗口。
+    const helperExecutable = app.isPackaged ? await prepareProgressHelper() : process.execPath
+    const helperUserData = join(app.getPath('temp'), 'workdsh-update-progress')
+    // 交接不闪：把当前进度页的位置/尺寸交给新进程，等它显示出来后再关掉本进程的窗口。
+    const bounds = updateWindow !== undefined && !updateWindow.isDestroyed() && !updateWindow.isMinimized()
+      ? updateWindow.getBounds()
+      : undefined
+    const readyFlag = join(app.getPath('temp'), `workdsh-update-ready-${String(process.pid)}.flag`)
+    try { rmSync(readyFlag, { force: true }) } catch { /* 旧标记删不掉不影响本次交接 */ }
+    const args = [
+      `--user-data-dir=${helperUserData}`,
+      `--update-progress=${installerPath}`,
+      `--update-target=${candidate.version}`,
+      `--update-ready=${readyFlag}`,
+      ...(bounds === undefined ? [] : [`--update-bounds=${bounds.x},${bounds.y},${bounds.width},${bounds.height}`]),
+    ]
+    if (!app.isPackaged) args.unshift(app.getAppPath())
+    // 不能加 windowsHide：它会让进度进程的首个窗口以隐藏状态创建，show() 也显示不出来。
+    const helper = spawn(helperExecutable, args, { detached: true, stdio: 'ignore' })
+    helper.unref()
+    updateLog?.write(`[${new Date().toISOString()}] helper-spawned ${String(helper.pid)}\n`)
+    await waitForMarker(readyFlag, 8_000)
+    try { rmSync(readyFlag, { force: true }) } catch { /* 标记清理失败无影响 */ }
   } catch (error) {
     updaterInstalling = false
     throw error
   }
-  // 安装器已成功启动：关闭所有窗口并退出，由安装器覆盖文件后重新拉起应用。
+  // 进度页由独立进程接管：主程序只负责退出，由安装器覆盖文件后重新拉起应用。
   quitting = true
   for (const page of BrowserWindow.getAllWindows()) {
     if (!page.isDestroyed()) page.destroy()
@@ -543,6 +990,12 @@ function disableSpellcheckDictionaryDownloads(page: BrowserWindow): void {
   page.webContents.session.setSpellCheckerLanguages([])
 }
 
+/** 解析 workdsh:// 窄通道的目标主机名；非该协议或无效 URL 一律返回 undefined。 */
+function workdshCommand(target: string): string | undefined {
+  if (!target.startsWith('workdsh://')) return undefined
+  try { return new URL(target).hostname } catch { return undefined }
+}
+
 function openWindow(url: string, connection: DesktopConnection = { mode: 'personal' }, carrier = false, reveal = true, backgroundColor = '#111113'): void {
   const previous = window
   const previousEntrySurface = entrySurface
@@ -584,6 +1037,12 @@ function openWindow(url: string, connection: DesktopConnection = { mode: 'person
         event.preventDefault()
         if (!enterprisePluginAvailable()) { dialog.showErrorBox('企业插件不可用', '请先安装兼容的企业账号插件。'); return }
         void returnToEntry()
+        return
+      }
+      // 工作台账号菜单的「检查更新」：沿用 workdsh:// 窄通道，不往官方页面注入任何桥。
+      if (workdshCommand(target) === 'check-update') {
+        event.preventDefault()
+        if (window === page) checkForUpdatesManually()
         return
       }
       try { if (new URL(target).origin === origin) return } catch { /* invalid navigation is refused */ }
@@ -1394,8 +1853,12 @@ function installConnectionMenu(): void {
 }
 
 const worker = browserWorkerRequest()
+const updateProgress = updateProgressRequest()
 if (worker !== undefined) {
   startBrowserWorker(worker)
+} else if (updateProgress !== undefined) {
+  // 安装阶段由独立进程接管进度页：主程序退出后这一页仍然在，装完再自行退出。
+  void startUpdateProgressWindow(updateProgress)
 } else {
 // The native bundle starts without a Dock icon so spawned browser workers cannot
 // flash one before JavaScript runs. Only the primary application becomes foreground.
@@ -1474,6 +1937,9 @@ if (!app.requestSingleInstanceLock()) {
   void app.whenReady().then(() => {
     // 安装器请求退出：不创建窗口，直接走退出清理。
     if (process.argv.includes('--dsh-installer-quit')) { app.quit(); return }
+    // 上一次升级留下的进度页副本；安装刚结束时可能仍被旧进度进程占用，稍后再清一次。
+    void cleanProgressHelper()
+    setTimeout(() => { void cleanProgressHelper() }, 60_000)
     startupLogFile = join(app.getPath('userData'), 'startup-timing.log')
     markStartup('app.whenReady 触发')
     const deploymentFile = join(process.resourcesPath ?? '', 'workdsh-config.json')

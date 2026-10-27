@@ -1,6 +1,8 @@
-/** 更新窗口专用 preload：只暴露状态订阅与四个动作，不暴露任意 IPC。 */
+/** 更新窗口专用 preload：只暴露状态订阅与固定动作，不暴露任意 IPC。 */
 import { contextBridge, ipcRenderer } from 'electron'
 import type { UpdateView } from './update-view.ts'
+
+type WindowAction = 'minimize' | 'maximize' | 'close'
 
 const api = {
   ready: (): Promise<UpdateView> => ipcRenderer.invoke('workdsh:update-ready') as Promise<UpdateView>,
@@ -10,6 +12,12 @@ const api = {
     return () => { ipcRenderer.off('workdsh:update-view', handle) }
   },
   action: (name: string): Promise<void> => ipcRenderer.invoke('workdsh:update-action', name) as Promise<void>,
+  windowAction: (name: WindowAction): Promise<boolean> => ipcRenderer.invoke('workdsh:update-window', name) as Promise<boolean>,
+  onMaximized(listener: (maximized: boolean) => void): () => void {
+    const handle = (_event: unknown, maximized: boolean): void => listener(maximized)
+    ipcRenderer.on('workdsh:update-maximized', handle)
+    return () => { ipcRenderer.off('workdsh:update-maximized', handle) }
+  },
 }
 
 contextBridge.exposeInMainWorld('workdshUpdate', api)
@@ -34,113 +42,201 @@ function element<T extends HTMLElement>(id: string): T | null {
   return document.getElementById(id) as T | null
 }
 
+/** 字节数转人类可读体积；后台字段可能缺失，调用方负责判空。 */
+function formatSize(bytes: number): string {
+  const mb = bytes / (1024 * 1024)
+  if (mb >= 1024) return `${(mb / 1024).toFixed(2)} GB`
+  return `${mb.toFixed(1)} MB`
+}
+
 window.addEventListener('DOMContentLoaded', () => {
-  const version = element<HTMLElement>('version')
-  const type = element<HTMLElement>('type')
-  const status = element<HTMLElement>('status')
-  const progress = element<HTMLElement>('progress')
-  const bar = element<HTMLElement>('bar')
+  const head = element<HTMLElement>('head')
+  const badge = element<HTMLElement>('badge')
+  const title = element<HTMLElement>('h1')
+  const meta = element<HTMLElement>('meta')
+  const notesWrap = element<HTMLElement>('notesWrap')
   const notes = element<HTMLElement>('notes')
+  const upgrading = element<HTMLElement>('upgrading')
+  const upTitle = element<HTMLElement>('upTitle')
+  const upSub = element<HTMLElement>('upSub')
+  const upBar = element<HTMLElement>('upBar')
+  const upStatus = element<HTMLElement>('upStatus')
+  const latest = element<HTMLElement>('latest')
+  const latestTitle = element<HTMLElement>('latestTitle')
+  const latestMeta = element<HTMLElement>('latestMeta')
+  const latestChecks = element<HTMLElement>('latestChecks')
   const primary = element<HTMLButtonElement>('primary')
   const secondary = element<HTMLButtonElement>('secondary')
+  const closeButton = element<HTMLButtonElement>('close')
+  const maximizeButton = element<HTMLButtonElement>('max')
   let current: UpdateView | undefined
 
   const action = (name: string): void => { void api.action(name) }
 
   primary?.addEventListener('click', () => {
     if (current === undefined) return
-    if (current.phase === 'available') action('download')
-    else if (current.phase === 'ready') action('install')
+    if (current.phase === 'available') action('upgrade')
     else if (current.phase === 'error') action('retry')
+    else if (current.phase === 'idle') action('close')
   })
   secondary?.addEventListener('click', () => {
     if (current === undefined) return
-    if (current.phase === 'downloading') action('cancel')
-    else if (current.phase === 'available' || current.phase === 'ready') action('dismiss')
-    else action('close')
+    // “稍后”只收起弹窗：左下角提醒条继续保留，用户随时能从提醒条重启升级。
+    action('close')
+  })
+  element<HTMLButtonElement>('min')?.addEventListener('click', () => { void api.windowAction('minimize') })
+  closeButton?.addEventListener('click', () => { void api.windowAction('close') })
+  maximizeButton?.addEventListener('click', () => {
+    void api.windowAction('maximize').then(maximized => setMaximized(maximized))
   })
 
-  const setButton = (button: HTMLButtonElement | null, label: string | undefined, visible: boolean): void => {
+  const setMaximized = (maximized: boolean): void => {
+    if (maximizeButton === null) return
+    maximizeButton.textContent = maximized ? '\u2750' : '\u25a1'
+    maximizeButton.title = maximized ? '还原' : '最大化'
+    maximizeButton.setAttribute('aria-label', maximizeButton.title)
+  }
+  api.onMaximized(setMaximized)
+
+  const show = (node: HTMLElement | null, visible: boolean): void => {
+    if (node !== null) node.hidden = !visible
+  }
+
+  const setButton = (
+    button: HTMLButtonElement | null,
+    label: string | undefined,
+    visible: boolean,
+    variant: 'primary' | 'ghost' | 'default' = 'ghost',
+  ): void => {
     if (button === null) return
     button.hidden = !visible
+    button.className = variant === 'primary' ? 'btn primary' : variant === 'ghost' ? 'btn ghost' : 'btn'
     if (label !== undefined) button.textContent = label
+  }
+
+  const releaseMeta = (view: UpdateView): string => {
+    const parts: string[] = []
+    if (view.size !== undefined && view.size > 0) parts.push(formatSize(view.size))
+    if (view.publishedAt !== undefined && view.publishedAt.length > 0) parts.push(`${view.publishedAt} 发布`)
+    parts.push(TYPE_TEXT[view.releaseType ?? 'stable'] ?? '正式版')
+    return parts.join(' · ')
+  }
+
+  const renderNotes = (view: UpdateView): void => {
+    const hasNotes = view.notesHtml !== undefined && view.notesHtml.length > 0
+    show(notesWrap, hasNotes)
+    if (notes !== null && hasNotes) {
+      // notesHtml 由主进程用受限 Markdown 渲染器生成，所有原始 HTML 均已转义。
+      notes.innerHTML = view.notesHtml ?? ''
+    }
+  }
+
+  /** 下载、校验、安装共用一个“正在更新”页：从确认到重启只有这一屏。 */
+  const renderUpgrading = (options: {
+    readonly heading: string
+    readonly sub: string
+    readonly status: string
+    readonly percent?: number
+  }): void => {
+    show(head, false)
+    show(notesWrap, false)
+    show(latest, false)
+    show(upgrading, true)
+    if (upTitle !== null) upTitle.textContent = options.heading
+    if (upSub !== null) upSub.textContent = options.sub
+    if (upStatus !== null) upStatus.textContent = options.status
+    if (upBar !== null) {
+      const determinate = options.percent !== undefined
+      upBar.className = determinate ? 'bar' : 'bar indeterminate'
+      upBar.style.width = determinate ? `${Math.min(100, Math.max(0, options.percent ?? 0))}%` : ''
+    }
+    setButton(primary, undefined, false)
+    setButton(secondary, undefined, false)
+  }
+
+  const renderEmptyState = (heading: string): void => {
+    show(head, false)
+    show(notesWrap, false)
+    show(upgrading, false)
+    show(latest, true)
+    if (latestTitle !== null) latestTitle.textContent = heading
+    if (latestMeta !== null) latestMeta.textContent = ''
+    if (latestChecks !== null) latestChecks.textContent = ''
   }
 
   const render = (view: UpdateView): void => {
     current = view
     const hasVersion = view.version !== undefined && view.version.length > 0
-    if (version !== null) {
-      version.hidden = !hasVersion
-      version.textContent = hasVersion ? `版本 ${view.version}` : ''
-    }
-    if (type !== null) {
-      const releaseType = view.releaseType ?? 'stable'
-      type.hidden = !hasVersion
-      type.textContent = TYPE_TEXT[releaseType] ?? releaseType
-      type.className = `badge ${releaseType}`
-    }
+    const mandatory = view.mandatory === true
+    const upgradingPhase = view.phase === 'downloading'
+      || view.phase === 'verifying'
+      || view.phase === 'ready'
+      || view.phase === 'installing'
+    if (closeButton !== null) closeButton.disabled = mandatory || upgradingPhase
 
-    progress!.hidden = view.phase !== 'downloading' && view.phase !== 'verifying'
-    if (bar !== null) {
-      const percent = view.phase === 'verifying' ? 100 : (view.percent ?? 0)
-      bar.style.width = `${Math.min(100, Math.max(0, percent))}%`
-    }
-
-    if (notes !== null) {
-      // notesHtml 由主进程用受限 Markdown 渲染器生成，所有原始 HTML 均已转义。
-      notes.hidden = view.notesHtml === undefined || view.notesHtml.length === 0
-      notes.innerHTML = view.notesHtml ?? ''
-    }
+    show(badge, mandatory && hasVersion && view.phase === 'available')
+    show(head, true)
+    show(latest, false)
+    show(notesWrap, false)
+    show(upgrading, false)
 
     switch (view.phase) {
-      case 'idle':
-        status!.textContent = '当前已是最新版本。'
-        status!.className = 'status'
-        setButton(primary, undefined, false)
-        setButton(secondary, '关闭', true)
-        break
       case 'checking':
-        status!.textContent = '正在检查更新…'
-        status!.className = 'status'
+        renderEmptyState('正在检查更新…')
+        if (latestChecks !== null) latestChecks.textContent = '正在连接更新服务'
         setButton(primary, undefined, false)
-        setButton(secondary, '关闭', true)
-        break
+        setButton(secondary, undefined, false)
+        return
+      case 'idle':
+        renderEmptyState(`警务助手 ${view.currentVersion ?? ''} 已是最新版`.trim())
+        setButton(primary, '我知道啦', true, 'primary')
+        setButton(secondary, undefined, false)
+        return
       case 'available':
-        status!.textContent = view.mandatory === true ? '发现新版本（强制更新）。' : '发现新版本。'
-        status!.className = 'status strong'
-        setButton(primary, '下载更新', true)
-        setButton(secondary, view.mandatory === true ? undefined : '稍后', view.mandatory !== true)
-        break
-      case 'downloading':
-        status!.textContent = `正在下载更新：${view.percent ?? 0}%`
-        status!.className = 'status'
-        setButton(primary, undefined, false)
-        setButton(secondary, '取消', true)
-        break
+        if (title !== null) title.textContent = `发现新版本 ${view.version ?? ''}`.trim()
+        if (meta !== null) meta.textContent = releaseMeta(view)
+        renderNotes(view)
+        setButton(primary, '立即更新', true, 'primary')
+        setButton(secondary, '稍后', !mandatory)
+        return
+      case 'downloading': {
+        const percent = Math.min(100, Math.max(0, view.percent ?? 0))
+        const sizeText = view.size === undefined ? '' : ` · ${formatSize(view.size)}`
+        renderUpgrading({
+          heading: '正在下载更新',
+          sub: '下载完成后将自动安装并重启软件，请稍候…',
+          status: `正在下载… ${Math.round(percent)}%${sizeText}`,
+          percent,
+        })
+        return
+      }
       case 'verifying':
-        status!.textContent = '正在校验更新文件…'
-        status!.className = 'status'
-        setButton(primary, undefined, false)
-        setButton(secondary, undefined, false)
-        break
+        renderUpgrading({
+          heading: '正在校验安装包',
+          sub: '校验通过后将自动开始安装，请稍候…',
+          status: '正在校验完整性与文件签名…',
+        })
+        return
       case 'ready':
-        status!.textContent = '新版本已准备就绪，安装期间应用会暂时关闭。'
-        status!.className = 'status strong'
-        setButton(primary, '安装并重启', true)
-        setButton(secondary, view.mandatory === true ? undefined : '稍后', view.mandatory !== true)
-        break
+        renderUpgrading({
+          heading: '正在安装更新',
+          sub: '更新即将完成，应用将自动重启，请稍候…',
+          status: '正在准备安装…',
+        })
+        return
       case 'installing':
-        status!.textContent = '正在准备重启…'
-        status!.className = 'status'
-        setButton(primary, undefined, false)
-        setButton(secondary, undefined, false)
-        break
+        renderUpgrading({
+          heading: '正在安装更新',
+          sub: '更新即将完成，应用将自动重启，请稍候…',
+          status: '正在安装…',
+        })
+        return
       case 'error':
-        status!.textContent = FAILURE_TEXT[view.failure?.code ?? ''] ?? '更新失败，请稍后重试。'
-        status!.className = 'status'
-        setButton(primary, '重试', true)
+        if (title !== null) title.textContent = '更新失败'
+        if (meta !== null) meta.textContent = FAILURE_TEXT[view.failure?.code ?? ''] ?? '更新失败，请稍后重试。'
+        setButton(primary, '重试', true, 'primary')
         setButton(secondary, '关闭', true)
-        break
+        return
     }
   }
 

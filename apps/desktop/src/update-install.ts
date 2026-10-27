@@ -1,5 +1,4 @@
-/** Windows 安装包校验与安装器交接；不经过 shell，参数固定。 */
-import { spawn } from 'node:child_process'
+/** Windows 安装包校验；安装本身由独立进度进程静默执行。 */
 import { open, stat } from 'node:fs/promises'
 
 const PE_SIGNATURE = 'PE\0\0'
@@ -25,37 +24,4 @@ export async function verifyWindowsInstaller(executable: string): Promise<boolea
   } catch {
     return false
   }
-}
-
-/**
- * 以静默方式启动 NSIS 安装器：`/S` 跳过界面，`--updated` 表示覆盖升级。
- * 只等待 spawn 成功，不等待安装结束；调用方随后退出应用，由安装器接管。
- */
-export async function launchWindowsInstaller(executable: string): Promise<void> {
-  if (process.platform !== 'win32') throw new Error('当前平台不支持静默安装')
-  if (!await verifyWindowsInstaller(executable)) throw new Error('安装包不是有效的 Windows 安装程序')
-
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(executable, ['/S', '--updated'], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true,
-      shell: false,
-    })
-    const cleanup = (): void => {
-      child.off('error', onError)
-      child.off('spawn', onSpawn)
-    }
-    const onError = (error: Error): void => {
-      cleanup()
-      reject(error)
-    }
-    const onSpawn = (): void => {
-      cleanup()
-      child.unref()
-      resolve()
-    }
-    child.once('error', onError)
-    child.once('spawn', onSpawn)
-  })
 }

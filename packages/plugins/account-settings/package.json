@@ -1,9 +1,9 @@
 {
   "name": "workdsh-plugin-account-settings",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "private": true,
   "type": "module",
-  "description": "Sidebar-foot personal account menu: signed-in profile, Settings entry and sign-out.",
+  "description": "Sidebar-foot personal account menu: signed-in profile, Settings entry, update check and sign-out.",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

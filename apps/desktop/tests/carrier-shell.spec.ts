@@ -45,11 +45,12 @@ vi.mock('electron', async () => {
     BrowserWindow: Window,
     ipcMain: { handle: vi.fn() },
     app: Object.assign(new EventEmitter(), {
-      setActivationPolicy: vi.fn(), setName: vi.fn(), getVersion: () => '1.0.0',
+      setActivationPolicy: vi.fn(), setName: vi.fn(), setAppUserModelId: vi.fn(), getVersion: () => '1.0.0',
       requestSingleInstanceLock: () => true, whenReady: async () => {}, quit: vi.fn(), exit: vi.fn(), relaunch: vi.fn(),
       getPath: () => state.userData, getAppPath: () => state.userData,
     }),
     shell: { openExternal: vi.fn() },
+    net: { fetch: vi.fn() },
     dialog: {
       showErrorBox: vi.fn((title: string, content?: string) => { state.dialogs.push(`${title} ${content ?? ''}`) }),
       showMessageBox: vi.fn(async (_page: any, options: any) => { state.boxes.push(options); return state.nextBox }),

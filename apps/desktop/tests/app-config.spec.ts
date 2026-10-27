@@ -35,6 +35,6 @@ it('随包配置保留运维可调项（appId、会话校验间隔、在线更�
   const server = parseAppConfig(packaged).server
   expect(server?.appId).toBe('police-assistant')
   expect(server?.syncIntervalSeconds).toBe(300)
-  expect(server?.updateCheckIntervalMinutes).toBe(360)
+  expect(server?.updateCheckIntervalMinutes).toBe(5)
   expect(server?.updateEnabled).toBe(true)
 })

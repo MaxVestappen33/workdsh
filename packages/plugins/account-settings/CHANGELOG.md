@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.0-alpha.2
+
+- 账号菜单在「设置」与「退出登录」之间新增「检查更新」：`/api/auth/me` 返回 `desktop: true` 时显示，点击经 `workdsh://check-update` 窄通道通知桌面载体（与托盘「检查更新」同一路径）；浏览器形态不显示该项。
+
 ## 0.1.0-alpha.1
 
 - 新增侧栏底部个人账号入口：注册官方 `settings.launcher` 槽位，显示登录账号头像与姓名。
