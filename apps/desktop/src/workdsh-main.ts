@@ -12,7 +12,7 @@ import {
 } from 'node:fs'
 import { basename, dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { connectionEntryHtml, enterpriseLoginHtml, connectionLoadingHtml, accountSplashHtml, accountLoginHtml } from './connection-entry.ts'
+import { enterpriseLoginHtml, connectionLoadingHtml, accountSplashHtml, accountLoginHtml } from './connection-entry.ts'
 import { connectionPartition, enterpriseConnection, type DesktopConnection } from './connection-mode.ts'
 import { parseDeploymentConfig } from './deployment-config.ts'
 import { readModelCredentials } from './model-credentials.ts'
@@ -954,9 +954,9 @@ async function installUpdate(candidate: UpdateCandidate, installerPath: string):
     await waitForMarker(readyFlag, 8_000)
     try { rmSync(readyFlag, { force: true }) } catch { /* 标记清理失败无影响 */ }
   } catch (error) {
-    // 安装交接失败时本机 Host 已被主动停止：回到入口页，避免用户停在一个已停止的工作区。
+    // 安装交接失败时本机 Host 已被主动停止：回到登录页，避免用户停在一个已停止的工作区。
     updaterInstalling = false
-    void returnToEntry()
+    void returnToLogin()
     throw error
   }
   // 进度页由独立进程接管：主程序只负责退出，由安装器覆盖文件后重新拉起应用。
@@ -1058,7 +1058,7 @@ function openWindow(url: string, connection: DesktopConnection = { mode: 'person
       if (target === 'workdsh://entry' && window === page && !switching) {
         event.preventDefault()
         if (!enterprisePluginAvailable()) { dialog.showErrorBox('企业插件不可用', '请先安装兼容的企业账号插件。'); return }
-        void returnToEntry()
+        void returnToLogin()
         return
       }
       // 工作台账号菜单的「检查更新」：沿用 workdsh:// 窄通道，不往官方页面注入任何桥。
@@ -1098,7 +1098,7 @@ function openWindow(url: string, connection: DesktopConnection = { mode: 'person
     if (!page.isDestroyed()) page.destroy()
     if (previous && !previous.isDestroyed()) { window = previous; entrySurface = previousEntrySurface }
     dialog.showErrorBox('无法打开工作区', `请检查企业地址、网络或本地运行状态。\n\n${reason}`)
-    if (runtime) void returnToEntry()
+    if (runtime) void returnToLogin()
   })
   page.on('closed', () => { enterpriseWindows.delete(page); if (window === page) window = undefined })
   // 点叉号不再直接退出：交给关闭确认弹窗（隐藏到托盘 / 退出软件）。真正的退出/切换流程不受影响。
@@ -1280,7 +1280,7 @@ async function startRuntime(home: string, connection: DesktopConnection, patches
   child.stdout.once('end', () => stdoutRedactor.end())
   child.stderr.once('end', () => stderrRedactor.end())
   child.once('error', cause => {
-    if (!quitting && runtime === child) { dialog.showErrorBox('启动失败', redactRuntimeOutput(cause.message)); void returnToEntry() }
+    if (!quitting && runtime === child) { dialog.showErrorBox('启动失败', redactRuntimeOutput(cause.message)); void returnToLogin() }
   })
   child.once('exit', code => {
     if (runtime !== child) return
@@ -1288,19 +1288,19 @@ async function startRuntime(home: string, connection: DesktopConnection, patches
       if (runtime === child) { runtime = undefined; runtimeStarting = false }
       if (!quitting && !switching && !updaterInstalling) {
         dialog.showErrorBox('本机运行已停止', failureDetail(code))
-        void returnToEntry()
+        void returnToLogin()
       }
     }).catch(error => {
-      // 回收未确认不能让应用停在“启动中”：记录原因、提示一次后照常回到入口页，用户仍可重试或退出。
+      // 回收未确认不能让应用停在“启动中”：记录原因、提示一次后照常回到登录页，用户仍可重试或退出。
       recordCleanupFailure('startup-exit', error)
       runtime = undefined
       runtimeStarting = false
       if (quitting || switching || updaterInstalling) return
       dialog.showErrorBox('本机运行已停止', failureDetail(code, true))
-      void returnToEntry()
+      void returnToLogin()
     })
   })
-  const readyTimeout = setTimeout(() => { if (!ready && runtime === child) { dialog.showErrorBox('启动超时', '官方 DSH 尚未就绪，已停止本机进程'); void returnToEntry() } }, 90_000)
+  const readyTimeout = setTimeout(() => { if (!ready && runtime === child) { dialog.showErrorBox('启动超时', '官方 DSH 尚未就绪，已停止本机进程'); void returnToLogin() } }, 90_000)
   child.once('exit', () => clearTimeout(readyTimeout))
 }
 
@@ -1385,19 +1385,27 @@ async function stopAccountForQuit(): Promise<void> {
   entrySurface = false
 }
 
-async function returnToEntry(): Promise<void> {
+/**
+ * 回到登录页：先离开当前工作区（企业或个人账号），再展示登录页。
+ * 「选择使用方式」入口页已下线——启动、异常、退出登录一律落到登录页，任何时候都不再出现该页面。
+ */
+async function returnToLogin(): Promise<void> {
   if (quitting) return
   if (switching) { returnRequested = true; return }
   switching = true
-  try { await leaveWorkspace(); showConnectionEntry() }
-  catch (error) { recordCleanupFailure('switch', error); dialog.showErrorBox('暂时无法切换', error instanceof Error ? error.message : '请稍后重试') }
+  try {
+    if (enterprise) await leaveWorkspace()
+    else await leaveAccountWorkspace()
+    showAccountLogin()
+  }
+  catch (error) { recordCleanupFailure('return-to-login', error); dialog.showErrorBox('暂时无法返回登录', error instanceof Error ? error.message : '请稍后重试') }
   finally { endSwitch() }
 }
 
 function endSwitch(): void {
   switching = false
   if (quitRequested) app.quit()
-  else if (returnRequested) { returnRequested = false; void returnToEntry() }
+  else if (returnRequested) { returnRequested = false; void returnToLogin() }
 }
 
 function savedBackendFile(): string { return join(app.getPath('userData'), 'enterprise-backend.json') }
@@ -1405,11 +1413,6 @@ function rememberBackend(backend: string): void {
   if (managedBackend) return
   mkdirSync(app.getPath('userData'), { recursive: true })
   writeFileSync(savedBackendFile(), JSON.stringify({ backend }), { mode: 0o600 })
-}
-
-function showConnectionEntry(): void {
-  openWindow('data:text/html;charset=utf-8,' + encodeURIComponent(connectionEntryHtml(enterprisePortal, managedBackend !== undefined, enterprisePluginAvailable())), { mode: 'personal' }, true)
-  connectEntryNavigation(window!)
 }
 
 /** The account splash, starting state and login surfaces are light; match the window background so there is no dark flash. */
@@ -1527,7 +1530,7 @@ function startAccountSync(session: { login: AccountLogin, store: AccountStore })
       if (session.login.isExpired()) {
         stopped = true
         dialog.showErrorBox('账号登录已过期', '登录已失效，本机运行将停止，请重新登录。')
-        void leaveAccountToLogin()
+        void returnToLogin()
         return
       }
       const result = await session.login.syncProfile()
@@ -1536,7 +1539,7 @@ function startAccountSync(session: { login: AccountLogin, store: AccountStore })
         // ② 仅后台明确 401：弹提示并退回登录页。
         stopped = true
         dialog.showErrorBox('账号登录已失效', result.message)
-        void leaveAccountToLogin()
+        void returnToLogin()
         return
       }
       if (result.outcome === 'ok') {
@@ -1579,7 +1582,7 @@ async function startAccountRuntime(home: string): Promise<void> {
   session.deviceId = space.deviceId
   // A restored session restarts its loopback authority here; a fresh login already bound one.
   if (!session.authority) {
-    session.authority = await startAccountAuthority(session.login, () => { void leaveAccountToLogin() }, () => { void leaveAccountToLogin() }, abandonAccountSession)
+    session.authority = await startAccountAuthority(session.login, () => { void returnToLogin() }, () => { void returnToLogin() }, abandonAccountSession)
   }
   const { authority } = session
   if (!authority) throw new Error('账号授权未就绪')
@@ -1601,15 +1604,6 @@ async function launchAccountRuntime(): Promise<void> {
   await startAccountRuntime(home)
 }
 
-async function leaveAccountToLogin(): Promise<void> {
-  if (quitting) return
-  if (switching) { returnRequested = true; return }
-  switching = true
-  try { await leaveAccountWorkspace(); showAccountLogin() }
-  catch (error) { dialog.showErrorBox('暂时无法返回登录', error instanceof Error ? error.message : '请稍后重试') }
-  finally { endSwitch() }
-}
-
 /**
  * 成员身份的请求（如连接器市场）被后台判定为未授权时的收尾。
  * 与 startAccountSync 轮询拿到 unauthorized 时完全一致：弹「账号登录已失效」提示并退回登录页，
@@ -1617,7 +1611,7 @@ async function leaveAccountToLogin(): Promise<void> {
  */
 function abandonAccountSession(): void {
   dialog.showErrorBox('账号登录已失效', '登录已过期，请重新登录。')
-  void leaveAccountToLogin()
+  void returnToLogin()
 }
 
 /** 首次启动 / 升级后的“环境准备中”过场页：创建即显示，不再隐藏等待。 */
@@ -1648,6 +1642,8 @@ function keepEntryPage(): void {}
 function showAccountLogin(): void {
   markStartup('切换到登录页')
   if (window && !window.isDestroyed()) {
+    // 复用窗口时也要恢复入口标记：登录页必须能通过 workdsh:account-login 提交。
+    entrySurface = true
     window.setBackgroundColor(LIGHT_ENTRY_BACKGROUND)
     void window.loadURL(accountLoginUrl())
     window.show()
@@ -1729,11 +1725,11 @@ function connectEntryNavigation(entry: BrowserWindow): void {
           entrySurface = false
           await startRuntime(home, { mode: 'personal' }, [], prepared.existingHome)
         } else if (command.hostname === 'entry') {
-          await leaveWorkspace(); showConnectionEntry()
+          await leaveWorkspace(); showAccountLogin()
         }
       } catch (error) {
         dialog.showErrorBox('无法进入', error instanceof Error ? error.message : '请检查入口配置')
-        showConnectionEntry()
+        showAccountLogin()
       } finally { endSwitch() }
     })()
   })
@@ -1761,7 +1757,7 @@ async function activateEnterprise(existingHome: boolean): Promise<void> {
     if (!selected.dsh.profile.bundles.includes(name)) selected.dsh.profile.bundles.push(name)
   }
   writeFileSync(manifest, JSON.stringify(selected, null, 2) + '\n', { mode: 0o600 })
-  session.authority = await startEnterpriseAuthority(session.login, session.deviceId, () => { void returnToEntry() }, () => { void returnToEntry() })
+  session.authority = await startEnterpriseAuthority(session.login, session.deviceId, () => { void returnToLogin() }, () => { void returnToLogin() })
   // Record before writing either file, so a partial patch failure is also cleaned.
   session.authFile = join(session.home, 'enterprise-auth.json')
   const patch = desktopEnterprisePatch(session.home, session.authority, session.login.actor, session.login.backendUrl, session.deviceId, pluginNames.includes('workdsh-plugin-enterprise-collaboration'))
@@ -1778,7 +1774,7 @@ async function activateEnterprise(existingHome: boolean): Promise<void> {
       if(pluginNames.some(name=>!current.includes(name)))throw new Error('企业插件已卸载，请重新安装后登录')
     }).catch(() => {
       dialog.showErrorBox('企业认证不可用', '企业账号已过期、被撤销、后台不可达或企业插件已卸载。本机企业运行将停止，请检查后重新登录。')
-      void returnToEntry()
+      void returnToLogin()
     }).finally(() => { verifying = false })
   }, 30_000)
 }
@@ -1801,7 +1797,7 @@ function installLoginHandlers(): void {
       store.write(login.seal())
       account = { login, store, deviceId: '' }
       // Bind the account identity to a loopback authority held in Main.
-      const authority = await startAccountAuthority(login, () => { void leaveAccountToLogin() }, () => { void leaveAccountToLogin() }, abandonAccountSession)
+      const authority = await startAccountAuthority(login, () => { void returnToLogin() }, () => { void returnToLogin() }, abandonAccountSession)
       account.authority = authority
       // 登录成功：把入口窗口切到过场页，用它的展示时间覆盖本机 DSH 的启动等待；主机就绪后直接换成主界面。
       const home = runtimeHome()
@@ -1834,7 +1830,7 @@ function installLoginHandlers(): void {
       return {}
     } catch (error) {
       const message = error instanceof Error ? error.message : '企业登录失败'
-      if (enterprise) { await leaveWorkspace(); showConnectionEntry(); dialog.showErrorBox('无法进入企业', message) }
+      if (enterprise) { await leaveWorkspace(); showAccountLogin(); dialog.showErrorBox('无法进入企业', message) }
       else if (admittedLogin && !await admittedLogin.logout()) dialog.showErrorBox('企业启动未完成', '本机未进入企业运行；后台连接失败，远端登录撤销尚未确认。')
       return { error: message }
     } finally { endSwitch() }
@@ -1977,17 +1973,9 @@ if (!app.requestSingleInstanceLock()) {
     startUpdater()
     installTray()
     installLoginHandlers()
-    // 个人使用场景：跳过「选择使用方式」入口页，直接启动个人工作区。
-    // 例外：若已配置企业后台（随包预置的 workdsh-config.json，或本机记住的企业地址），
-    // 必须保留入口页，否则用户没有任何入口可以登录企业空间。
-    if (enterprisePortal) {
-      showConnectionEntry()
-    } else {
-      // 账号登录门禁（取代个人身份）：启动进 splash，已登录则直接进工作区，未登录则展示登录页。
-      void autoStartAccountWorkspace()
-    }
-    // 原始逻辑（无条件显示入口页，由用户手动选择）：
-    // showConnectionEntry()
+    // 「选择使用方式」入口页已下线：无论是否预置企业后台，启动一律走账号登录门禁——
+    // 已登录则直接进工作区，未登录（或登录失效、运行异常）则停在登录页。
+    void autoStartAccountWorkspace()
   }).catch(cause => {
     process.stderr.write(`WorkDSH failed to start: ${cause instanceof Error ? cause.stack ?? cause.message : String(cause)}\n`)
     app.quit()
