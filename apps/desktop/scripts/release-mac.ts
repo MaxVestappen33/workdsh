@@ -97,8 +97,10 @@ export function releaseMac(options: MacReleaseOptions = defaultReleaseOptions())
     throw new Error(`unsupported macOS target architecture: ${targetArch}`)
   }
   options.resetOutput()
+  // The ZIP is the in-app upgrade payload: it preserves the signed bundle while
+  // allowing the client to swap the installed application in place.
   options.run('yarn', [
-    'exec', 'electron-builder', '--mac', 'dmg', `--${targetArch}`,
+    'exec', 'electron-builder', '--mac', 'dmg', 'zip', `--${targetArch}`,
     '--config.forceCodeSigning=true', '--config.mac.notarize=true',
     '--config.npmRebuild=false',
     `--config.directories.output=${options.outputDir}`,

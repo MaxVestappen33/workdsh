@@ -32,6 +32,7 @@ import { UpdateService } from './update-service.ts'
 import type { UpdateSnapshot } from './update-state.ts'
 import type { UpdateView } from './update-view.ts'
 import { verifyWindowsInstaller } from './update-install.ts'
+import { launchMacInstaller } from './update-install-mac.ts'
 import { updateWindowHtml } from './update-window.ts'
 import { updateToastHtml } from './update-toast.ts'
 
@@ -914,6 +915,18 @@ async function installUpdate(candidate: UpdateCandidate, installerPath: string):
   updateLog?.write(`[${new Date().toISOString()}] install ${candidate.version}\n`)
   try {
     await stopRuntimeForUpdate()
+    if (process.platform === 'darwin') {
+      // macOS：解压校验后交给助手脚本，等本进程退出再原地替换 .app 并重新拉起。
+      await launchMacInstaller({
+        archivePath: installerPath,
+        stagingDirectory: join(app.getPath('userData'), 'updates', 'staging', candidate.version),
+        executablePath: app.getPath('exe'),
+        pid: process.pid,
+        logFile: join(app.getPath('userData'), 'logs', 'update-install.log'),
+      })
+      quitForUpdate()
+      return
+    }
     if (!await verifyWindowsInstaller(installerPath)) throw new Error('安装包不是有效的 Windows 安装程序')
     // 交给独立进度进程：它先展示同一张进度页，再静默运行安装器，装完自行退出。
     // 进度进程从安装目录之外的副本启动，避免锁住待覆盖的文件；
@@ -941,10 +954,17 @@ async function installUpdate(candidate: UpdateCandidate, installerPath: string):
     await waitForMarker(readyFlag, 8_000)
     try { rmSync(readyFlag, { force: true }) } catch { /* 标记清理失败无影响 */ }
   } catch (error) {
+    // 安装交接失败时本机 Host 已被主动停止：回到入口页，避免用户停在一个已停止的工作区。
     updaterInstalling = false
+    void returnToEntry()
     throw error
   }
   // 进度页由独立进程接管：主程序只负责退出，由安装器覆盖文件后重新拉起应用。
+  quitForUpdate()
+}
+
+/** 交接完成后关闭所有窗口并退出；安装器/助手进程负责重新拉起应用。 */
+function quitForUpdate(): void {
   quitting = true
   for (const page of BrowserWindow.getAllWindows()) {
     if (!page.isDestroyed()) page.destroy()
@@ -953,8 +973,10 @@ async function installUpdate(candidate: UpdateCandidate, installerPath: string):
 }
 
 function startUpdater(): void {
-  // 第一版只验证 Windows x64；其它平台/架构不显示任何更新入口。
-  if (process.platform !== 'win32' || process.arch !== 'x64') return
+  // Windows x64 走 NSIS 静默升级；macOS 只在打包版本上启用原地替换，开发态不触碰自身应用。
+  const windows = process.platform === 'win32' && process.arch === 'x64'
+  const macos = process.platform === 'darwin' && app.isPackaged
+  if (!windows && !macos) return
   const config = loadConfig()
   if (!config.server.updateEnabled) return
 
@@ -1264,7 +1286,7 @@ async function startRuntime(home: string, connection: DesktopConnection, patches
     if (runtime !== child) return
     void cleanOwnedProcessTree(child).then(() => {
       if (runtime === child) { runtime = undefined; runtimeStarting = false }
-      if (!quitting && !switching) {
+      if (!quitting && !switching && !updaterInstalling) {
         dialog.showErrorBox('本机运行已停止', failureDetail(code))
         void returnToEntry()
       }
@@ -1273,7 +1295,7 @@ async function startRuntime(home: string, connection: DesktopConnection, patches
       recordCleanupFailure('startup-exit', error)
       runtime = undefined
       runtimeStarting = false
-      if (quitting || switching) return
+      if (quitting || switching || updaterInstalling) return
       dialog.showErrorBox('本机运行已停止', failureDetail(code, true))
       void returnToEntry()
     })

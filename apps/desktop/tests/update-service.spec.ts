@@ -4,7 +4,7 @@ import { mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
-import { installerPathFor, UpdateService } from '../src/update-service.ts'
+import { installerFileName, installerPathFor, UpdateService } from '../src/update-service.ts'
 import type { UpdateSnapshot } from '../src/update-state.ts'
 
 const roots: string[] = []
@@ -100,6 +100,13 @@ function harness(options: {
   return { service, snapshots, installed, root }
 }
 
+it('stores the macOS payload as a ZIP so the app can replace itself in place', () => {
+  expect(installerFileName('darwin')).toBe('update.zip')
+  expect(installerFileName('win32')).toBe('setup.exe')
+  expect(installerPathFor('/updates', '1.0.1', 'darwin')).toBe(join('/updates', 'app', '1.0.1', 'update.zip'))
+  expect(installerPathFor('/updates', '1.0.1', 'win32')).toBe(join('/updates', 'app', '1.0.1', 'setup.exe'))
+})
+
 it('checks, downloads, verifies and hands the installer to the main process', async () => {
   await workspace()
   const h = harness({ fetch: downloadFetch() })
@@ -110,7 +117,7 @@ it('checks, downloads, verifies and hands the installer to the main process', as
 
   await h.service.download()
   expect(h.service.snapshot.phase).toBe('ready')
-  const installer = installerPathFor(h.root, '1.0.1')
+  const installer = installerPathFor(h.root, '1.0.1', 'win32')
   expect(existsSync(installer)).toBe(true)
   expect((await stat(installer)).size).toBe(installerBody.byteLength)
 
@@ -194,7 +201,7 @@ it('cancelling an in-flight download returns to available and removes the partia
   await h.service.cancel()
   await downloading
   expect(h.service.snapshot.phase).toBe('available')
-  expect(existsSync(`${installerPathFor(h.root, '1.0.1')}.part`)).toBe(false)
+  expect(existsSync(`${installerPathFor(h.root, '1.0.1', 'win32')}.part`)).toBe(false)
 })
 
 it('reports an install failure and allows a retry from ready', async () => {

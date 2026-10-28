@@ -60,8 +60,13 @@ function downloadFailureCode(failure: DownloadFailure): UpdateFailureCode {
   }
 }
 
-export function installerPathFor(directory: string, version: string): string {
-  return join(directory, 'app', version, 'setup.exe')
+/** 下载到本地的安装包文件名：Windows 为 NSIS 安装器，macOS 为可原地替换的更新包。 */
+export function installerFileName(platform: string): string {
+  return platform === 'darwin' ? 'update.zip' : 'setup.exe'
+}
+
+export function installerPathFor(directory: string, version: string, platform: string): string {
+  return join(directory, 'app', version, installerFileName(platform))
 }
 
 export class UpdateService {
@@ -231,7 +236,7 @@ export class UpdateService {
   }
 
   private async runDownload(candidate: UpdateCandidate): Promise<void> {
-    const destination = installerPathFor(this.options.downloadDirectory, candidate.version)
+    const destination = installerPathFor(this.options.downloadDirectory, candidate.version, this.options.platform)
     const controller = new AbortController()
     this.controller = controller
     this.journal('download-started', candidate.version)
@@ -274,7 +279,7 @@ export class UpdateService {
   }
 
   private async runInstall(candidate: UpdateCandidate): Promise<void> {
-    const installerPath = installerPathFor(this.options.downloadDirectory, candidate.version)
+    const installerPath = installerPathFor(this.options.downloadDirectory, candidate.version, this.options.platform)
     this.journal('install-started', candidate.version)
     try {
       await this.options.onInstall(candidate, installerPath)
@@ -285,7 +290,7 @@ export class UpdateService {
   }
 
   private async discard(version: string): Promise<void> {
-    const installer = installerPathFor(this.options.downloadDirectory, version)
+    const installer = installerPathFor(this.options.downloadDirectory, version, this.options.platform)
     await Promise.all([
       rm(installer, { force: true }).catch(() => undefined),
       rm(`${installer}.part`, { force: true }).catch(() => undefined),
