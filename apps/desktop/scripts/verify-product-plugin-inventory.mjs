@@ -3,7 +3,7 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { CATALOG_PACKAGES, ENTERPRISE_PACKAGES, PRODUCT_PACKAGES } from './workdsh-package-boundary.mjs'
+import { BUILTIN_BUNDLES, CATALOG_PACKAGES, ENTERPRISE_PACKAGES, PRODUCT_PACKAGES } from './workdsh-package-boundary.mjs'
 
 const runtime = resolve(process.argv[2] ?? fileURLToPath(new URL('../build/workdsh-runtime', import.meta.url)))
 const source = join(runtime, 'profiles', 'workdsh')
@@ -49,6 +49,12 @@ try {
     const bundle = allBundles.find(row => row.name === name)
     if (!bundle?.enabled || bundle.installed !== installedInProfile || bundle.error) {
       throw new Error(`Community catalog integration is inactive or invalid: ${name}: ${JSON.stringify(bundle)}`)
+    }
+  }
+  for (const name of Object.keys(BUILTIN_BUNDLES)) {
+    const bundle = allBundles.find(row => row.name === name)
+    if (!bundle?.enabled || bundle.installed !== installedInProfile || bundle.error) {
+      throw new Error(`Built-in plugin bundle is inactive or invalid: ${name}: ${JSON.stringify(bundle)}`)
     }
   }
   console.log(`Verified plugin manager exposes exactly ${expected.length} ${installedInProfile ? 'installed' : 'installation-provided'} WorkDSH product bundles: ${names.join(', ')}`)

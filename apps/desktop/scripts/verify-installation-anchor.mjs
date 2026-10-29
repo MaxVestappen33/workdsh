@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { materializeRuntimeProfile, officialHostLauncher } from '../src/local-runtime.ts'
 import { DSH_VERSION } from './runtime-version.mjs'
-import { PRODUCT_PACKAGES } from './workdsh-package-boundary.mjs'
+import { BUILTIN_BUNDLES, PRODUCT_PACKAGES } from './workdsh-package-boundary.mjs'
 import { verifyOfficialWebPackages } from './verify-profile-release.mjs'
 import { prepareHostSmokeProbe, hostSmokeEnvironment, waitForPackagedHostReady, scrubHostDiagnostics as scrub } from './packaged-host-smoke.mjs'
 
@@ -53,6 +53,11 @@ try {
   const ids = new Set(graph.entries.map(entry => entry.id))
   for (const client of release.officialWeb.clients.filter(row => !row.conditional)) {
     if (!ids.has(client.package)) throw new Error('Unconditional official Web client missing at runtime: ' + client.package)
+  }
+  // Built-in third-party bundles must render from the immutable runtime on a
+  // fresh Profile: their client is part of the boot graph, not installed later.
+  for (const name of Object.keys(BUILTIN_BUNDLES)) {
+    if (!ids.has(name)) throw new Error('Built-in plugin client missing at runtime: ' + name + '; ' + diagnostics())
   }
   // account-settings 声明 client.immediately，官方客户端会立即拉起随包的账号设置 UI；
   // 其余默认客户端必须与产品清单完全一致，不允许额外 WorkDSH 客户端混入。

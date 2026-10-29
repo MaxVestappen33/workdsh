@@ -11,7 +11,7 @@ third-party notices are maintained by the upstream project:
 WorkDSH bundles and their dependencies retain their own license terms, which
 must be checked from the exact release artifacts used for an installer.
 
-The Desktop Profile bundles two separate third-party plugins:
+The Desktop Profile bundles three separate third-party plugins:
 
 - [`@cocofhu/skillhub`](https://www.npmjs.com/package/@cocofhu/skillhub)
   version 0.2.16 for SkillHub integration. Source and MIT license:
@@ -19,6 +19,9 @@ The Desktop Profile bundles two separate third-party plugins:
 - [`dshmarket`](https://www.npmjs.com/package/dshmarket) version 1.66.8 for
   DSH community plugin discovery. Source and MIT license:
   <https://github.com/dsh-market/dsh-market>.
+- [`dsh-mnemon`](https://www.npmjs.com/package/dsh-mnemon) version 0.5.36 as the
+  built-in memory and skill-evolution bundle. Source and MIT license:
+  <https://github.com/omdsh-dev/dsh-mnemon>.
 
 The SkillHub catalog and API are maintained separately by
 [`Tencent/skillhub`](https://github.com/Tencent/skillhub). The plugin catalog

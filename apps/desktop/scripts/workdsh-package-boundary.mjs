@@ -23,6 +23,26 @@ export const CATALOG_PACKAGES = Object.freeze({
   dshmarket: '1.66.8',
 })
 
+// Third-party plugin bundles installed into the immutable runtime at build time,
+// so a new Profile shows their pages on first launch without any registry access.
+// Their own `dsh.bundle.patch` supplies the Loader entries; never copy those rows
+// into the Profile patch, which would duplicate entry ids.
+export const BUILTIN_BUNDLES = Object.freeze({
+  'dsh-mnemon': '0.5.36',
+})
+
+// Loader ids each built-in bundle must contribute to the default composition.
+export const BUILTIN_BUNDLE_ENTRIES = Object.freeze({
+  'dsh-mnemon': Object.freeze([
+    'mnemon-bundle',
+    'mnemon',
+    'mnemon-source-runtime',
+    'mnemon-source-documents',
+    'mnemon-source-memory-spaces',
+    'mnemon-strategy-default-three-tier',
+  ]),
+})
+
 export const RELEASE_PACKAGES = Object.freeze([
   'workdsh-contracts',
   'workdsh-ui',

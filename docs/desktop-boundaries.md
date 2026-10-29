@@ -36,6 +36,7 @@ infrastructure, not the WorkDSH Office feature package.
 inventory: four feature packages, the enterprise account package, and the
 required local identity, browser-session, access, audit and composition packages.
 SkillHub 0.2.16 and dshmarket 1.66.1 retain the existing third-party catalog integration in this same Profile. Catalog entries remain separately installed and subject to compatibility checks.
+`dsh-mnemon` 0.5.36 is a built-in third-party bundle: it is installed into the immutable runtime at build time and listed in the default `bundles`, so a new Profile shows its memory pages on first launch without registry access. Its Loader entries come from its own bundle patch and must not be copied into the Profile patch.
 The five support packages are activated by the default Profile patch; they are
 not additional manageable product bundles. The enterprise account patch is
 selected by enterprise mode, never by the personal default patch.

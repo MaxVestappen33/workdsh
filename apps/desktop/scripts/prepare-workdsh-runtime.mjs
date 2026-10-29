@@ -6,7 +6,7 @@ import { dirname, join, resolve } from 'node:path'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { DSH_VERSION, OFFICIAL_PNPM_VERSION } from './runtime-version.mjs'
-import { CATALOG_PACKAGES, ENTERPRISE_PACKAGES, PRODUCT_PACKAGES, RELEASE_PACKAGES } from './workdsh-package-boundary.mjs'
+import { BUILTIN_BUNDLE_ENTRIES, BUILTIN_BUNDLES, CATALOG_PACKAGES, ENTERPRISE_PACKAGES, PRODUCT_PACKAGES, RELEASE_PACKAGES } from './workdsh-package-boundary.mjs'
 import { composeProfilePatches, verifyDefaultComposition, verifyDefaultProfile, verifyInstalledDshVersions, verifyOfficialWebPackages, verifyPackageDshReferences, verifyProfileRelease, verifyReleaseArchives } from './verify-profile-release.mjs'
 import { runtimeArchitecture, runtimeArchitectureYaml } from './runtime-architecture.mjs'
 const architecture = runtimeArchitecture()
@@ -35,6 +35,12 @@ function verifyInstalled() {
     const installed = readJson(join(profile, 'node_modules', name, 'package.json'))
     if (installed.version !== version || base.dependencies?.[name] !== version || !base.dsh?.profile?.bundles?.includes(name)) {
       throw new Error('Pinned community catalog integration is missing: ' + name)
+    }
+  }
+  for (const [name, version] of Object.entries(BUILTIN_BUNDLES)) {
+    const installed = readJson(join(profile, 'node_modules', name, 'package.json'))
+    if (installed.version !== version || base.dependencies?.[name] !== version || !base.dsh?.profile?.bundles?.includes(name)) {
+      throw new Error('Pinned built-in plugin bundle is missing: ' + name)
     }
   }
   for (const item of manifest.packages) {
@@ -72,6 +78,9 @@ function verifyInstalled() {
   for (const id of ['skillhub', 'dsh-market']) {
     if (!config.stdout.includes('id: ' + id)) throw new Error('Missing community catalog integration: ' + id)
   }
+  for (const [name, ids] of Object.entries(BUILTIN_BUNDLE_ENTRIES)) {
+    for (const id of ids) if (!config.stdout.includes('id: ' + id)) throw new Error(`Built-in plugin ${name} is missing entry from the default composition: ${id}`)
+  }
   for (const id of ['workdsh-installation-probe', 'workdsh-identity-local', 'workdsh-access', 'workdsh-audit', 'workdsh-workbenches']) {
     if (!config.stdout.includes('id: ' + id)) throw new Error('Missing required infrastructure: ' + id)
   }
@@ -95,7 +104,7 @@ if (!prepared) {
       '@deepseek-ai/dsh-plugin-manager': DSH_VERSION, '@deepseek-ai/dsh-agent-loop': DSH_VERSION,
       '@deepseek-ai/dsh-agent-preset-registry': DSH_VERSION, '@deepseek-ai/dsh-scope': DSH_VERSION,
       '@deepseek-ai/dsh-tool-workspace-dependencies': DSH_VERSION, '@deepseek-ai/dsh-skill-office': DSH_VERSION,
-      '@deepseek-ai/cordis-plugin-group': '1.0.4', ...manifest.requiredPeers, ...CATALOG_PACKAGES }
+      '@deepseek-ai/cordis-plugin-group': '1.0.4', ...manifest.requiredPeers, ...CATALOG_PACKAGES, ...BUILTIN_BUNDLES }
     const optionalDependencies = {}
     for (const item of manifest.packages) {
       cpSync(join(release, item.filename), join(cache, item.filename))
@@ -103,7 +112,7 @@ if (!prepared) {
       target[item.name] = 'file:../../package-cache/' + item.filename
     }
     const pkg = { name: 'workdsh-desktop-profile', private: true, type: 'module', packageManager: `pnpm@${OFFICIAL_PNPM_VERSION}`, dependencies, optionalDependencies,
-      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', ...PRODUCT_PACKAGES, ...Object.keys(CATALOG_PACKAGES)] } } }
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', ...PRODUCT_PACKAGES, ...Object.keys(CATALOG_PACKAGES), ...Object.keys(BUILTIN_BUNDLES)] } } }
     writeFileSync(join(profile, 'package.json'), JSON.stringify(pkg, null, 2) + '\n')
     const overrides = Object.entries(manifest.runtimeOverrides ?? {}).map(([name, version]) => `  ${JSON.stringify(name)}: ${JSON.stringify(version)}`).join('\n')
     writeFileSync(join(profile, 'pnpm-workspace.yaml'), 'nodeLinker: hoisted\nautoInstallPeers: true\nstrictPeerDependencies: false\n' + runtimeArchitectureYaml(architecture) + 'overrides:\n' + overrides + '\n')
