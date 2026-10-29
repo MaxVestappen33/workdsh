@@ -217,7 +217,13 @@
           "node/**",
           "primary-runtime/**",
           "office-skills/**",
-          "!profiles/workdsh/node_modules/**/*.pdb"
+          "!profiles/workdsh/**/*.map",
+          "!profiles/workdsh/**/*.pdb",
+          "!profiles/workdsh/node_modules/**/*.d.ts",
+          "!profiles/workdsh/node_modules/**/*.d.mts",
+          "!profiles/workdsh/node_modules/**/*.d.cts",
+          "profiles/workdsh/node_modules/@deepseek-ai/**",
+          "profiles/workdsh/node_modules/workdsh-*/**"
         ]
       }
     ],

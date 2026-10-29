@@ -15,6 +15,22 @@ Var pid
   Var dshUninstallDeleteUserData
 !endif
 
+; ── 安装/卸载/升级耗时打点（纯观测，不改变任何安装行为）──────────────────
+; 每个阶段写一个独立小文件到 %TEMP%\workdsh-timing\，文件内容是该阶段的说明；
+; 文件的“修改时间”就是时间戳。读取端按修改时间排序、求差，即得到各段耗时。
+; 之所以不用 System::Call(GetTickCount)：这个文件在卸载器那趟属于顶层展开，
+; 此时插件目录尚未定型，会和 nsDialogs 的 System::Call 冲突导致编译失败。
+; 纯 FileOpen/FileWrite 不依赖任何插件；写不开就跳过，绝不影响安装。
+; 阶段名固定，每次安装/卸载都会覆盖同名文件，不会累积历史脏数据。
+!macro dshTimingMark name label
+  CreateDirectory "$TEMP\workdsh-timing"
+  ClearErrors
+  FileOpen $R7 "$TEMP\workdsh-timing\${name}.txt" w
+  StrCmp $R7 "" +3
+    FileWrite $R7 "${label}"
+    FileClose $R7
+!macroend
+
 ; Windows 10 is the hard floor for this carrier: Electron 43 dropped Windows 7/8/8.1
 ; (Chromium 110), and the bundled DSH Node runtime requires Windows 10 as well. Refuse
 ; the installation instead of leaving a shortcut that cannot start. Expanded from
@@ -33,10 +49,18 @@ Var pid
   ${IfNot} ${Errors}
     StrCpy $dshUpdating "1"
   ${EndIf}
+  ; T0：安装器进程已进入（.onInit），此后才是页面等待与解压。
+  ${If} $dshUpdating == "1"
+    !insertmacro dshTimingMark i0-start "T0 安装器进入初始化 mode=update"
+  ${Else}
+    !insertmacro dshTimingMark i0-start "T0 安装器进入初始化 mode=fresh"
+  ${EndIf}
 !macroend
 
 !macro customInstall
   StrCpy $dshInstallCompleted "1"
+  ; T1：安装段收尾，此处已包含“旧版卸载 + 解压 + 快捷方式 + 注册表”全部工作。
+  !insertmacro dshTimingMark i1-section-done "T1 安装段完成（旧版清理/解压/快捷方式/注册表）"
 !macroend
 
 ; 升级时强制按“仅为我安装”并跳过安装范围页：覆盖升级只能落在原安装位置，
@@ -143,6 +167,8 @@ Var pid
   ; 静默升级没有 GUI 回调（.onGUIEnd 不执行），用 .onInstSuccess 在安装成功后
   ; 拉起新版本；普通静默安装（无 --updated）保持装完即退。
   Function .onInstSuccess
+    ; T2：安装成功回调，紧接着会拉起新版本。
+    !insertmacro dshTimingMark i2-success "T2 安装成功（即将拉起新版本）"
     StrCmp $dshUpdating "1" 0 dsh_instsuccess_done
     StrCmp $dshInstallCompleted "1" 0 dsh_instsuccess_done
     ExecShell "open" "$INSTDIR\${PRODUCT_FILENAME}.exe" "--updated"
@@ -191,9 +217,24 @@ Var pid
   UninstPage custom un.dshUserDataPageCreate un.dshUserDataPageLeave
 !macroend
 
+!macro customUnInit
+  ; U0：卸载器进程已进入（un.onInit），此后才开始确认进程退出与删除文件。
+  !insertmacro dshTimingMark u0-init "U0 卸载器进入初始化"
+!macroend
+
 !macro customUnInstall
+  ; U1：卸载段开始，紧接着删除安装目录（升级时这里会把 4 万多个文件逐个改名到
+  ; $PLUGINSDIR\old-install，而不是直接删除）。
+  !insertmacro dshTimingMark u1-section-start "U1 卸载段开始（即将删除安装目录）"
   ${if} $dshUninstallDeleteUserData == 1
     RMDir /r "$APPDATA\PoliceAssistant"
     DetailPrint "已删除用户数据目录 $APPDATA\PoliceAssistant"
   ${endIf}
 !macroend
+
+!ifdef BUILD_UNINSTALLER
+  Function un.onUninstSuccess
+    ; U2：卸载段结束。U1→U2 就是“删除/改名整棵安装目录 + 快捷方式 + 注册表”的净耗时。
+    !insertmacro dshTimingMark u2-section-done "U2 卸载段完成"
+  FunctionEnd
+!endif
