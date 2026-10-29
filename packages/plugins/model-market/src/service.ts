@@ -9,7 +9,7 @@ import {
   type ModelMarketPaths, type ModelMarketQuery, type ModelMarketUninstallResult,
 } from './shared.js';
 import { ModelMarketBackend, ModelMarketError, type BackendChannelLike, type BackendModel } from './market.js';
-import { readMarketRecords, writeMarketRecords, type MarketRecordFile } from './records.js';
+import { marketRecordFile, readMarketRecords, writeMarketDefaultsMarker, writeMarketRecords, type MarketRecordFile } from './records.js';
 
 const SETTINGS_NS = 'llm-pi-ai';
 const DEFAULT_MODEL_NS = 'agent-default-model';
@@ -194,6 +194,8 @@ function discoveredModels(payload: unknown): readonly CustomModelDefinition[] {
 export interface ModelMarketOptions {
   /** 市场接口路径；Desktop 从 workdsh-app.json 注入，未配置时回退到内置默认值。 */
   readonly paths?: Partial<ModelMarketPaths>;
+  /** 安装记录与默认模型标记所在目录；Desktop 按账号注入，未注入时回退到 DSH_HOME 下的共享目录。 */
+  readonly stateDir?: string;
 }
 
 export interface ModelMarketServiceApi {
@@ -217,15 +219,22 @@ declare module '@deepseek-ai/cordis' { interface Context { workdshModelMarket: M
 export class ModelMarketService extends Service implements ModelMarketServiceApi {
   static inject = ['settings', 'credentials', 'connection'];
   private readonly backend: ModelMarketBackend;
+  /** 安装记录文件；按账号注入 stateDir 后每个账号各自一份。 */
+  private readonly recordsFile: string;
+  private readonly stateDir: string | undefined;
   /** 串行化安装/卸载与默认模型种子，避免同一配置被并发写坏。 */
   private serial: Promise<unknown> = Promise.resolve();
   private defaultsTimer?: ReturnType<typeof setTimeout>;
   private defaultsDone = false;
+  /** 完成标记已写入；Desktop 过场页只等这一个文件。 */
+  private defaultsReady = false;
   private retryDelay = DEFAULT_RETRY_MIN_MS;
 
   constructor(ctx: Context, options: ModelMarketOptions = {}) {
     super(ctx, 'workdshModelMarket');
     const paths: ModelMarketPaths = { ...DEFAULT_MODEL_MARKET_PATHS, ...options.paths };
+    this.stateDir = options.stateDir;
+    this.recordsFile = marketRecordFile(options.stateDir);
     this.backend = new ModelMarketBackend(
       () => this.ctx.reflect.get('workdshBackend') as BackendChannelLike | undefined,
       paths,
@@ -254,7 +263,7 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
 
   async detail(id: string, signal?: AbortSignal): Promise<ModelMarketDetail> {
     const model = await this.backend.get(id, signal);
-    const records = await readMarketRecords();
+    const records = await readMarketRecords(this.recordsFile);
     const installed = (await this.installedIds()).includes(id);
     return { model: sanitize(model), installed, ...(installed && records.installs[id] ? { route: records.installs[id].route } : {}) };
   }
@@ -271,7 +280,7 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
     const descriptor = this.descriptor(SETTINGS_NS);
     if (!descriptor) return [];
     const providers = providersOf(descriptor);
-    const records = await readMarketRecords();
+    const records = await readMarketRecords(this.recordsFile);
     const defaultSelection = record(this.descriptor(DEFAULT_MODEL_NS)?.value) ?? {};
     return Object.entries(records.installs).flatMap(([key, install]) => {
       if (install.kind !== 'custom') return [];
@@ -342,7 +351,7 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
     const descriptor = this.descriptor(SETTINGS_NS);
     if (!descriptor) return [];
     const providers = providersOf(descriptor);
-    const records = await readMarketRecords();
+    const records = await readMarketRecords(this.recordsFile);
     return Object.entries(records.installs).flatMap(([id, install]) => {
       if (install.kind === 'custom') return [];
       const models = modelsOf(providerOf(providers, install.route));
@@ -351,7 +360,7 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
   }
 
   private async installInternal(id: string, signal: AbortSignal | undefined, setDefault: boolean): Promise<ModelMarketInstallResult> {
-    const records = await readMarketRecords();
+    const records = await readMarketRecords(this.recordsFile);
     const model = await this.backend.get(id, signal);
     const usable = installability(model);
     if (!usable.installable) {
@@ -410,7 +419,7 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
   }
 
   private async uninstallInternal(id: string, signal: AbortSignal | undefined): Promise<ModelMarketUninstallResult> {
-    const records = await readMarketRecords();
+    const records = await readMarketRecords(this.recordsFile);
     const install = records.installs[id];
     if (!install) throw new ModelMarketError('model-market/not-installed', '该模型尚未添加。');
     const descriptor = this.descriptor(SETTINGS_NS);
@@ -492,7 +501,7 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
   }
 
   private async customUpdateInternal(key: string, input: unknown): Promise<CustomModelEntry> {
-    const records = await readMarketRecords();
+    const records = await readMarketRecords(this.recordsFile);
     const route = key.startsWith('custom:') ? key.slice('custom:'.length) : key;
     const recordKey = Object.keys(records.installs).find(candidate => {
       const install = records.installs[candidate];
@@ -547,7 +556,7 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
   }
 
   private async customUninstallInternal(key: string): Promise<ModelMarketUninstallResult> {
-    const records = await readMarketRecords();
+    const records = await readMarketRecords(this.recordsFile);
     const route = key.startsWith('custom:') ? key.slice('custom:'.length) : key;
     const recordKey = Object.keys(records.installs).find(candidate => {
       const install = records.installs[candidate];
@@ -737,8 +746,8 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
   }
 
   private async updateRecords(update: (current: MarketRecordFile) => MarketRecordFile): Promise<void> {
-    const current = await readMarketRecords();
-    await writeMarketRecords(update(current));
+    const current = await readMarketRecords(this.recordsFile);
+    await writeMarketRecords(update(current), this.recordsFile);
   }
 
   /** 后台当前只做记账；失败不改变本机安装结果。 */
@@ -768,11 +777,23 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
   private async ensureDefaults(): Promise<void> {
     if (this.defaultsDone) return;
     if (!(await this.backend.available())) {
+      // 后台暂不可用时不阻塞首次登录：先放行，随后按退避继续重试。
+      await this.markDefaultsReady();
       this.scheduleDefaults(DEFAULT_RETRY_MIN_MS);
       return;
     }
-    const defaults = await this.fetchDefaults();
+    let defaults: readonly ModelMarketModel[];
+    try {
+      defaults = await this.fetchDefaults();
+    } catch (cause) {
+      // 拉取失败同样放行过场页，后台继续重试；已安装的默认模型不受影响。
+      this.ctx.logger.warn(`模型市场：默认模型列表获取失败（${cause instanceof Error ? cause.message : String(cause)}）。`);
+      await this.markDefaultsReady();
+      this.scheduleDefaults(this.nextRetryDelay());
+      return;
+    }
     if (!defaults.length) {
+      await this.markDefaultsReady();
       this.defaultsDone = true;
       return;
     }
@@ -780,7 +801,7 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
     let firstInstalled: ModelMarketModel | undefined;
     let pending = false;
     for (const model of defaults) {
-      const current = await readMarketRecords();
+      const current = await readMarketRecords(this.recordsFile);
       if (current.dismissedDefaults.includes(model.id) || current.handledDefaults.includes(model.id)) continue;
       if ((await this.installedIds()).includes(model.id)) {
         // 已经安装但不改写当前会话默认：避免每次启动都覆盖用户在模型选择器里的选择。
@@ -811,18 +832,35 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
       }));
     }
     if (firstInstalled) {
-      const records = await readMarketRecords();
+      const records = await readMarketRecords(this.recordsFile);
       const route = records.installs[firstInstalled.id]?.route;
       if (route) await this.setSessionDefault(firstInstalled, route);
     }
+    // 本轮处理结束就写标记：成功、部分失败、无默认可装都放行过场页，剩余重试在后台完成。
+    await this.markDefaultsReady();
     if (pending) {
-      const delay = this.retryDelay;
-      this.retryDelay = Math.min(this.retryDelay * 2, DEFAULT_RETRY_MAX_MS);
-      this.scheduleDefaults(delay);
+      this.scheduleDefaults(this.nextRetryDelay());
     } else {
       this.retryDelay = DEFAULT_RETRY_MIN_MS;
       this.defaultsDone = true;
     }
+  }
+
+  /** 写入完成标记；失败只记日志，Desktop 侧以超时兜底。 */
+  private async markDefaultsReady(): Promise<void> {
+    if (this.defaultsReady) return;
+    this.defaultsReady = true;
+    try {
+      await writeMarketDefaultsMarker(this.stateDir);
+    } catch (cause) {
+      this.ctx.logger.warn(`模型市场：默认模型完成标记未写入（${cause instanceof Error ? cause.message : String(cause)}）。`);
+    }
+  }
+
+  private nextRetryDelay(): number {
+    const delay = this.retryDelay;
+    this.retryDelay = Math.min(this.retryDelay * 2, DEFAULT_RETRY_MAX_MS);
+    return delay;
   }
 
   private async fetchDefaults(): Promise<readonly ModelMarketModel[]> {

@@ -22,6 +22,7 @@ verifyProfileRelease(manifest, DSH_VERSION, RELEASE_PACKAGES)
 verifyReleaseArchives(manifest, release)
 const marker = JSON.stringify({ harness: DSH_VERSION, pnpm: OFFICIAL_PNPM_VERSION, layout: 'workbench-platform-external-enterprise-v7', architecture, release: manifest })
 const markerPath = join(profile, '.workdsh-desktop-release.json')
+const defaultBundles = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', ...PRODUCT_PACKAGES, ...Object.keys(CATALOG_PACKAGES), ...Object.keys(BUILTIN_BUNDLES)]
 const readJson = path => JSON.parse(readFileSync(path, 'utf8'))
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { stdio: 'inherit', timeout: 1_200_000, ...options })
@@ -42,6 +43,14 @@ function verifyInstalled() {
     if (installed.version !== version || base.dependencies?.[name] !== version || !base.dsh?.profile?.bundles?.includes(name)) {
       throw new Error('Pinned built-in plugin bundle is missing: ' + name)
     }
+  }
+  // A reused runtime must compose exactly this build's default bundles; an
+  // older build reusing a newer runtime must not silently ship extra features.
+  const installedBundles = base.dsh?.profile?.bundles ?? []
+  const unexpectedBundles = installedBundles.filter(name => !defaultBundles.includes(name))
+  const missingBundles = defaultBundles.filter(name => !installedBundles.includes(name))
+  if (unexpectedBundles.length > 0 || missingBundles.length > 0 || new Set(installedBundles).size !== installedBundles.length) {
+    throw new Error('Installed Profile bundles differ from this build: unexpected=[' + unexpectedBundles.join(', ') + '] missing=[' + missingBundles.join(', ') + ']')
   }
   for (const item of manifest.packages) {
     const pkg = readJson(join(profile, 'node_modules', item.name, 'package.json'))
@@ -112,7 +121,7 @@ if (!prepared) {
       target[item.name] = 'file:../../package-cache/' + item.filename
     }
     const pkg = { name: 'workdsh-desktop-profile', private: true, type: 'module', packageManager: `pnpm@${OFFICIAL_PNPM_VERSION}`, dependencies, optionalDependencies,
-      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', ...PRODUCT_PACKAGES, ...Object.keys(CATALOG_PACKAGES), ...Object.keys(BUILTIN_BUNDLES)] } } }
+      dsh: { profile: { bundles: [...defaultBundles] } } }
     writeFileSync(join(profile, 'package.json'), JSON.stringify(pkg, null, 2) + '\n')
     const overrides = Object.entries(manifest.runtimeOverrides ?? {}).map(([name, version]) => `  ${JSON.stringify(name)}: ${JSON.stringify(version)}`).join('\n')
     writeFileSync(join(profile, 'pnpm-workspace.yaml'), 'nodeLinker: hoisted\nautoInstallPeers: true\nstrictPeerDependencies: false\n' + runtimeArchitectureYaml(architecture) + 'overrides:\n' + overrides + '\n')

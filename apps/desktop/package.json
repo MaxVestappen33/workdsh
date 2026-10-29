@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-desktop",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "警务助手，面向公安业务场景的智能工作台",
   "homepage": "http://56.82.4.232:3100",
   "license": "MIT",
@@ -190,10 +190,6 @@
       {
         "from": "build/deployment/workdsh-config.json",
         "to": "workdsh-config.json"
-      },
-      {
-        "from": "resources/model-credentials.json",
-        "to": "model-credentials.json"
       },
       {
         "from": "resources/logo.png",

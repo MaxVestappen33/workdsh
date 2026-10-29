@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { installability, installActionLabel, formatCapacity, mergeDiscoveredModels, modelRouteEntry, parseContextWindow } from '../dist/shared.js';
 import { normalizeModel } from '../dist/market.js';
-import { readMarketRecords, writeMarketRecords } from '../dist/records.js';
+import { marketDefaultsMarker, marketRecordFile, readMarketRecords, writeMarketDefaultsMarker, writeMarketRecords } from '../dist/records.js';
 
 const model = {
   id: '1', provider: 'DEEPSEEK', providerName: 'DeepSeek', modelName: 'DeepSeek-V4.1-Flash', version: 'v1.0.0',
@@ -78,6 +78,28 @@ test('列表模型不包含 apiKey', () => {
   const normalized = normalizeModel({ ...model, apiKey: 'sk-secret' });
   assert.ok(normalized);
   assert.equal('apiKey' in normalized, false);
+});
+
+test('注入状态目录后记录与完成标记落到该目录', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'workdsh-model-market-'));
+  const previous = process.env.DSH_HOME;
+  process.env.DSH_HOME = join(directory, 'shared-home');
+  try {
+    const stateDir = join(directory, 'accounts', 'member-1');
+    assert.equal(marketRecordFile(stateDir), join(stateDir, 'market-installs.json'));
+    assert.equal(marketDefaultsMarker(stateDir), join(stateDir, 'defaults-ready.json'));
+    // 未注入时回退到 DSH_HOME 下的共享目录，Web 与单机环境保持原行为。
+    assert.equal(marketRecordFile(), join(process.env.DSH_HOME, '.workdsh-state', 'models', 'market-installs.json'));
+
+    await writeMarketDefaultsMarker(stateDir);
+    const marker = JSON.parse(await readFile(marketDefaultsMarker(stateDir), 'utf8'));
+    assert.equal(marker.version, 1);
+    assert.ok(marker.completedAt);
+  } finally {
+    if (previous === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previous;
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test('安装记录落盘后不包含密钥字段', async () => {

@@ -1,9 +1,19 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { ModelMarketService } from '../dist/service.js';
+
+async function until(check, timeout = 10_000) {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    if (await check()) return;
+    if (Date.now() > deadline) throw new Error('等待条件超时');
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+}
 
 const base = {
   provider: 'DEEPSEEK', provider_dictText: 'DeepSeek', version: 'v1.0.0', modelType: 'LLM',
@@ -28,7 +38,8 @@ function applyOps(value, ops) {
   return next;
 }
 
-function harness(models) {
+function harness(models, options = {}) {
+  const defaults = options.defaults ?? [];
   const sections = new Map([
     ['llm-pi-ai', { value: { providers: {} }, revision: 1 }],
     ['agent-default-model', { value: {}, revision: 1 }],
@@ -57,7 +68,11 @@ function harness(models) {
   const channel = {
     async available() { return true; },
     async get(_path, query) {
-      const row = models[query.id];
+      // isDefault=1 的列表查询由 ensureDefaults 的种子流程使用。
+      if (query?.isDefault === '1') {
+        return { records: defaults, total: defaults.length, pages: defaults.length ? 1 : 0, size: 100, current: 1 };
+      }
+      const row = models[query?.id];
       return { records: row ? [row] : [], total: row ? 1 : 0, pages: row ? 1 : 0, size: 1, current: 1 };
     },
     async post(_path, body) { calls.push(body.id); },
@@ -175,6 +190,50 @@ test('自定义模型安装、列出与卸载', async () => {
   } finally {
     if (previous === undefined) delete process.env.DSH_HOME;
     else process.env.DSH_HOME = previous;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('默认模型首次安装、卸载后不再装回，只补齐新增默认模型', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'workdsh-model-market-defaults-'));
+  try {
+    // 按账号注入的独立状态目录；不依赖 DSH_HOME。
+    const stateDir = join(home, 'accounts', 'member-1');
+    const defaults = [
+      { ...base, id: '1', modelName: '默认一', modelCode: 'seed-a', isDefault: '1', apiKey: 'sk-1' },
+      { ...base, id: '2', modelName: '默认二', modelCode: 'seed-b', isDefault: '1', apiKey: 'sk-1' },
+    ];
+    const models = Object.fromEntries(defaults.map(row => [row.id, row]));
+    const { ctx, sections, calls } = harness(models, { defaults });
+    const providers = () => sections.get('llm-pi-ai').value.providers;
+    const seedModels = () => (providers()['workdsh-deepseek']?.models ?? []).map(row => row.id);
+
+    // 打开模型市场页会触发默认模型种子。
+    const service = new ModelMarketService(ctx, { stateDir });
+    await service.list({});
+    await until(() => Promise.resolve(existsSync(join(stateDir, 'defaults-ready.json'))));
+
+    assert.deepEqual(seedModels(), ['seed-a', 'seed-b']);
+    assert.deepEqual(sections.get('agent-default-model').value, { provider: 'workdsh-deepseek', model: 'seed-a' });
+    assert.deepEqual((await service.list({})).installedIds.sort(), ['1', '2']);
+
+    // 用户移除第二个默认模型，后台随后新增第三个默认模型。
+    await service.uninstall('2');
+    const added = { ...base, id: '3', modelName: '默认三', modelCode: 'seed-c', isDefault: '1', apiKey: 'sk-1' };
+    defaults.push(added);
+    models['3'] = added;
+
+    // 第二次启动：已安装的 1 跳过，卸载过的 2 不再装回，只安装新增的 3。
+    const restarted = new ModelMarketService(ctx, { stateDir });
+    await restarted.list({});
+    await until(() => Promise.resolve(seedModels().includes('seed-c')));
+
+    assert.deepEqual(seedModels(), ['seed-a', 'seed-c']);
+    const records = JSON.parse(await readFile(join(stateDir, 'market-installs.json'), 'utf8'));
+    assert.deepEqual(records.handledDefaults.sort(), ['1', '2', '3']);
+    assert.deepEqual(records.dismissedDefaults, ['2']);
+    assert.deepEqual(calls, ['1', '2', '2', '3']);
+  } finally {
     await rm(home, { recursive: true, force: true });
   }
 });

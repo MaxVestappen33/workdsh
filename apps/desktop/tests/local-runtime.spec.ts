@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { load } from 'js-yaml'
 import { afterEach, expect, it } from 'vitest'
-import { desktopConnectorMarketPatch, desktopSkillMarketPatch, desktopModelMarketPatch, desktopExpertMarketPatch, desktopEnterprisePatch, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher } from '../src/local-runtime.ts'
+import { desktopConnectorMarketPatch, desktopSkillMarketPatch, desktopModelMarketPatch, desktopExpertMarketPatch, desktopEnterprisePatch, accountModelStateDirectory, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher } from '../src/local-runtime.ts'
 import type { ServerConfig } from '../src/app-config.ts'
 
 const roots: string[] = []
@@ -213,6 +213,25 @@ it('skips the model-market patch layer when no legal path is configured', () => 
   const { home } = fixture()
   expect(desktopModelMarketPatch(home, asServer({}))).toBeUndefined()
   expect(desktopModelMarketPatch(home, asServer({ modelMarketListPath: 'desktop-client/model/queryAuthorizedModelList' }))).toBeUndefined()
+})
+
+it('injects the per-account model-market state directory next to the paths', () => {
+  const { home } = fixture()
+  mkdirSync(home, { recursive: true })
+  const stateDir = accountModelStateDirectory(home, 'member-1')
+  expect(stateDir).toBe(join(home, '.workdsh-state', 'models', 'accounts', 'member-1'))
+  expect(() => accountModelStateDirectory(home, '../escape')).toThrow()
+
+  const withPaths = desktopModelMarketPatch(home, asServer({ modelMarketListPath: '/desktop-client/model/queryAuthorizedModelList' }), stateDir)
+  const rows = load(readFileSync(withPaths!, 'utf8')) as { config: { paths: Record<string, unknown>, stateDir: string } }[]
+  expect(rows[0]?.config.paths).toEqual({ list: '/desktop-client/model/queryAuthorizedModelList' })
+  expect(rows[0]?.config.stateDir).toBe(stateDir)
+
+  // 没有合法接口路径时，仅注入状态目录同样是一层有效补丁。
+  const stateOnly = desktopModelMarketPatch(home, asServer({}), stateDir)
+  const stateRows = load(readFileSync(stateOnly!, 'utf8')) as { config: { paths?: Record<string, unknown>, stateDir: string } }[]
+  expect(stateRows[0]?.config.paths).toBeUndefined()
+  expect(stateRows[0]?.config.stateDir).toBe(stateDir)
 })
 
 it('injects expert catalog, listing and shared upload paths as one experts patch layer', () => {

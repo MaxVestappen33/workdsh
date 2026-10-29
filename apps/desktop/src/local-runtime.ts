@@ -238,17 +238,29 @@ export function desktopSkillMarketPatch(home: string, server: ServerConfig): str
 /**
  * 模型市场接口路径的注入层。模型查询与安装/卸载上报都走 desktop-client 命名空间；
  * 安装动作本身在 Host 侧写官方 llm-pi-ai 配置，这里只提供路径。
+ * `stateDir` 让安装记录与默认模型完成标记跟随登录账号；未给出时插件沿用 DSH_HOME 下的共享目录。
  */
-export function desktopModelMarketPatch(home: string, server: ServerConfig): string | undefined {
+export function desktopModelMarketPatch(home: string, server: ServerConfig, stateDir?: string): string | undefined {
   const rows = ([
     ['list', server.modelMarketListPath],
     ['use', server.modelMarketUsePath],
     ['unuse', server.modelMarketUnusePath],
   ] as const).flatMap(([name, value]) => (typeof value === 'string' && /^\//u.test(value) ? [[name, value] as const] : []))
-  if (rows.length === 0) return undefined
+  if (rows.length === 0 && stateDir === undefined) return undefined
+  const paths = rows.length === 0 ? '' : `    paths:\n${rows.map(([name, value]) => `      ${name}: ${JSON.stringify(value)}\n`).join('')}`
+  const state = stateDir === undefined ? '' : `    stateDir: ${JSON.stringify(stateDir)}\n`
   const patch = join(home, '.model-market.patch.yml')
-  writeFileSync(patch, `- id: workdsh-model-market\n  config:\n    paths:\n${rows.map(([name, value]) => `      ${name}: ${JSON.stringify(value)}\n`).join('')}`, { mode: 0o600 })
+  writeFileSync(patch, `- id: workdsh-model-market\n  config:\n${paths}${state}`, { mode: 0o600 })
   return patch
+}
+
+/**
+ * 模型市场按账号隔离的安装状态目录。安装记录与默认模型完成标记跟随登录账号，
+ * 同一台电脑上不同账号各自的“已处理默认模型”互不影响。
+ */
+export function accountModelStateDirectory(home: string, principalId: string): string {
+  if (!/^[\w-]{1,160}$/u.test(principalId)) throw new Error('账号用户标识无效')
+  return join(home, '.workdsh-state', 'models', 'accounts', principalId)
 }
 
 /**

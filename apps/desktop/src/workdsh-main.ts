@@ -20,7 +20,7 @@ import { readAppConfig, type AppEnvironment, type ResolvedAppConfig } from './ap
 import { createDebugLog, type DebugLog } from './debug-log.ts'
 import { AccountLogin, AccountStore, restoreAccountLogin, startAccountAuthority, type AccountAuthority } from './member-auth.ts'
 import { EnterpriseLogin, startEnterpriseAuthority, type Authority } from './enterprise-auth.ts'
-import { desktopEnterprisePatch, desktopAccountPatch, desktopConnectorMarketPatch, desktopSkillMarketPatch, desktopModelMarketPatch, desktopExpertMarketPatch, accountSpace, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher, type AccountActor } from './local-runtime.ts'
+import { desktopEnterprisePatch, desktopAccountPatch, desktopConnectorMarketPatch, desktopSkillMarketPatch, desktopModelMarketPatch, desktopExpertMarketPatch, accountSpace, accountModelStateDirectory, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher, type AccountActor } from './local-runtime.ts'
 import { manageCommand } from './command-management.ts'
 import { createRuntimeOutputRedactor, redactRuntimeOutput, runtimeFailureDetail, runtimeFailureLog } from './runtime-diagnostics.ts'
 import { cleanOwnedProcessTree, reclaimOrphanedToolProcesses, stopOwnedProcess, trackOwnedProcess } from './owned-process.ts'
@@ -62,6 +62,8 @@ let updateWindow: BrowserWindow | undefined
 let updateView: UpdateView = { phase: 'idle' }
 let updateWindowPhase: UpdateView['phase'] | undefined
 let updaterInstalling = false
+/** 因升级交接被主动停止的 Host 进程：它的退出事件不是故障，不能再提示“本机运行已停止”。 */
+const updaterStoppedRuntimes = new WeakSet<ChildProcess>()
 let updateLog: DebugLog | undefined
 let trayUpdateLabel: string | undefined
 let lastAutoCheckAt = 0
@@ -715,12 +717,33 @@ function scheduleUpdateChecks(minutes: number): void {
     void updater.check(false)
     setTimeout(tick, jitter(intervalMs))
   }
-  setTimeout(tick, jitter(30_000))
+  // 启动即检查：强制更新必须在用户登录 / 进入工作区之前就拦下来。旧实现首个检查延后 30 秒，
+  // 用户有充足时间完成登录并进入工作区，强制更新反而出现在“环境准备中”的过场页上。
+  tick()
   powerMonitor.on('resume', () => {
     if (updater === undefined || Date.now() - lastAutoCheckAt < 5 * 60_000) return
     lastAutoCheckAt = Date.now()
     void updater.check(false)
   })
+}
+
+/**
+ * 强制更新尚未装好时禁止进入工作区：旧版本不能继续使用。
+ * 只拦截“已确认存在强制更新并在下载 / 安装”的阶段；下载失败（error）仍保留窗口与重试入口，
+ * 避免一次网络故障把用户彻底锁在软件之外。
+ */
+function mandatoryUpdateBlocksEntry(): boolean {
+  if (updateView.mandatory !== true) return false
+  switch (updateView.phase) {
+    case 'available':
+    case 'downloading':
+    case 'verifying':
+    case 'ready':
+    case 'installing':
+      return true
+    default:
+      return false
+  }
 }
 
 /** 更新前停止本机运行，但保留登录态与用户数据。 */
@@ -734,6 +757,7 @@ async function stopRuntimeForUpdate(): Promise<void> {
   }
   const child = runtime
   if (child !== undefined) {
+    updaterStoppedRuntimes.add(child)
     await stopOwnedProcess(child)
     if (runtime === child) {
       runtime = undefined
@@ -1083,7 +1107,17 @@ function openWindow(url: string, connection: DesktopConnection = { mode: 'person
       }
       page.show()
     }
-    if (previous && !previous.isDestroyed()) previous.destroy()
+    if (previous && !previous.isDestroyed()) {
+      // 强制更新窗口是入口窗口的模态子窗口：父窗口销毁会把它一并带走，用户就绕过了强制更新。
+      // 换主界面窗口之前先把父窗口迁移到新窗口，更新窗口与模态拦截都保留。
+      let migrated = true
+      if (updateWindow !== undefined && !updateWindow.isDestroyed() && updateWindow.getParentWindow() === previous) {
+        try { updateWindow.setParentWindow(page) } catch { migrated = false }
+      }
+      previous.destroy()
+      // 迁移失败时更新窗口会随父窗口一起销毁：按当前状态重建，不能让强制更新在换窗时消失。
+      if (!migrated && mandatoryUpdateBlocksEntry()) showUpdateWindow()
+    }
   }).catch((error: unknown) => {
     // 失败原因是区分「本地服务未就绪」「端口/进程冲突」「被安全软件拦截」的唯一线索，
     // 必须随提示一起给出。失败 URL 带一次性 token，展示前先抹掉。
@@ -1195,12 +1229,12 @@ function rememberCommandSpace(home?: string): void {
  * 把载体配置里的 MCP / 技能市场接口路径与本机包安装参数作为补丁层交给对应插件（缺配置时它们用内置默认值）。
  * 配置读取失败不阻断工作区启动：账号流程在启动前已读取并校验过同一份配置，这里退化为内置默认值。
  */
-function marketPatchLayers(home: string): string[] {
+function marketPatchLayers(home: string, modelStateDir?: string): string[] {
   try {
     const server = loadConfig().server
     const connector = desktopConnectorMarketPatch(home, server, { node: bundledNodeExecutable(), pnpm: join(bundledPrimaryRuntime(), 'dependencies', 'pnpm', 'bin', 'pnpm.cjs') })
     const skill = desktopSkillMarketPatch(home, server)
-    const model = desktopModelMarketPatch(home, server)
+    const model = desktopModelMarketPatch(home, server, modelStateDir)
     const expert = desktopExpertMarketPatch(home, server)
     return [connector, skill, model, expert].filter((patch): patch is string => patch !== undefined)
   } catch (error) {
@@ -1209,7 +1243,39 @@ function marketPatchLayers(home: string): string[] {
   }
 }
 
-async function startRuntime(home: string, connection: DesktopConnection, patches: string[] = [], existingHome = false, onReady?: () => void): Promise<void> {
+/** 默认模型首次处理的最长等待：超时直接放行，剩余补齐在后台完成。 */
+const MODEL_DEFAULTS_WAIT_MS = 15_000
+
+/**
+ * 首次登录时等模型市场把默认模型装好再进入主界面，省去用户手动安装。
+ * 已完成过的账号（标记文件已存在）、未按账号启动（没有 stateDir）都不等待；超时或启动被取消同样放行。
+ */
+function waitModelDefaults(stateDir: string | undefined, cancelled: () => boolean): Promise<void> {
+  if (!stateDir) return Promise.resolve()
+  const marker = join(stateDir, 'defaults-ready.json')
+  if (existsSync(marker)) return Promise.resolve()
+  return new Promise(resolve => {
+    const deadline = Date.now() + MODEL_DEFAULTS_WAIT_MS
+    const timer = setInterval(() => {
+      if (existsSync(marker) || cancelled()) {
+        clearInterval(timer)
+        resolve()
+        return
+      }
+      if (Date.now() < deadline) return
+      // 超时兜底：写入标记，插件没装好时也不会每次启动都等满超时；插件随后完成会用真实标记覆盖。
+      try {
+        mkdirSync(stateDir, { recursive: true, mode: 0o700 })
+        writeFileSync(marker, JSON.stringify({ version: 1, completedAt: new Date().toISOString(), timedOut: true }, null, 2) + '\n', { mode: 0o600 })
+      } catch {}
+      clearInterval(timer)
+      resolve()
+    }, 250)
+    timer.unref?.()
+  })
+}
+
+async function startRuntime(home: string, connection: DesktopConnection, patches: string[] = [], existingHome = false, onReady?: () => void, modelStateDir?: string): Promise<void> {
   rememberCommandSpace(home)
   if (quitRequested) throw new Error('启动已取消')
   const executable = bundledNodeExecutable()
@@ -1221,7 +1287,7 @@ async function startRuntime(home: string, connection: DesktopConnection, patches
   // upstream 的端口管理：把空闲端口作为补丁层交给官方 Web 内核，替代原来的 --port 0。
   const port = await prepareRuntimePort(home, [join(home, 'profiles', PROFILE_NAME, 'cordis.yml'), join(home, 'profiles', PROFILE_NAME, 'cordis.patch.yml'), join(home, 'cordis.yml'), join(home, 'cordis.patch.yml'), ...patches], { existingHome })
   if (quitRequested) throw new Error('启动已取消')
-  const layers = [...(existsSync(basePatch) ? [basePatch] : []), ...patches, ...marketPatchLayers(home), ...(port.managed ? [port.patch] : [])]
+  const layers = [...(existsSync(basePatch) ? [basePatch] : []), ...patches, ...marketPatchLayers(home, modelStateDir), ...(port.managed ? [port.patch] : [])]
   const launcher = officialHostLauncher(bundledProfileDirectory(), home, executable, join(bundledPrimaryRuntime(), 'dependencies', 'pnpm', 'bin', 'pnpm.cjs'), layers)
   const hostSpawnedAt = Date.now()
   const child = spawn(executable, [launcher, '--no-open'], {
@@ -1259,7 +1325,12 @@ async function startRuntime(home: string, connection: DesktopConnection, patches
       runtimeStarting = false
       markStartup(`DSH 已就绪，开始打开主界面（主机启动 ${Date.now() - hostSpawnedAt}ms）`)
       onReady?.()
-      openWindow(match[1], connection)
+      const url = match[1]
+      // 首次登录：过场页继续覆盖这段时间，等默认模型装好再换成主界面；日常启动标记已存在，直接放行。
+      void waitModelDefaults(modelStateDir, () => quitRequested || switching || runtime !== child).then(() => {
+        if (quitRequested || switching || runtime !== child) return
+        openWindow(url, connection)
+      })
     }
   }
   const failureDetail = (code: number | null, cleanupFailed = false): string => {
@@ -1286,7 +1357,7 @@ async function startRuntime(home: string, connection: DesktopConnection, patches
     if (runtime !== child) return
     void cleanOwnedProcessTree(child).then(() => {
       if (runtime === child) { runtime = undefined; runtimeStarting = false }
-      if (!quitting && !switching && !updaterInstalling) {
+      if (!quitting && !switching && !updaterInstalling && !updaterStoppedRuntimes.has(child)) {
         dialog.showErrorBox('本机运行已停止', failureDetail(code))
         void returnToLogin()
       }
@@ -1295,7 +1366,7 @@ async function startRuntime(home: string, connection: DesktopConnection, patches
       recordCleanupFailure('startup-exit', error)
       runtime = undefined
       runtimeStarting = false
-      if (quitting || switching || updaterInstalling) return
+      if (quitting || switching || updaterInstalling || updaterStoppedRuntimes.has(child)) return
       dialog.showErrorBox('本机运行已停止', failureDetail(code, true))
       void returnToLogin()
     })
@@ -1590,7 +1661,8 @@ async function startAccountRuntime(home: string): Promise<void> {
   session.authFile = patch.authFile
   entrySurface = false
   // “环境已就绪”标记只在 DSH 真正起来后才落盘：避免“标记已写、依赖却没装成”导致后续启动跳过准备。
-  await startRuntime(home, { mode: 'personal' }, [patch.patch], false, () => markEnvironmentReady())
+  // 模型市场的安装记录与默认模型标记跟随登录账号，避免不同账号互相影响补齐结果。
+  await startRuntime(home, { mode: 'personal' }, [patch.patch], false, () => markEnvironmentReady(), accountModelStateDirectory(home, actor.principalId))
   // 会话校验 + 用户信息同步：随运行时启动，随登出/切换停止（重复启动先停旧的）。
   session.stopSync?.()
   session.stopSync = startAccountSync(session)
@@ -1686,13 +1758,23 @@ async function autoStartAccountWorkspace(): Promise<void> {
       showAccountSplash()
       await prepareProfile(runtimeHome(), keepEntryPage)
       if (!account) { showAccountLogin(); return }
+      // 环境准备期间可能已经判定出强制更新：停在过场页，由更新窗口拦截，不进入工作区。
+      if (mandatoryUpdateBlocksEntry()) { showUpdateWindow(); return }
       // 过场页继续作为本机 DSH 启动等待的界面，主机就绪后直接换成主界面。
       await startAccountRuntime(runtimeHome())
       return
     }
 
     // 环境已就绪（再次打开）：不显示“环境准备中”的过场流程；已登录则直接启动（启动等待由过场页覆盖）。
-    if (account) { await launchAccountRuntime(); return }
+    if (account) {
+      if (mandatoryUpdateBlocksEntry()) {
+        await showSplashForRuntimeBoot()
+        showUpdateWindow()
+        return
+      }
+      await launchAccountRuntime()
+      return
+    }
     showAccountLogin()
   } catch (error) {
     dialog.showErrorBox('无法进入', error instanceof Error ? error.message : '请检查运行环境')
@@ -1787,6 +1869,11 @@ function installLoginHandlers(): void {
     markStartup('收到账号登录请求')
     let admitted: AccountLogin | undefined
     try {
+      // 强制更新未完成时不允许进入工作区：把登录页留在原地，更新窗口继续以模态方式拦截。
+      if (mandatoryUpdateBlocksEntry()) {
+        showUpdateWindow()
+        return { error: '请先完成强制更新，安装完成后软件会自动重启' }
+      }
       const value = input as { username?: unknown, password?: unknown }
       if (!value || typeof value.username !== 'string' || typeof value.password !== 'string') throw new Error('请输入账号和密码')
       const config = loadConfig()
@@ -1803,6 +1890,12 @@ function installLoginHandlers(): void {
       const home = runtimeHome()
       await showSplashForRuntimeBoot()
       await prepareProfile(home, keepEntryPage)
+      // 更新检查可能在登录与环境准备期间才判定为强制更新：停在过场页，由更新窗口接管，
+      // 不启动本机运行，安装完成后随重启自动回到工作区（登录态已保存）。
+      if (mandatoryUpdateBlocksEntry()) {
+        showUpdateWindow()
+        return { error: '请先完成强制更新，安装完成后软件会自动重启' }
+      }
       await startAccountRuntime(home)
       return { ok: true }
     } catch (error) {

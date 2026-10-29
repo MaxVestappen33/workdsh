@@ -32,9 +32,23 @@ export interface MarketRecordFile {
 
 const empty = (): MarketRecordFile => ({ version: 1, installs: {}, handledDefaults: [], dismissedDefaults: [] });
 
-export function marketRecordFile(): string {
+/**
+ * 模型市场状态目录。Desktop 按账号注入独立目录，让“已处理的默认模型”跟随账号；
+ * 未注入时回退到 DSH_HOME 下的共享目录（Web 与单机环境保持原行为）。
+ */
+export function marketStateDir(stateDir?: string): string {
+  if (stateDir) return stateDir;
   const dshHome = resolve(process.env.DSH_HOME ?? join(homedir(), '.dsh'));
-  return join(dshHome, '.workdsh-state', 'models', 'market-installs.json');
+  return join(dshHome, '.workdsh-state', 'models');
+}
+
+export function marketRecordFile(stateDir?: string): string {
+  return join(marketStateDir(stateDir), 'market-installs.json');
+}
+
+/** 默认模型首次处理完成标记；Desktop 首次登录时只等待这一标记，失败或超时都会放行。 */
+export function marketDefaultsMarker(stateDir?: string): string {
+  return join(marketStateDir(stateDir), 'defaults-ready.json');
 }
 
 const text = (value: unknown): string => typeof value === 'string' ? value : '';
@@ -91,5 +105,14 @@ export async function writeMarketRecords(value: MarketRecordFile, file = marketR
     handledDefaults: [...new Set(value.handledDefaults)],
     dismissedDefaults: [...new Set(value.dismissedDefaults)],
   }, null, 2) + '\n', { mode: 0o600 });
+  await rename(temporary, file);
+}
+
+/** 记录默认模型首次处理已结束；内容仅供排查，Desktop 只判断文件是否存在。 */
+export async function writeMarketDefaultsMarker(stateDir?: string): Promise<void> {
+  const file = marketDefaultsMarker(stateDir);
+  await mkdir(dirname(file), { recursive: true, mode: 0o700 });
+  const temporary = `${file}.${randomUUID()}.tmp`;
+  await writeFile(temporary, JSON.stringify({ version: 1, completedAt: new Date().toISOString() }, null, 2) + '\n', { mode: 0o600 });
   await rename(temporary, file);
 }

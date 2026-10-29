@@ -98,6 +98,9 @@ it('keeps the encrypted login session across a normal quit so the next launch sk
   const sessionFile = join(state.userData, 'account-session.bin')
   expect(existsSync(sessionFile)).toBe(true)
   writeFileSync(join(state.userData, '.workdsh-env-ready'), '1.0.0|0.2.0-rc.2\n')
+  // 上一次启动已完成默认模型处理：再次打开时过场页不等待模型市场。
+  mkdirSync(join(home, '.workdsh-state/models/accounts/u-1'), { recursive: true })
+  writeFileSync(join(home, '.workdsh-state/models/accounts/u-1/defaults-ready.json'), '{"version":1}\n')
 
   const { app } = await import('electron')
   const { spawn } = await import('node:child_process')

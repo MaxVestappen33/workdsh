@@ -48,10 +48,18 @@ export async function afterPack(context: PackContext): Promise<void> {
   const generatedDeployment = readFileSync(fileURLToPath(new URL('../build/deployment/workdsh-config.json', import.meta.url)))
   parseDeploymentConfig(JSON.parse(packagedDeployment.toString('utf8')) as unknown)
   if (!packagedDeployment.equals(generatedDeployment)) throw new Error('Packaged deployment configuration differs from this build')
-  const packagedCredentials = readFileSync(join(resources, MODEL_CREDENTIALS_FILENAME))
-  const declaredCredentials = readFileSync(fileURLToPath(new URL('../resources/model-credentials.json', import.meta.url)))
-  parseModelCredentials(JSON.parse(packagedCredentials.toString('utf8')) as unknown)
-  if (!packagedCredentials.equals(declaredCredentials)) throw new Error('Packaged model credentials differ from the declared resources/model-credentials.json')
+  const packagedCredentialsFile = join(resources, MODEL_CREDENTIALS_FILENAME)
+  const declaredCredentialsFile = fileURLToPath(new URL('../resources/model-credentials.json', import.meta.url))
+  // 缺失表示该构建不预置默认模型访问值（与运行时 readModelCredentials 一致）。
+  if (existsSync(declaredCredentialsFile)) {
+    if (!existsSync(packagedCredentialsFile)) throw new Error('Packaged model credentials are missing')
+    const packagedCredentials = readFileSync(packagedCredentialsFile)
+    const declaredCredentials = readFileSync(declaredCredentialsFile)
+    parseModelCredentials(JSON.parse(packagedCredentials.toString('utf8')) as unknown)
+    if (!packagedCredentials.equals(declaredCredentials)) throw new Error('Packaged model credentials differ from the declared resources/model-credentials.json')
+  } else if (existsSync(packagedCredentialsFile)) {
+    throw new Error('Packaged model credentials have no declared resources/model-credentials.json')
+  }
   if (!existsSync(archive)) throw new Error(`Missing Electron carrier: ${archive}`)
   const entries = listPackage(archive, { isPack: false }).map(normalizeAsarEntry)
   if (!entries.includes('lib/workdsh-main.js')) throw new Error('Electron carrier has no WorkDSH entry point')
