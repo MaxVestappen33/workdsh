@@ -6,6 +6,7 @@ import { credentialRef } from '@deepseek-ai/dsh-credentials';
 import * as McpClient from '@deepseek-ai/dsh-mcp-client';
 import type { KvTable } from '@deepseek-ai/dsh-storage-domain';
 import type { ConnectorConfigView, ConnectorInput, ConnectorManagementService, ConnectorState, ConnectorSummary, ConnectorTool } from './shared.js';
+import { requestHeadersOf } from './shared.js';
 import { installEmptyCursorCompat } from './mcp-compat.js';
 import { connectorDefinitionSchema, connectorSelectionsDomainSpec, connectorsDomainSpec, type ConnectorDefinition, type ConnectorSelection } from './storage.js';
 
@@ -35,6 +36,30 @@ const toolDetail = (schema: { name: string; description?: string; parameters?: R
 };
 const idPart = (value: string) => value.replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
 const refFor = (value: string) => credentialRef(value) as unknown as Parameters<Context['credentials']['resolve']>[0];
+/**
+ * 凭据里存的请求头：新格式是 JSON 对象（名称 → 值，市场可配置多个自定义头）；
+ * 存量安装存的是裸令牌，仍按 `Authorization` 使用，不需要迁移。
+ */
+const credentialHeaders = (value: string): Record<string, string> => {
+  if (value.trim().startsWith('{')) {
+    try {
+      const parsed = record(JSON.parse(value));
+      const entries = parsed
+        ? Object.entries(parsed).flatMap(([key, item]) => (typeof item === 'string' && item.trim() ? [[key, item] as const] : []))
+        : [];
+      if (entries.length) return Object.fromEntries(entries);
+    } catch { /* 不是 JSON：按存量裸令牌处理 */ }
+  }
+  return { Authorization: value };
+};
+/** 本次要写入凭据的请求头：市场条目按 `requestHeaders` 原样带入，单令牌输入等价于 Authorization。 */
+const inputHeaders = (input: Pick<ConnectorInput, 'requestHeaders' | 'authorizationToken'>): Record<string, string> | undefined => {
+  const headers: Record<string, string> = {};
+  for (const header of requestHeadersOf(input.requestHeaders)) headers[header.key] = header.value;
+  const token = input.authorizationToken?.trim();
+  if (token && !Object.keys(headers).some(key => key.toLowerCase() === 'authorization')) headers.Authorization = token;
+  return Object.keys(headers).length ? headers : undefined;
+};
 /** 分类文案去空、去重并限定条目数，与连接器定义的存储上限保持一致。 */
 const categoriesOf = (value: readonly string[] | undefined): readonly string[] =>
   [...new Set((value ?? []).flatMap(item => (item.trim() ? [item.trim()] : [])))].slice(0, 8);
@@ -123,8 +148,9 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
       const base = idPart(normalized.serverName) || 'mcp'; let id = base;
       while (this.table().get(id)) id = `${base}-${randomUUID().slice(0, 8)}`;
       const now = new Date().toISOString();
-      const authorizationCredentialRef = input.authorizationToken?.trim() ? this.credentialName(normalized.serverName) : undefined;
-      if (authorizationCredentialRef) await this.ctx.credentials.set(refFor(authorizationCredentialRef), input.authorizationToken!.trim());
+      const headers = inputHeaders(input);
+      const authorizationCredentialRef = headers ? this.credentialName(normalized.serverName) : undefined;
+      if (headers && authorizationCredentialRef) await this.ctx.credentials.set(refFor(authorizationCredentialRef), JSON.stringify(headers));
       const definition: ConnectorDefinition = { id, ...normalized, ...(authorizationCredentialRef ? { authorizationCredentialRef } : {}), enabled: true, createdAt: now, updatedAt: now };
       await this.table().put(id, definition); this.runtimes.set(id, { state: 'discovering' });
       await this.start(definition).catch(() => undefined);
@@ -137,8 +163,9 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
     return this.enqueue(async () => {
       const current = this.definition(id); const normalized = this.normalize(input); this.assertUniqueServer(normalized.serverName, id);
       await this.stop(id, current.enabled);
-      const authorizationCredentialRef = current.authorizationCredentialRef ?? (input.authorizationToken?.trim() ? this.credentialName(normalized.serverName) : undefined);
-      if (authorizationCredentialRef && input.authorizationToken?.trim()) await this.ctx.credentials.set(refFor(authorizationCredentialRef), input.authorizationToken.trim());
+      const headers = inputHeaders(input);
+      const authorizationCredentialRef = current.authorizationCredentialRef ?? (headers ? this.credentialName(normalized.serverName) : undefined);
+      if (authorizationCredentialRef && headers) await this.ctx.credentials.set(refFor(authorizationCredentialRef), JSON.stringify(headers));
       const next: ConnectorDefinition = { ...current, ...normalized, command: normalized.command, args: normalized.args, url: normalized.url,
         authorizationCredentialRef, updatedAt: new Date().toISOString() };
       await this.table().put(id, next); this.runtimes.set(id, { state: next.enabled ? 'discovering' : 'disabled' });
@@ -205,7 +232,7 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
       runtime.diagnostic = '连接授权已失效，请重新授权。';
       throw new Error('connector/authorization-missing');
     }
-    const headers: Record<string, string> = authorization ? { Authorization: authorization.value } : {};
+    const headers: Record<string, string> = authorization ? credentialHeaders(authorization.value) : {};
     const transportConfig = definition.transport === 'stdio'
       ? { serverName: definition.serverName, transport: 'stdio' as const, ...connectorProcess(definition), env: {} }
       : { serverName: definition.serverName, transport: 'streamable-http' as const, url: definition.url!, headers };

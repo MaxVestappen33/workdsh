@@ -205,9 +205,9 @@ export class ConnectorMarketService extends Service implements ConnectorMarket {
       serverName,
       transport: item.transport,
       ...(launch.kind === 'stdio' ? { command: launch.command, args: [...(launch.args ?? [])] } : { url: launch.url }),
-      // 市场条目自带的令牌原样作为 Authorization 头：由连接器管理器写入官方凭据服务，
+      // 市场条目自带的请求头（后台可自定义名称与个数的 JSON 配置）由连接器管理器写入官方凭据服务，
       // 定义里只落引用，界面的列表与详情都不会回传明文。
-      ...(item.authorization ? { authorizationToken: item.authorization } : {}),
+      ...(item.requestHeaders.length ? { requestHeaders: item.requestHeaders } : {}),
       originId: item.originId,
       // 本地标识被换算过时保留原始 serviceId，卸载上报仍回传后台的原值。
       ...(serverName === item.serverName ? {} : { marketServiceId: item.serverName }),

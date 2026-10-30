@@ -1,5 +1,5 @@
 import type { BackendChannel } from 'workdsh-provider-backend-channel';
-import type { ConnectorToolParameter } from './shared.js';
+import { requestHeadersOf, type ConnectorRequestHeader, type ConnectorToolParameter } from './shared.js';
 
 /** 市场分类：字段名沿用后台字典对象（DictModel）。 */
 export interface MarketCategory {
@@ -52,10 +52,11 @@ export interface MarketItem {
   /** 图标底色，可能为空，空时由界面使用默认底色。 */
   readonly color?: string;
   /**
-   * 市场下发的连接令牌：原样作为 `Authorization` 请求头使用。
-   * 安装时写入官方凭据服务，连接器定义里只保留引用，连接器列表与详情都不回传。
+   * 市场下发的请求头（`requestHeaders`，`[{key,value}]` 的 JSON 字符串）：建连时原样附加到 HTTP 请求，
+   * 名称与值都由后台配置，不再假定只有一个 Authorization。
+   * 安装时写入官方凭据服务，连接器定义里只保留引用，连接器列表与详情都不回传值。
    */
-  readonly authorization?: string;
+  readonly requestHeaders: readonly ConnectorRequestHeader[];
   readonly subscribers: number;
   readonly downloads: number;
   readonly stars: number;
@@ -119,6 +120,16 @@ const transportOf = (value: unknown): 'stdio' | 'streamable-http' => text(value)
 const iconOf = (value: unknown): string | undefined => {
   const icon = text(value);
   return icon && /^https?:\/\//iu.test(icon) ? icon : undefined;
+};
+/**
+ * 市场条目的请求头：新格式取 `requestHeaders`（可按名称自定义多个）；
+ * 后台灰度期间仍可能只下发 `token`，此时按旧约定回退成 Authorization 头，避免装完连不上。
+ */
+const requestHeadersFor = (row: Record<string, unknown>): readonly ConnectorRequestHeader[] => {
+  const headers = requestHeadersOf(row.requestHeaders);
+  if (headers.length) return headers;
+  const token = text(row.token);
+  return token ? [{ key: 'Authorization', value: token }] : [];
 };
 /** args 表里是「每行一个」，连接器侧是字符串数组。 */
 const argsOf = (value: unknown): readonly string[] | undefined => {
@@ -198,14 +209,16 @@ const itemOf = (value: unknown): MarketItem | undefined => {
   const originId = text(row.id); const serverName = text(row.serviceId); const title = text(row.name);
   if (!originId || !serverName || !title) return undefined;
   const url = text(row.endpoint); const command = text(row.command); const args = argsOf(row.args);
-  const icon = iconOf(row.icon); const color = text(row.color); const authorization = text(row.token);
+  const icon = iconOf(row.icon); const color = text(row.color);
   const transport = transportOf(row.transport);
   const launch = packageLaunchOf(transport, command, args);
+  // 请求头按名称自定义：sample 里的 requestHeaders 是 JSON 字符串，解析后逐个附加到 HTTP 请求。
+  const requestHeaders = requestHeadersFor(row);
   return { originId, serverName, title, description: text(row.description) ?? '', categories: categoriesOf(row.bizScene),
     categoryLabels: categoryLabelsOf(row.bizSceneList),
     transport, ...(url ? { url } : {}), ...(command ? { command } : {}), ...(args ? { args } : {}),
     ...(launch ? { launch: 'package' as const, packageSpec: launch.spec, packageArgs: launch.args } : { launch: 'direct' as const }),
-    ...(icon ? { icon } : {}), ...(color ? { color } : {}), ...(authorization ? { authorization } : {}),
+    ...(icon ? { icon } : {}), ...(color ? { color } : {}), requestHeaders,
     subscribers: count(row.subscribers), downloads: count(row.downloadCount), stars: count(row.starCount),
     tools: toolsOf(row.tools) };
 };

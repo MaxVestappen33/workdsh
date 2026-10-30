@@ -7,6 +7,52 @@ export interface ConnectorToolParameter {
   readonly description?: string;
 }
 
+/** 建连时附加到 HTTP 请求上的一个请求头：名称与值都由配置方给出，不写死 Authorization。 */
+export interface ConnectorRequestHeader {
+  readonly key: string;
+  readonly value: string;
+}
+
+/** 请求头条目上限：正常服务只需个位数，超出部分不予采纳。 */
+const REQUEST_HEADER_LIMIT = 16;
+/** HTTP 头名称允许的字符（RFC 9110 token）。 */
+const requestHeaderName = /^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/u;
+const asRecord = (value: unknown): Record<string, unknown> | undefined =>
+  value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+
+/**
+ * 归一化请求头：后台下发的是 JSON 字符串（`[{"key","value"}]`），也可能已是数组或
+ * 「名称 → 值」对象。空名称、空值、非法名称一律丢弃；名称大小写不敏感去重（后值覆盖前值），
+ * 并限定条目上限。解析失败时返回空数组，由调用方决定是否有回退来源。
+ */
+export const requestHeadersOf = (value: unknown): readonly ConnectorRequestHeader[] => {
+  let parsed: unknown = value;
+  if (typeof parsed === 'string') {
+    const raw = parsed.trim();
+    if (!raw) return [];
+    try { parsed = JSON.parse(raw); } catch { return []; }
+  }
+  const pairs: [unknown, unknown][] = [];
+  if (Array.isArray(parsed)) {
+    for (const item of parsed) {
+      const row = asRecord(item);
+      if (row) pairs.push([row.key, row.value]);
+    }
+  } else {
+    const map = asRecord(parsed);
+    if (map) pairs.push(...Object.entries(map));
+  }
+  const headers = new Map<string, ConnectorRequestHeader>();
+  for (const [rawKey, rawValue] of pairs) {
+    const key = typeof rawKey === 'string' ? rawKey.trim() : '';
+    const headerValue = typeof rawValue === 'string' ? rawValue.trim() : '';
+    if (!key || !headerValue || !requestHeaderName.test(key)) continue;
+    headers.set(key.toLowerCase(), { key, value: headerValue });
+    if (headers.size >= REQUEST_HEADER_LIMIT) break;
+  }
+  return [...headers.values()];
+};
+
 /** 单个 MCP 工具的展示信息，供连接器详情页渲染工具清单。 */
 export interface ConnectorTool {
   readonly name: string;
@@ -60,6 +106,11 @@ export interface ConnectorInput {
   readonly command?: string;
   readonly args?: readonly string[];
   readonly url?: string;
+  /**
+   * 建连时要附加的 HTTP 请求头（市场按 `requestHeaders` 下发，可含多个自定义头）。
+   * 值属于机密，只写入官方凭据服务，不会出现在列表、详情与诊断里。
+   */
+  readonly requestHeaders?: readonly ConnectorRequestHeader[];
   /** Transient write-only value. It is stored by ctx.credentials and never returned. */
   readonly authorizationToken?: string;
   /** 来源市场条目 id；仅市场安装流程写入，用于「已安装」判定与卸载。 */
