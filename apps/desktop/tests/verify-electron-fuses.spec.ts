@@ -248,16 +248,25 @@ describe('final Electron fuse verification', () => {
       smoke,
     )).resolves.toEqual([])
     expect(read.mock.calls.map(call => call[0]).sort()).toEqual(executables.sort())
-    expect(smoke.mock.calls.map(call => call[0])).toEqual([
-      expect.objectContaining({ appOutDir: join('/build', 'mac'), arch: Arch.x64 }),
-      expect.objectContaining({ appOutDir: join('/build', 'mac-arm64'), arch: 3 }),
-    ])
-    expect(events).toEqual([
-      `fuse:${executables[1]}`,
-      `smoke:${join('/build', 'mac')}`,
-      `fuse:${executables[0]}`,
-      `smoke:${join('/build', 'mac-arm64')}`,
-    ])
+    // Cross-built artifacts are fuse-checked everywhere but smoked only on a darwin host.
+    const hostIsMac = process.platform === 'darwin'
+    expect(smoke.mock.calls.map(call => call[0])).toEqual(hostIsMac
+      ? [
+          expect.objectContaining({ appOutDir: join('/build', 'mac'), arch: Arch.x64 }),
+          expect.objectContaining({ appOutDir: join('/build', 'mac-arm64'), arch: 3 }),
+        ]
+      : [])
+    expect(events).toEqual(hostIsMac
+      ? [
+          `fuse:${executables[1]}`,
+          `smoke:${join('/build', 'mac')}`,
+          `fuse:${executables[0]}`,
+          `smoke:${join('/build', 'mac-arm64')}`,
+        ]
+      : [
+          `fuse:${executables[1]}`,
+          `fuse:${executables[0]}`,
+        ])
   })
 
   it.each([

@@ -975,7 +975,7 @@ async function installUpdate(candidate: UpdateCandidate, installerPath: string):
     const helper = spawn(helperExecutable, args, { detached: true, stdio: 'ignore' })
     helper.unref()
     updateLog?.write(`[${new Date().toISOString()}] helper-spawned ${String(helper.pid)}\n`)
-    await waitForMarker(readyFlag, 8_000)
+    await waitForMarker(readyFlag, 20_000)
     try { rmSync(readyFlag, { force: true }) } catch { /* 标记清理失败无影响 */ }
   } catch (error) {
     // 安装交接失败时本机 Host 已被主动停止：回到登录页，避免用户停在一个已停止的工作区。

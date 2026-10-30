@@ -7,6 +7,14 @@ interface Ownership { pid: number, startedAt: number, registeredAt: number, exit
 const ownership = new WeakMap<ChildProcess, Ownership>()
 const cleaned = new WeakMap<ChildProcess, Promise<void>>()
 
+/**
+ * 进程快照的查询预算。低配现场机器上 PowerShell 冷启动叠加杀软扫描，单次
+ * `Get-CimInstance Win32_Process` 可能超过 10 秒；预算过紧会把“机器慢”误判成
+ * “停止本机任务失败”，直接中断整次在线升级，所以这里按慢机器取值。
+ */
+const WINDOWS_QUERY_TIMEOUT_MS = 20_000
+const WINDOWS_CLEANUP_DEADLINE_MS = 60_000
+
 /** Call immediately after spawn, with the time captured immediately before it. */
 export function trackOwnedProcess(child: ChildProcess, startedAt: number): void {
   if (!child.pid || ownership.has(child)) return
@@ -93,8 +101,8 @@ function windowsDirectTreeKill(pid: number): void {
 async function cleanWindowsTree(child: ChildProcess): Promise<void> {
   const state = ownership.get(child)
   if (!state) throw new Error('Windows 本机进程缺少所有权记录，未停止未知进程')
-  const deadline = Date.now() + 12_000
-  const budget = (): number => { const remaining = deadline - Date.now(); if (remaining <= 0) throw new Error('Windows 本机进程树清理超时'); return Math.min(4000, remaining) }
+  const deadline = Date.now() + WINDOWS_CLEANUP_DEADLINE_MS
+  const budget = (): number => { const remaining = deadline - Date.now(); if (remaining <= 0) throw new Error('Windows 本机进程树清理超时'); return Math.min(WINDOWS_QUERY_TIMEOUT_MS, remaining) }
   for (let pass = 0; pass < 8; pass++) {
     const queried = new Set([state.pid, ...state.known.map(row => row.pid)])
     const rows = await windowsSnapshot([...queried], budget())
