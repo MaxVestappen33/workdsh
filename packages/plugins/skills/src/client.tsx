@@ -14,7 +14,6 @@ import type {} from '@deepseek-ai/dsh-client-ui-session/client';
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client';
 import type {} from '@deepseek-ai/dsh-client-ui-slots';
 import { PendingSkillDraft, pendingDraftKey, skillManagementDraft, skillTaskDrafts, type SkillTaskKind } from './client/drafts.js';
-import { ConversationSkills } from './client/ConversationSkills.js';
 import { SkillsPanel } from './client/SkillsPanel.js';
 import { createSkillManagementClient } from './client/management.js';
 import { SkillNavigationIcon } from './client/SkillNavigationIcon.js';
@@ -98,10 +97,4 @@ export function apply(ctx: Context): void {
     name: 'sidebar.panellist', id: 'workdsh-skills', label: '专家 · 技能 · 连接器', order: 30,
   }, SkillNavigationIcon));
   ctx.slots.inject('conversation.input.overlay', () => ctx.slots.register({ name: 'conversation.input.overlay', id: 'workdsh-skill-draft' }, PendingSkillDraft));
-  // Sits to the right of the library picker (order 35) in the composer tool row;
-  // insertion reuses the official input actions so the current draft is kept.
-  ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
-    name: 'conversation.input.left', id: 'workdsh-skill-picker', order: 40,
-    inject: () => ({ management, openSkills: () => openCapability('workdsh-skills') }),
-  }, ConversationSkills));
 }

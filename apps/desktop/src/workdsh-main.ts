@@ -20,7 +20,7 @@ import { readAppConfig, type AppEnvironment, type ResolvedAppConfig } from './ap
 import { createDebugLog, type DebugLog } from './debug-log.ts'
 import { AccountLogin, AccountStore, restoreAccountLogin, startAccountAuthority, type AccountAuthority } from './member-auth.ts'
 import { EnterpriseLogin, startEnterpriseAuthority, type Authority } from './enterprise-auth.ts'
-import { desktopEnterprisePatch, desktopAccountPatch, desktopConnectorMarketPatch, desktopSkillMarketPatch, desktopModelMarketPatch, desktopExpertMarketPatch, accountSpace, accountModelStateDirectory, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher, type AccountActor } from './local-runtime.ts'
+import { desktopEnterprisePatch, desktopAccountPatch, desktopConnectorMarketPatch, desktopSkillMarketPatch, desktopPromptPatch, desktopModelMarketPatch, desktopExpertMarketPatch, accountSpace, accountModelStateDirectory, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher, type AccountActor } from './local-runtime.ts'
 import { manageCommand } from './command-management.ts'
 import { createRuntimeOutputRedactor, redactRuntimeOutput, runtimeFailureDetail, runtimeFailureLog } from './runtime-diagnostics.ts'
 import { cleanOwnedProcessTree, reclaimOrphanedToolProcesses, stopOwnedProcess, terminateOwnedProcessImmediately, trackOwnedProcess } from './owned-process.ts'
@@ -1173,7 +1173,10 @@ function runtimeEnvironment(home: string): NodeJS.ProcessEnv {
     WORKDSH_APP_VERSION: app.getVersion(),
     // A packaged carrier embeds the WorkDSH entry point, but a development
     // Electron binary needs the app directory as the worker's first argument.
-    WORKDSH_ELECTRON_APP: app.isPackaged ? undefined : app.getAppPath(),
+    // 这里只能用 process.defaultApp 判断：当前 Electron 在开发态（二进制 + app 目录）
+    // 也会把 app.isPackaged 报成 true，用它判断会漏掉 app 目录，浏览器 worker 便以裸
+    // Electron 启动，弹出官方的默认欢迎窗口（标题为 Electron 的那个窗口）。
+    WORKDSH_ELECTRON_APP: process.defaultApp ? app.getAppPath() : undefined,
     // WorkDSH 定制：注入随包交付的模型访问凭据（安装包 Resources 下的 model-credentials.json）。
     // 载体不再预置模型或默认模型，这些变量只供用户自建 provider 的 apiKeyEnv 引用时使用。
     // 仅个人工作区注入：企业运行的模型配置由企业侧提供，载体不代注入（enterpriseEnvironment 走白名单）。
@@ -1240,9 +1243,10 @@ function marketPatchLayers(home: string, modelStateDir?: string): string[] {
     const server = loadConfig().server
     const connector = desktopConnectorMarketPatch(home, server, { node: bundledNodeExecutable(), pnpm: join(bundledPrimaryRuntime(), 'dependencies', 'pnpm', 'bin', 'pnpm.cjs') })
     const skill = desktopSkillMarketPatch(home, server)
+    const prompt = desktopPromptPatch(home, server)
     const model = desktopModelMarketPatch(home, server, modelStateDir)
     const expert = desktopExpertMarketPatch(home, server)
-    return [connector, skill, model, expert].filter((patch): patch is string => patch !== undefined)
+    return [connector, skill, prompt, model, expert].filter((patch): patch is string => patch !== undefined)
   } catch (error) {
     process.stderr.write(`[startup] 市场接口路径与本机包安装配置未注入，插件将使用内置默认值：${error instanceof Error ? error.message : String(error)}\n`)
     return []

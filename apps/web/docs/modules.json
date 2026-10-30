@@ -151,6 +151,20 @@
     ]
   },
   {
+    "path": "../../packages/plugins/prompts",
+    "title": "提示词",
+    "status": "in_progress",
+    "directories": [
+      "src",
+      "src/client",
+      "tests"
+    ],
+    "moduleVersion": "0.1",
+    "requirements": [
+      "R15"
+    ]
+  },
+  {
     "path": "../../packages/plugins/applications",
     "title": "行业应用",
     "status": "planned",

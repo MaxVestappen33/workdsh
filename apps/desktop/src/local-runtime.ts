@@ -236,6 +236,19 @@ export function desktopSkillMarketPatch(home: string, server: ServerConfig): str
 }
 
 /**
+ * 提示词列表接口路径的注入层。prompts 与 skills 一样是 Desktop/Web 共用的 Profile 包，
+ * 不能自己读载体配置，因此由这里把 workdsh-app.json 的 server.promptListPath 作为插件选项注入；
+ * 缺失或取值非法时不写这一层，插件回退到内置默认值。
+ */
+export function desktopPromptPatch(home: string, server: ServerConfig): string | undefined {
+  const list = typeof server.promptListPath === 'string' && /^\//u.test(server.promptListPath) ? server.promptListPath : undefined
+  if (!list) return undefined
+  const patch = join(home, '.prompt-list.patch.yml')
+  writeFileSync(patch, `- id: workdsh-prompts\n  config:\n    paths:\n      list: ${JSON.stringify(list)}\n`, { mode: 0o600 })
+  return patch
+}
+
+/**
  * 模型市场接口路径的注入层。模型查询与安装/卸载上报都走 desktop-client 命名空间；
  * 安装动作本身在 Host 侧写官方 llm-pi-ai 配置，这里只提供路径。
  * `stateDir` 让安装记录与默认模型完成标记跟随登录账号；未给出时插件沿用 DSH_HOME 下的共享目录。

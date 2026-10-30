@@ -101,9 +101,9 @@ function defaultProfile() {
 }
 
 test('Desktop ships the workbench platform with its default features and keeps business and enterprise plugins external', () => {
-  assert.deepEqual(PRODUCT_PACKAGES, ['workdsh-plugin-connectors', 'workdsh-plugin-experts', 'workdsh-plugin-library', 'workdsh-plugin-model-market', 'workdsh-plugin-projects', 'workdsh-plugin-skills', 'workdsh-plugin-workbenches'])
+  assert.deepEqual(PRODUCT_PACKAGES, ['workdsh-plugin-connectors', 'workdsh-plugin-experts', 'workdsh-plugin-library', 'workdsh-plugin-model-market', 'workdsh-plugin-projects', 'workdsh-plugin-prompts', 'workdsh-plugin-skills', 'workdsh-plugin-workbenches'])
   assert.deepEqual(ENTERPRISE_PACKAGES, ['workdsh-provider-identity-enterprise', 'workdsh-plugin-enterprise-collaboration', 'workdsh-enterprise-connection'])
-  assert.equal(RELEASE_PACKAGES.length, 17)
+  assert.equal(RELEASE_PACKAGES.length, 18)
   assert.doesNotThrow(() => verifyDefaultProfile(defaultProfile()))
   for (const name of ['workdsh-plugin-office', 'workdsh-plugin-notifications', 'workdsh-plugin-quality-analysis', ...ENTERPRISE_PACKAGES]) {
     const profile = defaultProfile()

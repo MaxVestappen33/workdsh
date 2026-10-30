@@ -1,0 +1,3 @@
+- insert:
+    - id: workdsh-prompts
+      name: workdsh-plugin-prompts
