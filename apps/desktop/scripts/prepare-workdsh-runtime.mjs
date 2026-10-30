@@ -8,8 +8,11 @@ import { fileURLToPath } from 'node:url'
 import { DSH_VERSION, OFFICIAL_PNPM_VERSION } from './runtime-version.mjs'
 import { BUILTIN_BUNDLE_ENTRIES, BUILTIN_BUNDLES, CATALOG_PACKAGES, ENTERPRISE_PACKAGES, PRODUCT_PACKAGES, RELEASE_PACKAGES } from './workdsh-package-boundary.mjs'
 import { composeProfilePatches, verifyDefaultComposition, verifyDefaultProfile, verifyInstalledDshVersions, verifyOfficialWebPackages, verifyPackageDshReferences, verifyProfileRelease, verifyReleaseArchives } from './verify-profile-release.mjs'
-import { runtimeArchitecture, runtimeArchitectureYaml } from './runtime-architecture.mjs'
+import { runtimeArchitecture, runtimeArchitectureYaml, isCrossTarget } from './runtime-architecture.mjs'
 const architecture = runtimeArchitecture()
+// 交叉构建（例如在 macOS 上产出 linux-arm64）无法用宿主 Node 加载目标平台的
+// Profile 原生依赖，因此这些执行型校验留到目标机上完成，只保留静态校验。
+const cross = isCrossTarget()
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const output = join(desktopRoot, 'build/workdsh-runtime')
 const profile = join(output, 'profiles/workdsh')
@@ -80,21 +83,25 @@ function verifyInstalled() {
   const lock = readFileSync(join(profile, 'pnpm-lock.yaml'), 'utf8')
   if (/file:(?:\/|[a-z]:)/iu.test(lock)) throw new Error('Runtime lock contains a build-machine path')
   const cli = join(profile, 'node_modules/@deepseek-ai/dsh/lib/bin.js')
-  const config = spawnSync(process.execPath, [cli, '--profile', 'workdsh', '--dump-config'], { env: { ...process.env, DSH_HOME: output }, encoding: 'utf8', timeout: 120_000, maxBuffer: 8 * 1024 * 1024 })
-  if (config.error || config.status !== 0) throw new Error('Official runtime composition failed: ' + (config.error ?? config.stderr))
-  verifyOfficialWebPackages(manifest, profile, config.stdout)
-  verifyDefaultComposition(config.stdout)
-  for (const id of ['skillhub', 'dsh-market']) {
-    if (!config.stdout.includes('id: ' + id)) throw new Error('Missing community catalog integration: ' + id)
-  }
-  for (const [name, ids] of Object.entries(BUILTIN_BUNDLE_ENTRIES)) {
-    for (const id of ids) if (!config.stdout.includes('id: ' + id)) throw new Error(`Built-in plugin ${name} is missing entry from the default composition: ${id}`)
-  }
-  for (const id of ['workdsh-installation-probe', 'workdsh-identity-local', 'workdsh-access', 'workdsh-audit', 'workdsh-workbenches']) {
-    if (!config.stdout.includes('id: ' + id)) throw new Error('Missing required infrastructure: ' + id)
-  }
-  for (const name of ['workdsh-plugin-office', 'workdsh-plugin-activity', 'workdsh-plugin-quality-analysis']) {
-    if (existsSync(join(profile, 'node_modules', name)) || config.stdout.includes('name: ' + name)) throw new Error('External feature was bundled by default: ' + name)
+  if (!cross) {
+    const config = spawnSync(process.execPath, [cli, '--profile', 'workdsh', '--dump-config'], { env: { ...process.env, DSH_HOME: output }, encoding: 'utf8', timeout: 120_000, maxBuffer: 8 * 1024 * 1024 })
+    if (config.error || config.status !== 0) throw new Error('Official runtime composition failed: ' + (config.error ?? config.stderr))
+    verifyOfficialWebPackages(manifest, profile, config.stdout)
+    verifyDefaultComposition(config.stdout)
+    for (const id of ['skillhub', 'dsh-market']) {
+      if (!config.stdout.includes('id: ' + id)) throw new Error('Missing community catalog integration: ' + id)
+    }
+    for (const [name, ids] of Object.entries(BUILTIN_BUNDLE_ENTRIES)) {
+      for (const id of ids) if (!config.stdout.includes('id: ' + id)) throw new Error(`Built-in plugin ${name} is missing entry from the default composition: ${id}`)
+    }
+    for (const id of ['workdsh-installation-probe', 'workdsh-identity-local', 'workdsh-access', 'workdsh-audit', 'workdsh-workbenches']) {
+      if (!config.stdout.includes('id: ' + id)) throw new Error('Missing required infrastructure: ' + id)
+    }
+    for (const name of ['workdsh-plugin-office', 'workdsh-plugin-activity', 'workdsh-plugin-quality-analysis']) {
+      if (existsSync(join(profile, 'node_modules', name)) || config.stdout.includes('name: ' + name)) throw new Error('External feature was bundled by default: ' + name)
+    }
+  } else {
+    console.warn(`Skipped host-executed composition checks for cross target ${architecture.platform}-${architecture.targetArch}; run them on the target platform.`)
   }
   run(process.execPath, [join(desktopRoot, 'scripts/verify-product-plugin-inventory.mjs'), output])
 }

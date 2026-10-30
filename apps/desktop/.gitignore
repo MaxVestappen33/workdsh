@@ -4,6 +4,8 @@ node_modules/
 
 build/workdsh-runtime
 build/workdsh-runtime.*
+build/derived-runtime
+build/derived-runtime-cache
 build/workdsh-profile-release*
 build/.workdsh-release-*
 build/.workdsh-node

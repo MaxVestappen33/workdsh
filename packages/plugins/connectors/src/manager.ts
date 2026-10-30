@@ -167,23 +167,29 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
     });
   }
 
+  /** 未显式选择过的会话默认带上全部可用连接器；显式保存过就按保存值（含显式清空的空数组）。 */
   async selection(sessionId: string): Promise<readonly string[]> {
     await this.authorizeSession(sessionId);
-    return [...(this.selectionTable().get(sessionId)?.connectorIds ?? [])];
+    return [...this.effectiveSelection(sessionId)];
   }
 
   async setSelection(sessionId: string, connectorIds: readonly string[]): Promise<readonly string[]> {
     await this.authorizeSession(sessionId);
     const unique = [...new Set(connectorIds)];
-    for (const id of unique) {
-      const definition = this.definition(id);
-      if (!definition.enabled || this.runtime(id).state !== 'ready') throw new Error('connector/not-ready');
+    // 默认全选会带上当时可用的连接器，之后它可能掉线或被删除；这里只保存当前真正可用的，
+    // 避免一个不可用的历史选择阻塞整次变更（用户也就无法再调整其它连接器）。
+    const usable = unique.filter(id => {
+      const definition = this.table().get(id);
+      return Boolean(definition?.enabled && this.runtime(id).state === 'ready');
+    });
+    if (usable.length !== unique.length) {
+      this.ctx.logger.warn(`连接器：本次选择忽略了 ${unique.length - usable.length} 个当前不可用的连接器（${unique.filter(id => !usable.includes(id)).join('、')}）。`);
     }
     await this.authorizeSession(sessionId);
-    await this.selectionTable().put(sessionId, { sessionId, connectorIds: unique, updatedAt: new Date().toISOString() });
+    await this.selectionTable().put(sessionId, { sessionId, connectorIds: usable, updatedAt: new Date().toISOString() });
     const agent = this.ctx.agents.get(sessionId as Agent['id']);
     if (agent) this.applyRestriction(agent);
-    return unique;
+    return usable;
   }
 
   async dispose(): Promise<void> { for (const [id] of this.runtimes) await this.stop(id, false); }
@@ -207,6 +213,8 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
       reconnect: { enabled: true, initialDelayMs: 250, maxDelayMs: 5_000, maxAttempts: 4 } }) as ChildFiber & PromiseLike<unknown>;
     try { await fiber; runtime.child = fiber; runtime.state = 'ready'; }
     catch (cause) { await fiber.dispose().catch(() => undefined); runtime.state = 'offline'; runtime.diagnostic = failureText(cause); throw cause; }
+    // 工具集合在 start 期间才注册完成：这里重算限制，让未显式选择过的会话立刻带上新可用的连接器。
+    finally { this.reapplyRestrictions(); }
   }
 
   private async stop(id: string, remainsEnabled: boolean): Promise<void> {
@@ -231,10 +239,13 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
     const schemas = this.ctx.tools.schemas().filter(tool => tool.name.startsWith(prefix));
     const toolNames = schemas.map(tool => tool.name); const tools = schemas.map(toolDetail);
     if (!runtime.child) return { state: runtime.state, toolNames, tools, resourceCount: 0, resourceTemplateCount: 0, ...(runtime.diagnostic ? { diagnostic: runtime.diagnostic } : {}) };
-    if (!toolNames.length) return { state: 'discovering', toolNames, tools, resourceCount: 0, resourceTemplateCount: 0 };
+    if (!toolNames.length) {
+      // 重连期间工具会暂时消失：同步运行态，恢复后据此重算会话工具限制。
+      if (runtime.state === 'ready') { runtime.state = 'discovering'; this.reapplyRestrictions(); }
+      return { state: 'discovering', toolNames, tools, resourceCount: 0, resourceTemplateCount: 0 };
+    }
     try {
-      const agent = this.ctx.agents.list().find(candidate =>
-        this.selectionTable().get(String(candidate.id))?.connectorIds.includes(definition.id));
+      const agent = this.ctx.agents.list().find(candidate => this.usesConnector(String(candidate.id), definition));
       if (!agent) {
         runtime.diagnostic = '工具已连接并可用；资源与 URI 模板需要在会话中探测，当前没有会话选择该 MCP，暂未统计。';
         return { state: 'ready', toolNames, tools, resourceCount: 0, resourceTemplateCount: 0, diagnostic: runtime.diagnostic };
@@ -251,11 +262,16 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
         ? await call('list_mcp_resources', { server: definition.serverName }).catch(() => unavailable('resources')) : unavailable('resources');
       const templates: JsonRecord = this.ctx.tools.get('list_mcp_resource_templates')
         ? await call('list_mcp_resource_templates', { server: definition.serverName }).catch(() => unavailable('templates')) : unavailable('templates');
+      const becameReady = runtime.state !== 'ready';
       runtime.state = 'ready'; runtime.diagnostic = resourceDiagnostics.length ? '工具已连接并可用；该服务未提供资源或 URI 模板能力，暂未统计。' : undefined;
+      // 恢复可用后，未显式选择过的会话要立即拿到该连接器的工具命名空间。
+      if (becameReady) this.reapplyRestrictions();
       return { state: 'ready', toolNames, tools, ...(runtime.diagnostic ? { diagnostic: runtime.diagnostic } : {}), resourceCount: Array.isArray(resources.resources) ? resources.resources.length : 0,
         resourceTemplateCount: Array.isArray(templates.resourceTemplates) ? templates.resourceTemplates.length : 0 };
     } catch (cause) {
+      const becameOffline = runtime.state !== 'offline';
       runtime.state = 'offline'; runtime.diagnostic = cause instanceof Error ? cause.message : 'MCP 健康检查失败。';
+      if (becameOffline) this.reapplyRestrictions();
       return { state: 'offline', toolNames, tools, resourceCount: 0, resourceTemplateCount: 0, diagnostic: runtime.diagnostic };
     }
   }
@@ -287,10 +303,26 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
   private runtime(id: string): Runtime { let row = this.runtimes.get(id); if (!row) { row = { state: 'disabled' }; this.runtimes.set(id, row); } return row; }
   private table(): KvTable<string, ConnectorDefinition> { if (!this.definitions) throw new Error('connector/unavailable'); return this.definitions; }
   private selectionTable(): KvTable<string, ConnectorSelection> { if (!this.selections) throw new Error('connector/unavailable'); return this.selections; }
+  /** 当前可用的连接器：已启用且运行状态为 ready。 */
+  private availableSelection(): readonly string[] {
+    return [...this.table().entries()]
+      .filter(([, definition]) => definition.enabled && this.runtime(definition.id).state === 'ready')
+      .map(([id]) => id);
+  }
+  /** 会话的有效选择：有显式记录就按记录（含空数组），从未选择过则默认全部可用连接器。 */
+  private effectiveSelection(sessionId: string): readonly string[] {
+    const row = this.selectionTable().get(sessionId);
+    return row ? row.connectorIds : this.availableSelection();
+  }
+  /** 未显式选择过的会话把已启用的连接器都视为本次对话可用（资源探测需要这样的调用方）。 */
+  private usesConnector(sessionId: string, definition: ConnectorDefinition): boolean {
+    const row = this.selectionTable().get(sessionId);
+    return row ? row.connectorIds.includes(definition.id) : definition.enabled;
+  }
   private applyRestriction(agent: Agent): void {
     this.restrictions.get(agent)?.();
     this.restrictions.delete(agent);
-    const selected = new Set(this.selectionTable().get(String(agent.id))?.connectorIds ?? []);
+    const selected = new Set(this.effectiveSelection(String(agent.id)));
     const denied = [...this.table().entries()]
       .filter(([id]) => !selected.has(id))
       .flatMap(([, definition]) => this.ctx.tools.schemas().map(tool => tool.name).filter(name => name.startsWith(`mcp__${definition.serverName}__`)));

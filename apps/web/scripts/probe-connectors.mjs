@@ -75,14 +75,17 @@ try {
   agent.ctx = agentScope.ctx;
   const unregisterAgent = ctx.agents.register(agent);
   await unregisterAgent;
-  if ((await manager.selection('probe-session')).length !== 0) throw new Error('A new conversation must not select a connector by default.');
-  if (tools.schemas(agent).some(tool => tool.name.startsWith('mcp__workdsh-example__'))) throw new Error('Unselected MCP tools leaked into a new conversation.');
+  // 新会话默认带上全部已连接（ready）连接器，并把它们的工具直接提供给模型。
+  const defaults = await manager.selection('probe-session');
+  if (defaults.length !== 1 || defaults[0] !== ready.id) throw new Error(`A new conversation must default to all ready connectors: ${JSON.stringify(defaults)}`);
+  if (!tools.schemas(agent).some(tool => tool.name === 'mcp__workdsh-example__search_catalog')) throw new Error('Default connectors were not exposed to a new conversation.');
   const selected = await manager.setSelection('probe-session', [ready.id]);
   if (selected.length !== 1 || selected[0] !== ready.id) throw new Error('Conversation connector selection did not persist.');
   if (!tools.schemas(agent).some(tool => tool.name === 'mcp__workdsh-example__search_catalog')) throw new Error('Selected MCP tools were not exposed to the conversation.');
   const selectedRow = (await manager.list()).find(row => row.id === ready.id);
   if (selectedRow?.resourceCount !== 1 || selectedRow?.resourceTemplateCount !== 1) throw new Error(`Unexpected selected projection: ${JSON.stringify(selectedRow)}`);
   if ((await manager.setSelection('probe-session', [])).length !== 0) throw new Error('Conversation connector selection did not clear.');
+  if ((await manager.selection('probe-session')).length !== 0) throw new Error('An explicitly cleared conversation must not fall back to the default set.');
   if (tools.schemas(agent).some(tool => tool.name.startsWith('mcp__workdsh-example__'))) throw new Error('Cleared MCP tools remained exposed to the conversation.');
   await unregisterAgent();
   await agentScope.dispose();
@@ -114,7 +117,8 @@ try {
     disableRemovedTools: true,
     reenableRestoredTools: true,
     multiInstanceCreateRemove: true,
-    defaultConversationSelection: [],
+    defaultConversationSelection: defaults,
+    explicitEmptySelectionHonored: true,
     conversationSelectionRoundTrip: true,
     conversationToolIsolation: true,
   }, null, 2));

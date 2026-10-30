@@ -1,0 +1,6 @@
+{
+  "placeholder": true,
+  "platform": "linux",
+  "arch": "arm64",
+  "note": "Packaging smoke stub; no official Linux DSH runtime is locked in upstream.json."
+}

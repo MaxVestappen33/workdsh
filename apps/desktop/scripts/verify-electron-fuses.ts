@@ -93,6 +93,11 @@ type ElectronPlatformName = 'darwin' | 'linux' | 'win32'
 
 const DIR_TARGET = 'dir'
 
+/** The platform this build host can actually execute packaged binaries for. */
+const HOST_PLATFORM_NAME: ElectronPlatformName = process.platform === 'darwin'
+  ? 'darwin'
+  : process.platform === 'win32' ? 'win32' : 'linux'
+
 const DESKTOP_MANIFEST = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
 ) as { readonly name: string; readonly productName?: string }
@@ -363,7 +368,11 @@ export async function afterAllArtifactBuild(
   const contexts = resolveFinalPackagedRuntimeContexts(result, exists)
   for (const context of contexts) {
     await verifyElectronExecutableFuses(resolvePackagedExecutablePath(context), read)
-    smoke(context)
+    if (context.electronPlatformName === HOST_PLATFORM_NAME) {
+      smoke(context)
+    } else {
+      console.warn(`Cross-built ${context.electronPlatformName} artifact: skipped the packaged runtime smoke; run it on a ${context.electronPlatformName} host.`)
+    }
   }
   return []
 }

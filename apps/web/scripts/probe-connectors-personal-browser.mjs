@@ -81,11 +81,16 @@ try {
   assert.deepEqual(await api('connectors','list'),[]); // 出厂组成不预置 MCP 定义。
   const example=await api('connectors','create',{title:'WorkDSH MCP 示例',description:'个人默认组成验收夹具',serverName:'workdsh-example',transport:'stdio',command:process.execPath,args:[join(profile,'node_modules/workdsh-plugin-connectors/dist/example-server.mjs')]});
   assert.equal(example.state,'ready');
-  await page.getByRole('button',{name:'连接器',exact:true}).click();
+  assert.deepEqual(await api('connectors','selection',{sessionId}),[example.id]); // 连接成功后默认进入本次对话。
+  await expect(page.getByRole('button',{name:`连接器：${example.title}`,exact:true})).toBeVisible({timeout:15000});
+  await page.getByRole('button',{name:`连接器：${example.title}`,exact:true}).click();
+  await page.getByRole('button',{name:`从本次对话移除 ${example.title}`,exact:true}).click();
+  await expect(page.getByRole('button',{name:`用于本次对话 ${example.title}`,exact:true})).toBeVisible();
+  assert.deepEqual(await api('connectors','selection',{sessionId}),[]); // 显式清空后不回落默认全选。
   await page.getByRole('button',{name:`用于本次对话 ${example.title}`,exact:true}).click();
   await expect(page.getByRole('button',{name:`从本次对话移除 ${example.title}`,exact:true})).toBeVisible();
   assert.deepEqual(await api('connectors','selection',{sessionId}),[example.id]);
-  pass('Native blank Session starts with no MCP and saves an explicit choice');
+  pass('An available MCP is selected by default in a blank Session and an explicit choice is saved');
   await page.reload(); await dismiss(page);
   await expect(page.getByRole('button',{name:`连接器：${example.title}`,exact:true})).toBeVisible();
   assert.deepEqual(await api('connectors','selection',{sessionId}),[example.id]);

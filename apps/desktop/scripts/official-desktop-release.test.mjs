@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, symlink
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { copyOfficialRuntime, isOfficialReleaseCacheValid, verifyArtifact, lock } from './official-desktop-release.mjs'
-import {OFFICIAL_PROVENANCE_FILE,createOfficialRuntimeProvenance,officialDesktopArtifact,writeOfficialRuntimeProvenance,verifyOfficialRuntimeProvenance} from './official-runtime-provenance.mjs'
+import {OFFICIAL_PROVENANCE_FILE,createOfficialRuntimeProvenance,officialDesktopArtifact,writeOfficialRuntimeProvenance,verifyOfficialRuntimeProvenance,derivedRuntimeLock,writeDerivedRuntimeProvenance,verifyDerivedRuntimeProvenance} from './official-runtime-provenance.mjs'
 
 test('both runtime copies preserve relative executable links after their sources are removed', { skip: process.platform === 'win32' }, () => {
   const directory = mkdtempSync(join(tmpdir(), 'workdsh runtime links '))
@@ -104,4 +104,40 @@ test('binary source locking has no guessed version, range or automatic fallback'
   }
   const changed=structuredClone(lock);changed.desktopArtifacts['mac-x64'].url=changed.desktopArtifacts['mac-arm64'].url
   assert.throws(()=>officialDesktopArtifact('mac-x64',changed),/invalid/)
+})
+
+test('derived linux runtime locks every upstream component and never claims an official archive',()=>{
+  assert.throws(()=>officialDesktopArtifact('linux-arm64'),/not explicitly locked/,'a derived target must not pass the official archive gate')
+  const derived=derivedRuntimeLock('linux-arm64')
+  assert.equal(derived.version,lock.version)
+  assert.equal(derived.node.version,lock.primaryRuntime.node)
+  assert.equal(derived.python.version,lock.primaryRuntime.python)
+  assert.equal(derived.pnpm.version,lock.primaryRuntime.pnpm)
+  for(const component of [derived.node,derived.python]){
+    assert.equal(new URL(component.url).protocol,'https:')
+    assert.match(component.sha256,/^[a-f0-9]{64}$/u)
+  }
+  assert.ok(derived.wheelNames.length>=13,'every bundled python package needs a locked linux wheel')
+  const directory=mkdtempSync(join(tmpdir(),'workdsh-derived-source-'))
+  try{
+    const metadata=JSON.stringify({desktopVersion:derived.version,platform:'linux',arch:'arm64',node:derived.node.version,pnpm:derived.pnpm.version,python:derived.python.version,payloadDigest:'c'.repeat(64)})+'\n'
+    writeFileSync(join(directory,'runtime.json'),metadata)
+    const receipt=writeDerivedRuntimeProvenance(directory,'linux-arm64')
+    assert.equal(receipt.source,'derived')
+    assert.deepEqual(receipt.components.node,derived.node)
+    assert.deepEqual(verifyDerivedRuntimeProvenance(directory,'linux-arm64'),receipt)
+    assert.throws(()=>verifyDerivedRuntimeProvenance(directory,'mac-arm64'),/not explicitly locked/)
+    writeFileSync(join(directory,OFFICIAL_PROVENANCE_FILE),JSON.stringify({...receipt,pythonWheelsSha256:'d'.repeat(64)}))
+    assert.throws(()=>verifyDerivedRuntimeProvenance(directory,'linux-arm64'),/provenance mismatch/)
+  }finally{rmSync(directory,{recursive:true,force:true})}
+  for(const mutate of [
+    lock=>{lock.derivedRuntimes['linux-arm64'].components.node.sha256='tampered'},
+    lock=>{lock.derivedRuntimes['linux-arm64'].components.python.url='http://example.invalid/python.tar.gz'},
+    lock=>{lock.derivedRuntimes['linux-arm64'].components.pnpm.source='npm'},
+    lock=>{lock.derivedRuntimes['linux-arm64'].pythonWheels={}},
+    lock=>{delete lock.derivedRuntimes['linux-arm64']},
+  ]){
+    const changed=structuredClone(lock);mutate(changed)
+    assert.throws(()=>derivedRuntimeLock('linux-arm64',changed),/not explicitly locked|invalid|must be/)
+  }
 })

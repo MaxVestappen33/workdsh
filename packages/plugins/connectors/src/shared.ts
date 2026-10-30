@@ -107,6 +107,7 @@ export interface ConnectorManagementService {
   update(id: string, input: ConnectorInput): Promise<ConnectorSummary>;
   remove(id: string): Promise<void>;
   setEnabled(id: string, enabled: boolean): Promise<ConnectorSummary>;
+  /** 未显式选择过的会话返回全部可用（已连接）连接器；显式保存过则按保存值。 */
   selection(sessionId: string): Promise<readonly string[]>;
   setSelection(sessionId: string, connectorIds: readonly string[]): Promise<readonly string[]>;
 }

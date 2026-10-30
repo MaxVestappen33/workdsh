@@ -7,13 +7,13 @@ import { fileURLToPath } from 'node:url'
 import { copyOfficialRuntime, prepareOfficialRelease } from './official-desktop-release.mjs'
 import { DSH_VERSION, OFFICIAL_PNPM_VERSION } from './runtime-version.mjs'
 import { ensureNativeWorkbenchFrame, verifyNativeWorkbenchFrame } from '../../../scripts/native-workbench-frame-patch.mjs'
-import {verifyOfficialRuntimeProvenance} from './official-runtime-provenance.mjs'
+import { isDerivedTarget, verifyRuntimeProvenance } from './official-runtime-provenance.mjs'
+import { prepareDerivedRuntime } from './derived-linux-runtime.mjs'
+import { packagedTarget } from './runtime-architecture.mjs'
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const target = process.platform === 'win32' ? 'win-x64'
-  : process.platform === 'darwin' ? `mac-${process.env.WORKDSH_MAC_ARCH ?? process.arch}`
-    : undefined
-if (target === undefined || !['win-x64', 'mac-arm64', 'mac-x64'].includes(target)) {
+const target = packagedTarget()
+if (target === undefined || !['win-x64', 'mac-arm64', 'mac-x64', 'linux-arm64', 'linux-x64'].includes(target)) {
   throw new Error(`Unsupported WorkDSH primary runtime target: ${target ?? process.platform}`)
 }
 const output = join(desktopRoot, 'build', 'workdsh-runtime')
@@ -53,7 +53,9 @@ function fingerprintPayload(root) {
   walk(root, '')
   return digest.digest('hex')
 }
-const released = await prepareOfficialRelease(desktopRoot, target)
+const released = isDerivedTarget(target)
+  ? await prepareDerivedRuntime(desktopRoot, target)
+  : await prepareOfficialRelease(desktopRoot, target)
 const materialized = payloadNames.every(name => {
   const destination = join(output, name)
   return existsSync(destination) && fingerprintPayload(destination) === fingerprintPayload(join(released, 'runtime', name))
@@ -68,7 +70,7 @@ if (!existsSync(manifestPath) || !existsSync(join(output, 'office-skills'))) {
   throw new Error('Official primary runtime payload is incomplete')
 }
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
-verifyOfficialRuntimeProvenance(join(output,'primary-runtime'),target)
+verifyRuntimeProvenance(join(output,'primary-runtime'),target)
 const runtimePnpm = join(output, 'primary-runtime', 'dependencies', 'pnpm', 'bin', 'pnpm.cjs')
 if (manifest.pnpm !== OFFICIAL_PNPM_VERSION || !existsSync(runtimePnpm)) throw new Error('Official primary runtime must carry the locked official pnpm JavaScript CLI')
 const packagePath = join(profile, 'package.json')

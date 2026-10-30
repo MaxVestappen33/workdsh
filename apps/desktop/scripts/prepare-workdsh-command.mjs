@@ -1,9 +1,13 @@
 import { mkdirSync, copyFileSync, writeFileSync } from 'node:fs'
 import { cpSync } from 'node:fs'
 import { prepareOfficialRelease } from './official-desktop-release.mjs'
+import { isDerivedTarget } from './official-runtime-provenance.mjs'
+import { prepareDerivedRuntime } from './derived-linux-runtime.mjs'
+import { packagedTarget } from './runtime-architecture.mjs'
 import { resolve, join } from 'node:path'
-const target = process.platform === 'win32' ? 'win-x64' : `mac-${process.env.WORKDSH_MAC_ARCH ?? process.arch}`
-const released = await prepareOfficialRelease(resolve('.'), target)
+const target = packagedTarget()
+if (target === undefined) throw new Error('Unsupported WorkDSH command runtime target: ' + process.platform)
+const released = isDerivedTarget(target) ? await prepareDerivedRuntime(resolve('.'), target) : await prepareOfficialRelease(resolve('.'), target)
 const destination = resolve('build/workdsh-runtime/runtime/cli')
 cpSync(join(released, 'runtime/cli'), destination, { recursive: true, force: true, dereference: false })
 mkdirSync(join(destination, 'bin'), { recursive: true })

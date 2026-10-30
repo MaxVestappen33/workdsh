@@ -1413,8 +1413,13 @@ async function leaveWorkspace(): Promise<void> {
   pendingConnection = undefined; entrySurface = false
 }
 
-/** Clear the account session, stop the bound runtime and put the app back to the login page. */
-async function leaveAccountWorkspace(): Promise<void> {
+/**
+ * Clear the account session, stop the bound runtime and put the app back to the login page.
+ *
+ * `keepSession` is for「凭据已验证、但本机没能进入工作区」：那种情况属于本机运行失败，
+ * 不是用户退出登录，清掉本地加密登录态会让下一次打开又回登录页，还会顺带撤销远端会话。
+ */
+async function leaveAccountWorkspace(options: { keepSession?: boolean } = {}): Promise<void> {
   const page = window
   account?.stopSync?.()
   const session = account
@@ -1426,9 +1431,11 @@ async function leaveAccountWorkspace(): Promise<void> {
   account = undefined
   rememberCommandSpace()
   if (session) {
-    session.store.clear()
-    const revoked = await session.login.logout()
-    if (!revoked) dialog.showErrorBox('已退出登录', '本机账号登录已停止；后台连接失败，远端登出尚未确认。')
+    if (options.keepSession !== true) {
+      session.store.clear()
+      const revoked = await session.login.logout()
+      if (!revoked) dialog.showErrorBox('已退出登录', '本机账号登录已停止；后台连接失败，远端登出尚未确认。')
+    }
     if (page && !page.isDestroyed()) {
       await page.webContents.session.closeAllConnections()
       await page.webContents.session.clearStorageData()
@@ -1910,7 +1917,9 @@ function installLoginHandlers(): void {
       const message = error instanceof Error ? error.message : '登录失败'
       markStartup(`账号登录失败（耗时 ${loginStartedAt === undefined ? '?' : `${Date.now() - loginStartedAt}ms`}）：${message}`)
       loginStartedAt = undefined
-      if (account) { await leaveAccountWorkspace(); showAccountLogin(); dialog.showErrorBox('无法进入', message) }
+      // 凭据已经验证并落盘：这里只是本机没进入工作区（运行时/主机启动失败）。
+      // 保留已保存的登录态，否则每次启动失败都会额外丢掉一次登录。
+      if (account) { await leaveAccountWorkspace({ keepSession: true }); showAccountLogin(); dialog.showErrorBox('无法进入', message) }
       else if (admitted && !await admitted.logout()) dialog.showErrorBox('登录未完成', '后台连接失败，远端登录撤销尚未确认。')
       return { error: message }
     } finally { endSwitch() }

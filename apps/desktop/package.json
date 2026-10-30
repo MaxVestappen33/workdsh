@@ -47,6 +47,7 @@
     "dist:mac-smoke": "yarn run prepare:workdsh-runtime && yarn run prepare:workdsh-primary-runtime && yarn run prepare:workdsh-command && node scripts/package-mac.ts",
     "dist:win": "yarn run prepare:workdsh-runtime && yarn run prepare:workdsh-primary-runtime && yarn run prepare:workdsh-command && node scripts/package-win.ts",
     "dist:win-portable": "yarn run prepare:workdsh-runtime && yarn run prepare:workdsh-primary-runtime && yarn run prepare:workdsh-command && node scripts/package-win-portable.ts",
+    "dist:linux": "yarn run build && WORKDSH_TARGET_PLATFORM=linux WORKDSH_TARGET_ARCH=arm64 yarn run prepare:workdsh-runtime && WORKDSH_TARGET_PLATFORM=linux WORKDSH_TARGET_ARCH=arm64 yarn run prepare:workdsh-primary-runtime && WORKDSH_TARGET_PLATFORM=linux WORKDSH_TARGET_ARCH=arm64 yarn run prepare:workdsh-command && node scripts/package-linux.mjs",
     "prepare:workdsh-runtime": "node scripts/prepare-workdsh-runtime.mjs",
     "prepare:workdsh-primary-runtime": "node scripts/prepare-workdsh-primary-runtime.mjs",
     "prepare:workdsh-command": "node scripts/prepare-workdsh-command.mjs"
@@ -182,9 +183,15 @@
         "build/tray-icon-blue@2x.png"
       ],
       "target": [
-        "dir"
+        "dir",
+        "deb"
       ],
-      "icon": "build/app-icon.png"
+      "icon": "build/app-icon.png",
+      "category": "Utility",
+      "maintainer": "同云（北京）数字科技有限公司"
+    },
+    "deb": {
+      "artifactName": "PoliceAssistant-${version}-${arch}.deb"
     },
     "extraResources": [
       {

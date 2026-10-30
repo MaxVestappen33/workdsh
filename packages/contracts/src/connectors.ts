@@ -49,6 +49,7 @@ export interface ConnectorManagementService {
   update(id: string, input: ConnectorInput): Promise<ConnectorSummary>;
   remove(id: string): Promise<void>;
   setEnabled(id: string, enabled: boolean): Promise<ConnectorSummary>;
+  /** Defaults to every ready connector until the session saves an explicit choice. */
   selection(sessionId: string): Promise<readonly string[]>;
   setSelection(sessionId: string, connectorIds: readonly string[]): Promise<readonly string[]>;
 }

@@ -10,7 +10,7 @@ import { verifyBuiltPackageExports, verifyDefaultComposition, verifyDefaultProfi
 import { parseDeploymentConfig } from '../src/deployment-config.ts'
 import { MODEL_CREDENTIALS_FILENAME, parseModelCredentials } from '../src/model-credentials.ts'
 import { verifyNativeWorkbenchFrame } from '../../../scripts/native-workbench-frame-patch.mjs'
-import {verifyOfficialRuntimeProvenance} from './official-runtime-provenance.mjs'
+import { verifyRuntimeProvenance } from './official-runtime-provenance.mjs'
 
 interface PackContext {
   appOutDir: string
@@ -85,9 +85,10 @@ export async function afterPack(context: PackContext): Promise<void> {
     arch?: string
   }
   const expectedArch=context.arch===1?'x64':context.arch===3?'arm64':undefined
-  if(!expectedArch||!['darwin','win32'].includes(context.electronPlatformName))throw Error('Unsupported packaged binary resource target')
-  const binaryTarget=`${context.electronPlatformName==='darwin'?'mac':'win'}-${expectedArch}`
-  verifyOfficialRuntimeProvenance(join(runtime,'primary-runtime'),binaryTarget)
+  const platformPrefix=context.electronPlatformName==='darwin'?'mac':context.electronPlatformName==='win32'?'win':context.electronPlatformName==='linux'?'linux':undefined
+  if(!expectedArch||platformPrefix===undefined)throw Error('Unsupported packaged binary resource target')
+  const binaryTarget=`${platformPrefix}-${expectedArch}`
+  verifyRuntimeProvenance(join(runtime,'primary-runtime'),binaryTarget)
   const profile = join(runtime, 'profiles', 'workdsh')
   // Inspect copied Resources bytes: a preparation log or receipt cannot prove
   // that the official Conversation frame actually reached this installer.
@@ -165,30 +166,40 @@ export async function afterPack(context: PackContext): Promise<void> {
     const signed = spawnSync('/usr/bin/codesign', ['--force', '--sign', '-', '--options', 'runtime', '--entitlements', entitlements, node], { encoding: 'utf8', timeout: 30_000 })
     if (signed.error || signed.status !== 0) throw new Error('Packaged Node runtime signing failed: ' + String(signed.error ?? signed.stderr))
   }
-  const native = spawnSync(node, ['--input-type=module', '-e',
-    "import { createRequire } from 'node:module'; const root = createRequire(process.argv[1]); createRequire(root.resolve('@deepseek-ai/cordis-plugin-loader'))('node-addon-require-builtin'); console.log('native runtime load passed')", join(profile, 'package.json')],
-    { encoding: 'utf8', timeout: 30_000 })
-  if (native.error || native.status !== 0) throw new Error('Packaged Node cannot load the official native plugin dependency: ' + String(native.error ?? native.stderr))
-  process.stdout.write(native.stdout)
+  // Cross-built artifacts carry the target platform's Node binary, which the
+  // build host cannot execute. Static payload checks above still run; the
+  // executable checks below belong to the target platform.
+  const runsOnThisHost = context.electronPlatformName === (process.platform === 'darwin' ? 'darwin' : process.platform === 'win32' ? 'win32' : 'linux')
+  if (!runsOnThisHost) {
+    console.warn(`Cross-built ${binaryTarget} carrier: skipped executable checks that require the target platform; run them on a ${context.electronPlatformName} host before release.`)
+  } else {
+    const native = spawnSync(node, ['--input-type=module', '-e',
+      "import { createRequire } from 'node:module'; const root = createRequire(process.argv[1]); createRequire(root.resolve('@deepseek-ai/cordis-plugin-loader'))('node-addon-require-builtin'); console.log('native runtime load passed')", join(profile, 'package.json')],
+      { encoding: 'utf8', timeout: 30_000 })
+    if (native.error || native.status !== 0) throw new Error('Packaged Node cannot load the official native plugin dependency: ' + String(native.error ?? native.stderr))
+    process.stdout.write(native.stdout)
+  }
   const pnpm = join(runtime, 'primary-runtime', 'dependencies', 'pnpm', 'bin', 'pnpm.cjs')
   if (primary.pnpm !== OFFICIAL_PNPM_VERSION || !existsSync(pnpm)) throw new Error('Packaged official pnpm CLI is missing or has another version')
-  const packageManager = spawnSync(node, [pnpm, '--version'], { encoding: 'utf8', timeout: 30_000 })
-  if (packageManager.error || packageManager.status !== 0 || packageManager.stdout.trim() !== primary.pnpm) {
-    throw new Error('Packaged official pnpm JavaScript CLI cannot run with its bundled Node')
+  if (runsOnThisHost) {
+    const packageManager = spawnSync(node, [pnpm, '--version'], { encoding: 'utf8', timeout: 30_000 })
+    if (packageManager.error || packageManager.status !== 0 || packageManager.stdout.trim() !== primary.pnpm) {
+      throw new Error('Packaged official pnpm JavaScript CLI cannot run with its bundled Node')
+    }
+    const inventoryCheck = fileURLToPath(new URL('./verify-product-plugin-inventory.mjs', import.meta.url))
+    const inventory = spawnSync(node, [inventoryCheck, runtime], {
+      encoding: 'utf8',
+      timeout: 120_000,
+    })
+    if (inventory.error || inventory.status !== 0) {
+      throw new Error(`Packaged WorkDSH plugin inventory check failed: ${String(inventory.error ?? inventory.stderr)}`)
+    }
+    process.stdout.write(inventory.stdout)
+    const hostCheck = fileURLToPath(new URL('./verify-installation-anchor.mjs', import.meta.url))
+    const host = spawnSync(node, [hostCheck, runtime], { encoding: 'utf8', timeout: 150_000, maxBuffer: 1024 * 1024 })
+    if (host.error || host.status !== 0) throw new Error('Packaged full Host startup check failed: ' + String(host.error ?? host.stderr + host.stdout))
+    process.stdout.write(host.stdout)
   }
-  const inventoryCheck = fileURLToPath(new URL('./verify-product-plugin-inventory.mjs', import.meta.url))
-  const inventory = spawnSync(node, [inventoryCheck, runtime], {
-    encoding: 'utf8',
-    timeout: 120_000,
-  })
-  if (inventory.error || inventory.status !== 0) {
-    throw new Error(`Packaged WorkDSH plugin inventory check failed: ${String(inventory.error ?? inventory.stderr)}`)
-  }
-  process.stdout.write(inventory.stdout)
-  const hostCheck = fileURLToPath(new URL('./verify-installation-anchor.mjs', import.meta.url))
-  const host = spawnSync(node, [hostCheck, runtime], { encoding: 'utf8', timeout: 150_000, maxBuffer: 1024 * 1024 })
-  if (host.error || host.status !== 0) throw new Error('Packaged full Host startup check failed: ' + String(host.error ?? host.stderr + host.stdout))
-  process.stdout.write(host.stdout)
   console.log(`Verified thin Electron carrier and ${names.length} root / ${instances} total Harness ${DSH_VERSION} package instances`)
 }
 
