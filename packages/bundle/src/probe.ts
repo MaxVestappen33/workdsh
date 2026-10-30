@@ -5,6 +5,7 @@ import type {} from '@deepseek-ai/dsh-agent';
 import type {} from '@deepseek-ai/dsh-attachment';
 import type {} from '@deepseek-ai/dsh-system-prompt';
 import { registerBrowserView } from './browser-view.js';
+import { installFeedbackForwarder } from './feedback.js';
 import { debugLogDirectory, installHttpLog } from './http-log.js';
 
 /** Product diagnostics only. Feature packages are installed as separate Profile layers. */
@@ -13,6 +14,8 @@ export const inject = ['connection', 'tools', 'agents', 'attachments', 'systemPr
 
 export function apply(ctx: Context): void {
   registerBrowserView(ctx);
+  // 反馈上报：官方弹窗只写会话日志，这里把同一条 feedback/record 转发到后台管理接口。
+  installFeedbackForwarder(ctx);
   // 调试日志（仅 workdsh-app.json 的 environment=dev）：出站 HTTP 落到日志目录，
   // 与载体写入的 Host 原始输出放在同一个目录，现场一次性收集即可。
   const logDirectory = debugLogDirectory();

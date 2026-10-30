@@ -14,6 +14,8 @@ export const inject = ['slots'];
 const ACCOUNT_PATH = '/api/auth/me';
 const LOGOUT_PATH = '/api/auth/logout';
 const ACCOUNT_TIMEOUT_MS = 8_000;
+/** 退出登录的最短点击间隔：请求失败（如后端无响应）后仍保持锁定，避免被连点反复打请求。 */
+const LOGOUT_COOLDOWN_MS = 3_000;
 /** SkillHub 广场的入口按钮：侧栏展示已由 WorkDSH 隐藏，改由本菜单触发同一个广场。 */
 const PLAZA_TRIGGER_SELECTOR = '.sh-plaza-trigger';
 
@@ -175,6 +177,15 @@ function AccountLauncher({ wide, settingsShortcut, openSettings }: PropsRuntime<
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // 连点保护：busy 状态要等下一次渲染才生效，双击/连点仍可能发出第二个退出请求；
+  // 这里用 ref 在事件处理里同步上锁，请求失败后还保留一段冷却期。
+  const signingOut = useRef(false);
+  // 主进程已确认退出（local:true）：此后按钮一直保持禁用，直到主进程收尾完成把整页切回登录页。
+  const leaving = useRef(false);
+  const cooldownUntil = useRef(0);
+  const cooldownTimer = useRef<number | undefined>(undefined);
+  const [cooling, setCooling] = useState(false);
+  useEffect(() => () => { window.clearTimeout(cooldownTimer.current); }, []);
 
   // 打开菜单时刷新账号档案：后端改了头像/组织名后无需重启应用即可生效。
   const toggle = (): void => {
@@ -187,6 +198,10 @@ function AccountLauncher({ wide, settingsShortcut, openSettings }: PropsRuntime<
   };
 
   const signOut = async (): Promise<void> => {
+    // 请求在途或仍在冷却期内：忽略点击，不发出第二个退出请求。
+    if (signingOut.current || Date.now() < cooldownUntil.current) return;
+    signingOut.current = true;
+    cooldownUntil.current = Date.now() + LOGOUT_COOLDOWN_MS;
     setBusy(true);
     setError('');
     try {
@@ -200,12 +215,28 @@ function AccountLauncher({ wide, settingsShortcut, openSettings }: PropsRuntime<
       if (!response.ok) throw new Error('退出登录失败，请重试。');
       const value = await response.json().catch(() => ({})) as { local?: unknown };
       // Desktop 主进程在收到 local:true 后清理会话并切回登录页，页面无需再跳转。
-      if (value?.local === true) return;
+      // 主进程收尾（含后台登出确认）可能还要等待数秒，这期间必须保持按钮禁用：
+      // 否则后台卡住时用户仍能继续点击并打出新的退出请求。
+      if (value?.local === true) { leaving.current = true; return; }
       window.location.assign('/login');
     } catch (cause) {
-      setError(cause instanceof Error && cause.message ? cause.message : '退出登录失败，请重试。');
+      // 主进程已受理退出，后续请求必然失败（会话/回环路由已关闭），不再展示误导性的错误。
+      if (leaving.current) return;
+      // 网络层失败（fetch 抛 TypeError，如本机服务已停止）统一给中文提示，不直出英文原文。
+      setError(cause instanceof TypeError ? '无法连接本机服务，请稍后重试。'
+        : cause instanceof Error && cause.message ? cause.message : '退出登录失败，请重试。');
     } finally {
-      setBusy(false);
+      signingOut.current = false;
+      // 已确认退出时保持 busy，直到主进程切换登录页卸载本组件。
+      if (!leaving.current) {
+        setBusy(false);
+        // 失败（例如后端长时间无响应）后仍要冷却一段时间，期间按钮保持禁用。
+        const remain = cooldownUntil.current - Date.now();
+        if (remain > 0) {
+          setCooling(true);
+          cooldownTimer.current = window.setTimeout(() => { cooldownTimer.current = undefined; setCooling(false); }, remain);
+        }
+      }
     }
   };
 
@@ -291,7 +322,7 @@ function AccountLauncher({ wide, settingsShortcut, openSettings }: PropsRuntime<
         footer={(
           <>
             <Button variant="outline" size="sm" disabled={busy} onClick={() => setConfirming(false)}>取消</Button>
-            <Button variant="primary" size="sm" disabled={busy} onClick={() => void signOut()}>{busy ? '正在退出…' : '退出登录'}</Button>
+            <Button variant="primary" size="sm" disabled={busy || cooling} onClick={() => void signOut()}>{busy ? '正在退出…' : cooling ? '请稍候…' : '退出登录'}</Button>
           </>
         )}
       >

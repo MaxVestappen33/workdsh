@@ -80,6 +80,8 @@ export interface ServerConfig {
   expertListingWithdrawAgentPath: string
   /** 专家上架申请：撤回（专家团）接口路径。 */
   expertListingWithdrawTeamPath: string
+  /** 用户反馈：新增接口路径（提交分类与详情）。 */
+  feedbackAddPath: string
   /** 正在使用的客户端发布接口路径（相对 baseUrl）。 */
   latestVersionPath: string
   /** 发布记录中的应用标识，与服务端表 app_id 对应。 */
@@ -169,6 +171,8 @@ export const APP_CONFIG_DEFAULTS: AppConfig = {
     expertListingSubmitTeamPath: '/desktop-client/expertgroup/listingRequest',
     expertListingWithdrawAgentPath: '/desktop-client/expert/withdrawListingRequest',
     expertListingWithdrawTeamPath: '/desktop-client/expertgroup/withdrawListingRequest',
+    /** 用户反馈新增接口：官方反馈弹窗提交的分类与详情经宿主转发到这里。 */
+    feedbackAddPath: '/desktop-client/feedback/add',
     /** 客户端版本检查与后台版本管理表共用 desktop-client 命名空间。 */
     latestVersionPath: '/desktop-client/queryLatestVersionApp',
   },
@@ -196,6 +200,7 @@ export const SERVER_PATH_FIELDS = [
   'expertMyListingAgentPath', 'expertMyListingTeamPath',
   'expertListingSubmitAgentPath', 'expertListingSubmitTeamPath',
   'expertListingWithdrawAgentPath', 'expertListingWithdrawTeamPath',
+  'feedbackAddPath',
   'latestVersionPath',
 ] as const
 

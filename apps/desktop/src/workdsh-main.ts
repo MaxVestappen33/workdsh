@@ -1165,6 +1165,9 @@ function runtimeEnvironment(home: string): NodeJS.ProcessEnv {
     // 写入 WORKDSH_LOG_DIR；prod 下 Host 不产生这些日志。读取失败按 prod 处理。
     WORKDSH_ENVIRONMENT: debugEnvironment(),
     WORKDSH_LOG_DIR: debugLogDirectory(),
+    // 客户端身份：反馈上报等后台接口按客户端维度归档，Host 侧读这两个变量。
+    WORKDSH_APP_ID: carrierAppId(),
+    WORKDSH_APP_VERSION: app.getVersion(),
     // A packaged carrier embeds the WorkDSH entry point, but a development
     // Electron binary needs the app directory as the worker's first argument.
     WORKDSH_ELECTRON_APP: app.isPackaged ? undefined : app.getAppPath(),
@@ -1544,6 +1547,11 @@ function debugEnvironment(): AppEnvironment {
 /** 调试日志目录：与启动耗时日志同处 userData/logs，便于一次性收集。 */
 function debugLogDirectory(): string {
   return join(app.getPath('userData'), 'logs')
+}
+
+/** 客户端标识：配置读取失败时不下发，由后台按缺省处理，绝不影响启动。 */
+function carrierAppId(): string | undefined {
+  try { return loadConfig().server.appId } catch { return undefined }
 }
 
 /** Read the configured logo and return a base64 data URI for embedding (CSP keeps img-src data:). */

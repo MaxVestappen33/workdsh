@@ -3,7 +3,7 @@
   "version": "0.2.1-rc.2",
   "file": "lib/client.js",
   "originalSha256": "8554738cbeeb5218ad1bfa4773ef094363b066d052a1893d7a96797c5bc33a63",
-  "patchedSha256": "aafebc0109b8d60eb1e1b5e1f3a686c72b86eaf7a3dae8fdd699e1756debc80f",
+  "patchedSha256": "aa6f96333035fa62c2464b9fd94732333bb759d876dd85c5e3bfaf22170ba2a1",
   "replacements": [
     [
       "return renderSlot(\"main.conversation\", {});",
@@ -12,6 +12,22 @@
     [
       "children: { \"main.conversation\": {\n\t\t\t\t\t\tkind: \"single\",\n\t\t\t\t\t\tscope: \"session-maybe\"\n\t\t\t\t\t} }",
       "children: { \"main.conversation\": { kind: \"single\", scope: \"session-maybe\" }, \"workdsh.workbench.frame\": { kind: \"single\", scope: \"root\" } }"
+    ],
+    [
+      "function ContextMeter({ useProjection, t }) {",
+      "function ContextMeter({ useProjection, t, renderSlot }) {"
+    ],
+    [
+      "(0, react_jsx_runtime.jsx)(ContextMeter, {\n\t\t\t\t\t\t\tuseProjection,\n\t\t\t\t\t\t\tt\n\t\t\t\t\t\t})",
+      "(0, react_jsx_runtime.jsx)(ContextMeter, {\n\t\t\t\t\t\t\tuseProjection,\n\t\t\t\t\t\t\tt,\n\t\t\t\t\t\t\trenderSlot\n\t\t\t\t\t\t})"
+    ],
+    [
+      "\t\t\t\t\t\t})\n\t\t\t\t\t]\n\t\t\t\t}), document.body)]",
+      "\t\t\t\t\t\t}),\n\t\t\t\t\t\trenderSlot(\"conversation.context.panel.footer\", {})\n\t\t\t\t\t]\n\t\t\t\t}), document.body)]"
+    ],
+    [
+      "\t\t\t\t\t\"conversation.composer.dock\": {\n\t\t\t\t\t\tkind: \"list\",\n\t\t\t\t\t\tscope: \"session\"\n\t\t\t\t\t}\n\t\t\t\t},",
+      "\t\t\t\t\t\"conversation.composer.dock\": {\n\t\t\t\t\t\tkind: \"list\",\n\t\t\t\t\t\tscope: \"session\"\n\t\t\t\t\t},\n\t\t\t\t\t\"conversation.context.panel.footer\": {\n\t\t\t\t\t\tkind: \"list\",\n\t\t\t\t\t\tscope: \"session\"\n\t\t\t\t\t}\n\t\t\t\t},"
     ]
   ]
 }

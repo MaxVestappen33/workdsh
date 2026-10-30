@@ -1,4 +1,6 @@
 import { ShellAppearance } from '../components/ShellAppearance.js';
+import { ContextCompaction } from '../components/ContextCompaction.js';
+import { requestCompaction } from './compaction.js';
 import { installFreshSessionNavigation } from './fresh-session.js';
 import { communityMarketView, type MarketHost } from '../components/CommunityMarket.js';
 import { PlazaEntryInSidebarHidden } from '../components/PlazaEntry.js';
@@ -28,7 +30,7 @@ declare module '@deepseek-ai/dsh-client-ui-sidebar-right/client' {
 }
 
 export const name = 'workdsh-client';
-export const inject = ['slots', 'layout', 'remote', 'remote.pluginInventory', 'sessions', 'sidebarRight', 'sidebarRightTabs'];
+export const inject = ['slots', 'layout', 'remote', 'remote.commands', 'remote.pluginInventory', 'sessions', 'sidebarRight', 'sidebarRightTabs'];
 
 const productViews: Readonly<Record<string, string>> = {
   experts: 'workdsh-experts', skills: 'workdsh-skills', assistant: 'workdsh-assistant', projects: 'workdsh-projects', 'project-detail': 'workdsh-project-detail',
@@ -130,6 +132,12 @@ export function apply(ctx: Context): void {
     return () => { disposed = true; unsubscribe(); window.clearInterval(timer); };
   }, 'workdsh.agent-browser.auto-open');
   ctx.slots.inject('shell.overlay', () => ctx.slots.register({ name: 'shell.overlay', id: 'workdsh-shell-appearance' }, ShellAppearance));
+  // 手动压缩入口：官方上下文弹窗（ContextMeter）底部新增的渲染位。
+  // 压缩本身仍由官方 `/compact` 命令完成，这里只负责触发并显示释放的 token 数。
+  ctx.slots.inject('conversation.context.panel.footer', () => ctx.slots.register({
+    name: 'conversation.context.panel.footer', id: 'workdsh-compact',
+    inject: (sessionId) => ({ compact: () => requestCompaction(ctx, sessionId) }),
+  }, ContextCompaction));
   const diagnostics = new URL(window.location.href).searchParams.get('diagnostics') === '1';
   const viewToPanel = diagnostics ? { ...productViews, diagnostics: 'workdsh-probe' } : productViews;
   const panelToView = Object.fromEntries(Object.entries(viewToPanel).map(([view, panel]) => [panel, view]));
