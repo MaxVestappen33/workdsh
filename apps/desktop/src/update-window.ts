@@ -63,9 +63,8 @@ main{flex:1;min-height:0;width:100%;max-width:760px;margin:0 auto;padding:20px 2
 .pct{font-weight:600;font-size:13px;line-height:20px;color:var(--text)}
 .track{height:6px;border-radius:999px;background:var(--track);overflow:hidden}
 .bar{height:100%;width:0;border-radius:999px;background:var(--brand);transition:width .16s linear}
-.bar.indeterminate{width:35%;animation:dsh-slide 1.1s ease-in-out infinite}
+.bar.indeterminate{width:35%;animation:dsh-slide 1.1s ease-in-out infinite;will-change:transform}
 @keyframes dsh-slide{0%{transform:translateX(-100%)}100%{transform:translateX(300%)}}
-@media(prefers-reduced-motion:reduce){.bar.indeterminate{animation:none;width:100%;opacity:.45}}
 .latest{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;text-align:center}
 .latest .appicon{width:52px;height:52px;line-height:52px;font-size:17px}
 .checks{font-size:12px;line-height:18px;color:var(--faint)}
