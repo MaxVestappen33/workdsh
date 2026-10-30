@@ -23,7 +23,7 @@ import { EnterpriseLogin, startEnterpriseAuthority, type Authority } from './ent
 import { desktopEnterprisePatch, desktopAccountPatch, desktopConnectorMarketPatch, desktopSkillMarketPatch, desktopModelMarketPatch, desktopExpertMarketPatch, accountSpace, accountModelStateDirectory, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher, type AccountActor } from './local-runtime.ts'
 import { manageCommand } from './command-management.ts'
 import { createRuntimeOutputRedactor, redactRuntimeOutput, runtimeFailureDetail, runtimeFailureLog } from './runtime-diagnostics.ts'
-import { cleanOwnedProcessTree, reclaimOrphanedToolProcesses, stopOwnedProcess, trackOwnedProcess } from './owned-process.ts'
+import { cleanOwnedProcessTree, reclaimOrphanedToolProcesses, stopOwnedProcess, terminateOwnedProcessImmediately, trackOwnedProcess } from './owned-process.ts'
 import { prepareRuntimePort, runtimePortConflict } from './runtime-port.ts'
 import { runOfficialCommand } from './official-command.ts'
 import { renderMarkdown } from './update-markdown.ts'
@@ -55,6 +55,9 @@ let pendingConnection: ReturnType<typeof enterpriseConnection> | undefined
 let enterprise: { login: EnterpriseLogin, root: string, home: string, deviceId: string, authority?: Authority, authFile?: string } | undefined
 let verifyTimer: ReturnType<typeof setInterval> | undefined
 let verifying = false
+
+/** 退出清理的总预算：本机进程已立即结束，剩下的收尾（后台登出、存储清理）不应再拖住退出。 */
+const QUIT_CLEANUP_DEADLINE_MS = 3_000
 
 // ── 客户端在线更新（仅 win32-x64）──────────────────────────────────────────
 let updater: UpdateService | undefined
@@ -1380,12 +1383,13 @@ async function startRuntime(home: string, connection: DesktopConnection, patches
 
 function stopRuntime(): void {
   quitting = true
-  if (runtime !== undefined) void cleanOwnedProcessTree(runtime)
+  // 退出途中的二次回收也用立即结束，避免关窗时再起一轮 PowerShell 校验。
+  if (runtime !== undefined) terminateOwnedProcessImmediately(runtime)
   runtime = undefined
   runtimeStarting = false
 }
 
-async function leaveWorkspace(): Promise<void> {
+async function leaveWorkspace(options: { quitting?: boolean } = {}): Promise<void> {
   const page = window
   if (verifyTimer) { clearInterval(verifyTimer); verifyTimer = undefined }
   const session = enterprise
@@ -1393,8 +1397,12 @@ async function leaveWorkspace(): Promise<void> {
   await session?.authority?.close()
   session?.login.cancelRequests()
   const child = runtime
-  // 回收未确认不能阻断切换/退出：记录原因后继续清理状态，遗留进程由下次启动按启动器路径回收。
-  if (child) { await stopOwnedProcess(child).catch(error => recordCleanupFailure('leave-workspace', error)); if (runtime === child) { runtime = undefined; runtimeStarting = false } }
+  if (child) {
+    if (options.quitting === true) terminateOwnedProcessImmediately(child)
+    // 回收未确认不能阻断切换/退出：记录原因后继续清理状态，遗留进程由下次启动按启动器路径回收。
+    else await stopOwnedProcess(child).catch(error => recordCleanupFailure('leave-workspace', error))
+    if (runtime === child) { runtime = undefined; runtimeStarting = false }
+  }
   enterprise = undefined
   rememberCommandSpace()
   if (session) {
@@ -1459,8 +1467,8 @@ async function stopAccountForQuit(): Promise<void> {
   await session?.authority?.close()
   session?.login.cancelRequests()
   const child = runtime
-  // 关软件的回收失败只记录、不阻断：退出后由下次启动回收遗留进程。
-  if (child) { await stopOwnedProcess(child).catch(error => recordCleanupFailure('quit-account', error)); if (runtime === child) { runtime = undefined; runtimeStarting = false } }
+  // 关闭软件必须立即响应：直接结束进程树，不做 PowerShell 校验；遗漏进程由下次启动兜底回收。
+  if (child) { terminateOwnedProcessImmediately(child); if (runtime === child) { runtime = undefined; runtimeStarting = false } }
   account = undefined
   rememberCommandSpace()
   entrySurface = false
@@ -2036,7 +2044,13 @@ if (!app.requestSingleInstanceLock()) {
       return
     }
     switching = true
-    void (enterprise ? leaveWorkspace() : account ? stopAccountForQuit() : Promise.resolve()).then(() => {
+    // 退出清理的总预算：进程已是立即结束，这里只兜住其余收尾（后台登出、渲染器存储清理）
+    // 在后台不可达或磁盘慢时不要拖住退出。
+    const quitCleanup = enterprise ? leaveWorkspace({ quitting: true }) : account ? stopAccountForQuit() : Promise.resolve()
+    let quitDeadline: NodeJS.Timeout | undefined
+    const timedOut = new Promise<'timeout'>(resolve => { quitDeadline = setTimeout(() => resolve('timeout'), QUIT_CLEANUP_DEADLINE_MS) })
+    void Promise.race([quitCleanup, timedOut]).then(result => {
+      if (result === 'timeout') recordCleanupFailure('quit', new Error(`退出清理超过 ${QUIT_CLEANUP_DEADLINE_MS}ms 未完成，直接结束载体；遗留进程由下次启动回收`))
       quitting = true
       app.quit()
     }).catch(error => {
@@ -2046,7 +2060,7 @@ if (!app.requestSingleInstanceLock()) {
       dialog.showErrorBox('退出时未能确认本机进程已停止', `${error instanceof Error ? error.message : '请稍后重试'}\n\n软件将直接退出；残留的本机进程会在下次启动时自动回收。`)
       quitting = true
       app.exit(0)
-    }).finally(() => { switching = false })
+    }).finally(() => { if (quitDeadline !== undefined) clearTimeout(quitDeadline); switching = false })
   })
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin' && !switching && !updaterInstalling) app.quit()

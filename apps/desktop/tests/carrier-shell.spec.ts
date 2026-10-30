@@ -23,6 +23,7 @@ vi.mock('node:child_process', () => ({ spawn: vi.fn(), spawnSync: vi.fn(), execF
 vi.mock('../src/owned-process.ts', () => ({
   stopOwnedProcess: vi.fn(async () => {}),
   cleanOwnedProcessTree: vi.fn(async () => {}),
+  terminateOwnedProcessImmediately: vi.fn(),
   reclaimOrphanedToolProcesses: vi.fn(),
 }))
 vi.mock('electron', async () => {

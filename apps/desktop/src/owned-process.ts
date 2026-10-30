@@ -94,9 +94,9 @@ function processMissing(pid: number): boolean {
   try { process.kill(pid, 0); return false } catch (error) { return (error as NodeJS.ErrnoException).code === 'ESRCH' }
 }
 /** 直接调用系统 taskkill 结束整棵进程树（不经过 PowerShell）；只在已确认归属后作为最后手段使用。 */
-function windowsDirectTreeKill(pid: number): void {
+function windowsDirectTreeKill(pid: number, timeoutMs = 15_000): void {
   const executable = process.env.SystemRoot ? join(process.env.SystemRoot, 'System32/taskkill.exe') : 'taskkill.exe'
-  try { spawnSync(executable, ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', timeout: 15_000 }) } catch { /* 已退出或不可用 */ }
+  try { spawnSync(executable, ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', timeout: timeoutMs }) } catch { /* 已退出或不可用 */ }
 }
 async function cleanWindowsTree(child: ChildProcess): Promise<void> {
   const state = ownership.get(child)
@@ -163,6 +163,23 @@ export async function stopOwnedProcess(child: ChildProcess): Promise<void> {
       try { process.kill(-child.pid, 'SIGTERM') } catch { child.kill('SIGTERM') }
     } else child.kill('SIGTERM')
   })
+}
+
+/**
+ * 关闭软件专用：直接结束本机进程树，不做 PowerShell 快照校验。
+ *
+ * `stopOwnedProcess` 的校验在低配现场机器上要反复冷启动 powershell.exe
+ * （快照 + 每个进程一次），一次退出能拖到十几秒，用户会看到点了没反应。
+ * 退出场景不需要“可证明”的回收结论：登记为已回收即可，任何遗漏都由下次启动的
+ * `reclaimOrphanedToolProcesses` 按启动器路径兜底，代价只是退出后可能短暂残留。
+ */
+export function terminateOwnedProcessImmediately(child: ChildProcess, timeoutMs = 3_000): void {
+  if (child.pid) {
+    if (process.platform === 'win32') windowsDirectTreeKill(child.pid, timeoutMs)
+    else { try { process.kill(-child.pid, 'SIGKILL') } catch { /* 已退出 */ } }
+  }
+  // 预先登记回收结果，避免随后到达的 exit 回调再触发一次 PowerShell 校验。
+  cleaned.set(child, Promise.resolve())
 }
 
 /**
