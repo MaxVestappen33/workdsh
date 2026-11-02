@@ -30,7 +30,7 @@
   },
   "derivedRuntimes": {
     "linux-arm64": {
-      "version": "0.2.1-rc.2",
+      "version": "0.2.1-rc.5",
       "reason": "官方未发布 linux-arm64 桌面产物（download.deepseek.com/dsh-desk/bin 下全部 404），运行时由下列上游官方构建组合而成",
       "components": {
         "node": {

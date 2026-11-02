@@ -3,7 +3,7 @@
   "version": "0.2.1-rc.5",
   "file": "lib/client.js",
   "originalSha256": "cfbd9fd95b0509f7c93a22a62a67ebc10481c8eda611704ea50c2e195b9a5a69",
-  "patchedSha256": "f7c22cfd56b2fffb29ff9bc1b2d20b1b798fdf9d1c58fc39b3316bb01808dfc5",
+  "patchedSha256": "d84e9f0b1cfe67a08125b0d4c5c4a06a32364258780e8d07cdbfed4c49767602",
   "replacements": [
     [
       "return renderSlot(\"main.conversation\", {});",
