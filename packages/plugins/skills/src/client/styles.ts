@@ -114,6 +114,14 @@ export const skillsMarketCss = `${modalCss}
 .wd-skills .source-tabs button:hover .count,.wd-skills .source-tabs button.active .count{color:var(--dsw-alias-label-primary)}
 
 /* 业务场景胶囊栏 + 「更多」浮层（与连接器页面同款交互）。 */
+/* 筛选行：左边「是否内置」、右边「业务场景」，两个胶囊栏各带一条前置说明，可同时生效。 */
+.wd-skills .skill-filters{display:flex;align-items:center;gap:18px;margin:0 0 18px;min-width:0}
+.wd-skills .filter-group{display:flex;align-items:center;gap:7px;min-width:0}
+.wd-skills .filter-group.builtin-filter{flex:none}
+.wd-skills .filter-group.scenes-filter{flex:1;min-width:0}
+.wd-skills .filter-label{flex:none;font-size:13px;color:var(--dsw-alias-label-secondary)}
+.wd-skills .skill-filters .category-bar{margin:0;min-width:0}
+.wd-skills .filter-group.scenes-filter .category-bar{flex:1}
 .wd-skills .category-bar{position:relative;display:flex;align-items:center;gap:7px;margin:0 0 18px;min-width:0}
 .wd-skills .category-tabs{display:flex;gap:4px;min-width:0}
 .wd-skills .category-tabs button[data-category],.wd-skills .more-btn{padding:6px 12px;border:0;border-radius:9px}
@@ -175,6 +183,9 @@ export const skillsMarketCss = `${modalCss}
 .wd-skills .market-card .market-version{color:var(--dsw-alias-label-primary)}
 .wd-skills .installed-pill{flex:none;padding:4px 10px;border-radius:999px}
 .wd-skills .installed-pill{background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-state-success-primary);font-size:12px;font-weight:500}
+/* 「内置」徽标：本地技能与技能市场同款，用品牌色与「已安装」区分。 */
+.wd-skills .builtin-pill{flex:none;padding:4px 10px;border-radius:999px}
+.wd-skills .builtin-pill{background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-brand-primary);font-size:12px;font-weight:500;white-space:nowrap}
 .wd-skills .market-foot{display:flex;justify-content:center;padding:22px 0 6px;color:var(--dsw-alias-label-tertiary);font-size:12px}
 .wd-skills p.error{margin:0 0 14px}
 .wd-skills p.error button{margin-left:10px}

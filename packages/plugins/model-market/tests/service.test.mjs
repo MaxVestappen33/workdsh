@@ -163,7 +163,11 @@ test('自定义模型安装、列出与卸载', async () => {
       apiProtocol: 'openai-completions',
       apiKey: 'sk-custom',
       setDefault: true,
-      models: [{ id: 'acme-think', name: 'Acme Think', contextWindow: 262144, maxTokens: 32768, input: ['text', 'image'] }],
+      defaultReasoning: 'high',
+      models: [{
+        id: 'acme-think', name: 'Acme Think', contextWindow: 262144, maxTokens: 32768, input: ['text', 'image'],
+        reasoningEfforts: { off: null, low: 'low', high: 'high' },
+      }],
     });
     assert.equal(entry.key, 'custom:acme-gateway');
     const provider = sections.get('llm-pi-ai').value.providers['acme-gateway'];
@@ -171,8 +175,10 @@ test('自定义模型安装、列出与卸载', async () => {
     assert.equal(provider.api, 'openai-completions');
     assert.equal(provider.baseURL, 'https://gateway.acme.example/v1');
     assert.equal(provider.apiKeyEnv, 'ACME_GATEWAY_API_KEY');
+    assert.equal(provider.reasoning, 'high');
     assert.deepEqual(provider.models[0].input, ['text', 'image']);
     assert.equal(provider.models[0].maxTokens, 32768);
+    assert.deepEqual(provider.models[0].reasoningEfforts, { off: null, low: 'low', high: 'high' });
     assert.equal(secrets.get('ACME_GATEWAY_API_KEY'), 'sk-custom');
     assert.deepEqual(sections.get('agent-default-model').value, { provider: 'acme-gateway', model: 'acme-think' });
 
@@ -180,13 +186,61 @@ test('自定义模型安装、列出与卸载', async () => {
     assert.equal(listed.length, 1);
     assert.equal(listed[0].displayName, 'Acme 网关');
     assert.equal(listed[0].isDefault, true);
+    assert.equal(listed[0].defaultReasoning, 'high');
     assert.deepEqual(listed[0].models.map(model => model.id), ['acme-think']);
+    assert.deepEqual(listed[0].models[0].reasoningEfforts, { off: null, low: 'low', high: 'high' });
+
+    // 清空默认档位时删除 provider 的 reasoning 字段，回到「跟随供应商默认」。
+    await service.customUpdate('custom:acme-gateway', {
+      providerId: 'acme-gateway',
+      displayName: 'Acme 网关',
+      apiUrl: 'https://gateway.acme.example/v1',
+      apiProtocol: 'openai-completions',
+      apiKey: '',
+      models: [{ id: 'acme-think', name: 'Acme Think', input: ['text'], reasoningEfforts: { off: null, high: 'high' } }],
+    });
+    assert.equal(sections.get('llm-pi-ai').value.providers['acme-gateway'].reasoning, undefined);
 
     await service.customUninstall('custom:acme-gateway');
     assert.equal(sections.get('llm-pi-ai').value.providers['acme-gateway'], undefined);
     assert.equal(secrets.has('ACME_GATEWAY_API_KEY'), false);
     assert.deepEqual(await service.customList(), []);
     assert.deepEqual(sections.get('agent-default-model').value, {});
+  } finally {
+    if (previous === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previous;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('推理档位声明会被校验：空参数值与只有 Off 均被拒绝', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'workdsh-model-market-reasoning-'));
+  const previous = process.env.DSH_HOME;
+  process.env.DSH_HOME = home;
+  try {
+    const { ctx, sections } = harness({});
+    const service = new ModelMarketService(ctx, {});
+    const draft = (reasoningEfforts) => ({
+      providerId: 'acme-reasoning',
+      displayName: 'Acme Reasoning',
+      apiUrl: 'https://gateway.acme.example/v1',
+      apiProtocol: 'openai-completions',
+      apiKey: 'sk-custom',
+      models: [{ id: 'acme-think', name: 'Acme Think', input: ['text'], reasoningEfforts }],
+    });
+    await assert.rejects(service.customInstall(draft({ low: '' })), /需要填写 API 参数值/u);
+    await assert.rejects(service.customInstall(draft({ off: null })), /至少添加一个 Off 以外的档位/u);
+    await assert.rejects(
+      service.customInstall({ ...draft({ low: 'low' }), defaultReasoning: 'high' }),
+      /未在任何模型的推理档位中声明/u,
+    );
+    assert.equal(sections.get('llm-pi-ai').value.providers?.['acme-reasoning'], undefined);
+    // 去掉推理档位仍然可以正常安装。
+    await service.customInstall({
+      ...draft(undefined),
+      models: [{ id: 'acme-think', name: 'Acme Think', input: ['text'] }],
+    });
+    assert.equal(sections.get('llm-pi-ai').value.providers['acme-reasoning'].models[0].reasoningEfforts, undefined);
   } finally {
     if (previous === undefined) delete process.env.DSH_HOME;
     else process.env.DSH_HOME = previous;

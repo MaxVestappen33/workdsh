@@ -8,6 +8,7 @@ import { parse } from 'yaml';
 import type { ManagedSkillDetail, ManagedSkillResource, ManagedSkillSummary, SkillBatchRequest, SkillBatchResult, SkillCatalogIcon, SkillCatalogSummary, SkillDependency, SkillDependencyImpact, SkillDiagnostic, SkillDraft, SkillDraftWriteRequest, SkillImportInspection, SkillImportRequest, SkillInstallScope, SkillMutationReceipt, SkillResourceWriteRequest, SkillValidationResult, SkillWriteRequest, TrashedSkillSummary } from '../shared.js';
 import { SkillImportStaging } from './import-staging.js';
 import { SkillCatalogStore } from './catalog.js';
+import { marketInstallFile, readMarketInstalls } from './market-installs.js';
 import type { SkillManagementService, SkillDependencyInspector, SkillDisplayMetadata } from '../shared.js';
 import type { RetainedSkillRevision, SkillConsumerRef, SkillRevisionCheck, SkillRevisionRef, SkillRevisionStatus } from 'workdsh-contracts';
 
@@ -250,7 +251,19 @@ export class SkillManager extends Service implements SkillManagementService {
       if (disabled) rows.push(disabled);
     }
     const metadata = await this.catalogStore.metadata(new Set(rows.map(row => row.name)));
-    return rows.map(row => { const entry = metadata.get(row.name); const contribution = this.contributedDisplay(row.name); return { ...row, ...contribution, ...entry, ...(entry?.title === row.name && contribution ? { title: contribution.title } : {}) }; }).sort((a, b) => a.name.localeCompare(b.name));
+    // 内置属性以技能市场为准，这里只读安装记录里的最后一次同步结果作为兜底：
+    // 市场可用时界面会用市场索引覆盖它，市场不可用时才按它展示与筛选。
+    const installs = await readMarketInstalls(marketInstallFile(this.stateRoot), message => this.ctx.logger.warn(message));
+    const builtinNames = new Set([...installs.values()]
+      .flatMap(record => (record.builtin ? [record.name.trim().toLowerCase()] : [])));
+    return rows.map(row => {
+      const entry = metadata.get(row.name); const contribution = this.contributedDisplay(row.name);
+      return {
+        ...row, ...contribution, ...entry,
+        ...(builtinNames.has(row.name.trim().toLowerCase()) ? { builtin: true } : {}),
+        ...(entry?.title === row.name && contribution ? { title: contribution.title } : {}),
+      };
+    }).sort((a, b) => a.name.localeCompare(b.name));
   }
 
   registerDisplayMetadata(namespace: string, entries: readonly SkillDisplayMetadata[]): () => void {

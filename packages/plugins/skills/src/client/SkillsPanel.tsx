@@ -28,6 +28,9 @@ type SkillsPanelProps = PropsRuntime<'main'> & InjectFace<SkillsPanelInjected>;
 const MARKET_SCROLL_THRESHOLD = 160;
 /** 市场关键词防抖：关键词由服务端筛选，等输入停顿这么久再发请求，避免每敲一键打一次后台。 */
 const MARKET_QUERY_DEBOUNCE_MS = 250;
+/** 是否内置筛选的两个胶囊：与业务场景胶囊同款样式，单选，都不选即「全部」。 */
+const BUILTIN_OPTIONS = ['内置', '非内置'] as const;
+const BUILTIN_YES = BUILTIN_OPTIONS[0];
 
 function icon(kind: string) { return <Icon name={kind as IconName} />; }
 function messageOf(cause: unknown): string { return cause instanceof Error ? cause.message : '技能操作失败，请重试。'; }
@@ -65,8 +68,12 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
   const [query, setQuery] = useState('');
   /** 已选业务场景（多选，数组顺序即用户选择顺序）；空数组等价于「全部」。 */
   const [scenes, setScenes] = useState<readonly string[]>([]);
-  /** 授权技能索引：本地技能的业务场景标签只能来自后台，后台不可用时为空。 */
+  /** 是否内置筛选（单选）；undefined 等价于「全部」。两个页签各自独立，切页签时重置。 */
+  const [builtinFilter, setBuiltinFilter] = useState<boolean>();
+  /** 授权技能索引：本地技能的业务场景标签与内置属性都来自后台，后台不可用时为空。 */
   const [authorized, setAuthorized] = useState<readonly SkillMarketAuthorized[]>([]);
+  /** 索引是否取到了市场数据：为真时内置属性以市场为准，为假时按本机安装记录快照兜底。 */
+  const [authorizedReady, setAuthorizedReady] = useState(false);
   // 市场：可用性来自宿主绑定，不可用时整条链路（页签、数据、筛选）都不出现。
   const [marketOn, setMarketOn] = useState(false);
   const [marketDict, setMarketDict] = useState<readonly SkillScene[]>([]);
@@ -234,18 +241,19 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
   // 首屏同时取一页申请：页签上的数量不必等用户点开才是准确值。
   useEffect(() => { if (marketOn) void loadApplications({ keyword: '', status: '' }); }, [marketOn, loadApplications]);
 
-  /** 授权技能索引：本地技能的业务场景标签来自它；失败时保持为空，本地技能就不显示标签。 */
-  const loadAuthorized = useCallback(async () => {
-    if (!marketOn) return;
-    try { setAuthorized(await management.marketIndex()); }
-    catch (cause) { console.error('[workdsh:skills:market-index]', cause); setAuthorized([]); }
+  /** 授权技能索引：本地技能的业务场景标签与内置属性来自它；失败时保持为空，内置属性退回本地快照。 */
+  const loadAuthorized = useCallback(async (refresh?: boolean) => {
+    if (!marketOn) { setAuthorized([]); setAuthorizedReady(false); return; }
+    try { setAuthorized(await management.marketIndex(refresh)); setAuthorizedReady(true); }
+    catch (cause) { console.error('[workdsh:skills:market-index]', cause); setAuthorized([]); setAuthorizedReady(false); }
   }, [management, marketOn]);
   useEffect(() => { void loadAuthorized(); }, [loadAuthorized]);
 
   /** 刷新：本地技能、授权索引与市场首页一起重新取一遍。 */
   const reloadAll = async () => {
     await refresh();
-    await loadAuthorized();
+    // 用户主动刷新时绕过索引缓存：后台刚改过的内置属性要立刻生效。
+    await loadAuthorized(true);
     if (marketOn) await loadMarket(filter);
     if (marketOn && tab === 'applications') await loadApplications({ keyword: query, status: applicationStatus });
   };
@@ -442,6 +450,7 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
     setTab(next);
     setQuery('');
     setScenes([]);
+    setBuiltinFilter(undefined);
     setBatchMode(false);
     setSelectedNames([]);
     // 提示属于上一个页签的操作结果，切页签时一并清掉，否则出错信息会跟到另一个页签上。
@@ -452,12 +461,20 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
     if (next === 'market' && marketOn) void loadMarket({ scenes: [], keyword: '' });
     if (next === 'applications' && marketOn) void loadApplications({ keyword: '', status: applicationStatus });
   };
+  /** 是否内置是单选：胶囊栏只在「选中一个」与「全部」之间切换。 */
+  const changeBuiltin = (next: readonly string[]) => {
+    const value = next.length ? next[next.length - 1] === BUILTIN_YES : undefined;
+    setBuiltinFilter(value);
+    window.clearTimeout(queryTimerRef.current);
+    if (tab !== 'market' || !marketOn) return;
+    void loadMarket({ scenes: activeScenes, keyword: query, builtin: value });
+  };
   const changeScene = (next: readonly string[]) => {
     setScenes(next);
     // 业务场景是明确的一次点击，立即取数；同时作废还在等待中的关键词请求，避免重复请求。
     window.clearTimeout(queryTimerRef.current);
     if (tab !== 'market' || !marketOn) return;
-    void loadMarket({ scenes: next, keyword: query });
+    void loadMarket({ scenes: next, keyword: query, builtin: builtinFilter });
   };
   const changeQuery = (next: string) => {
     setQuery(next);
@@ -465,7 +482,7 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
     if (tab === 'local' || (!marketOn && tab !== 'applications')) return;
     window.clearTimeout(queryTimerRef.current);
     queryTimerRef.current = window.setTimeout(() => {
-      if (tab === 'market') void loadMarket({ scenes: activeScenes, keyword: next });
+      if (tab === 'market') void loadMarket({ scenes: activeScenes, keyword: next, builtin: builtinFilter });
       else if (tab === 'applications') void loadApplications({ keyword: next, status: applicationStatus });
     }, MARKET_QUERY_DEBOUNCE_MS);
   };
@@ -482,6 +499,7 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
     setTab('applications');
     setQuery('');
     setScenes([]);
+    setBuiltinFilter(undefined);
     setBatchMode(false);
     setSelectedNames([]);
     setApplicationStatus('');
@@ -494,6 +512,9 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
   /** 授权技能索引：标识（skillNameEn）优先、名称（skillName）兜底，用于本地技能的业务场景匹配。 */
   const slugScenes = useMemo(() => new Map(authorized.map(row => [row.slug.trim().toLowerCase(), row.sceneLabels])), [authorized]);
   const titleScenes = useMemo(() => new Map(authorized.map(row => [row.title.trim().toLowerCase(), row.sceneLabels])), [authorized]);
+  /** 授权技能索引里的内置属性：口径与业务场景一致，标识优先、名称兜底。 */
+  const slugBuiltin = useMemo(() => new Map(authorized.map(row => [row.slug.trim().toLowerCase(), row.builtin === true])), [authorized]);
+  const titleBuiltin = useMemo(() => new Map(authorized.map(row => [row.title.trim().toLowerCase(), row.builtin === true])), [authorized]);
   /** 市场授权条目标识 → 中文名称：本地 SKILL.md 没有 title 时用它兜底显示。 */
   const marketTitles = useMemo(() => new Map(authorized.flatMap(row => {
     const slug = row.slug.trim().toLowerCase();
@@ -516,6 +537,17 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
     ?? titleScenes.get(skill.name.trim().toLowerCase())
     ?? [];
   /**
+   * 本地技能的「是否内置」：一句话规则是「从市场安装、且市场当前标记为内置」。
+   * 市场索引取到过数据时以它为准（管理员后台改动即时生效，市场是唯一真相）；
+   * 市场不可用或索引失败时退回本机安装记录里的最后一次同步结果。
+   */
+  const builtinOf = (skill: ManagedSkillSummary): boolean => authorizedReady
+    ? (slugBuiltin.get(skill.name.trim().toLowerCase())
+      ?? titleBuiltin.get((skill.title ?? '').trim().toLowerCase())
+      ?? titleBuiltin.get(skill.name.trim().toLowerCase())
+      ?? false)
+    : skill.builtin === true;
+  /**
    * 市场条目的「已安装」状态由宿主判定（安装记录 + 本机技能标识/名称匹配，见 SkillMarketService），
    * 界面只负责展示，因此卡片上的「＋」与详情页的「安装 / 卸载」始终跟着它走。
    */
@@ -530,11 +562,12 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
   const options = [...dictTexts, ...[...new Set(skills.flatMap(scenesOf))].filter(name => !dictTexts.includes(name))];
   /** 只保留当前页签仍存在的选中项：切页签或字典变化后，失效的选择自动丢弃。 */
   const activeScenes = scenes.filter(name => options.includes(name));
-  const filter: SkillMarketFilter = { scenes: activeScenes, keyword: query };
+  const filter: SkillMarketFilter = { scenes: activeScenes, keyword: query, builtin: builtinFilter };
 
   const normalizedQuery = query.trim().toLowerCase();
   const visibleLocal = skills.filter(skill => {
     const sceneLabels = scenesOf(skill);
+    if (builtinFilter !== undefined && builtinOf(skill) !== builtinFilter) return false;
     const text = `${skill.name} ${titleOf(skill)} ${skill.localizedDescription ?? skill.description} ${skill.whenToUse ?? ''} ${sceneLabels.join(' ')}`;
     return text.toLowerCase().includes(normalizedQuery) && (!activeScenes.length || sceneLabels.some(label => activeScenes.includes(label)));
   });
@@ -569,6 +602,7 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
     const title = titleOf(skill);
     return <article className={`card ${skill.state === 'disabled' ? 'disabled' : skill.state === 'invalid' ? 'invalid' : ''} ${actionMenu === skill.name ? 'menu-open' : ''}`} key={skill.name}>
       <div className="card-top">{batchMode && skill.manageable ? <button className="batch-check" role="checkbox" aria-checked={selectedNames.includes(skill.name)} aria-label={`选择技能 ${skill.name}`} onClick={() => toggleBatchSelection(skill.name)}>{selectedNames.includes(skill.name) ? '✓' : ''}</button> : null}<button className="card-open" aria-label={`查看技能 ${skill.name}`} onClick={() => batchMode && skill.manageable ? toggleBatchSelection(skill.name) : void openDetail(skill.name)}><SkillMark name={skill.name} title={title} iconUrl={skill.iconUrl} /><span className="card-title"><strong title={title}>{title}</strong>{title !== skill.name ? <small className="slug">{skill.name}</small> : null}{sceneText ? <small className="tag" title={sceneText}>{sceneText}</small> : null}</span></button>
+        {builtinOf(skill) ? <span className="builtin-pill">内置</span> : null}
         {!batchMode && skill.manageable && <div className="card-actions"><Button variant="ghost" size="sm" className="more-button" aria-label={`管理技能 ${skill.name}`} aria-haspopup="menu" aria-expanded={actionMenu === skill.name} onClick={() => setActionMenu(current => current === skill.name ? undefined : skill.name)}>•••</Button>{actionMenu === skill.name && <div className="card-menu" role="menu"><button role="menuitem" disabled={skill.state !== 'enabled'} onClick={() => void trial(skill.name)}>去试试</button><button role="menuitem" onClick={() => void openDetail(skill.name)}>编辑</button><button role="menuitem" onClick={() => void openDirectory(skill)}>打开文件夹</button><button className="danger" role="menuitem" onClick={() => void prepareUninstall(skill)}>卸载</button></div>}</div>}
         {!batchMode && <button className="switch" role="switch" disabled={!skill.manageable || skill.state === 'invalid'} aria-checked={skill.state === 'enabled'} aria-label={`${skill.state === 'enabled' ? '停用' : '启用'}技能 ${skill.name}`} onClick={() => void setEnabled(skill, skill.state !== 'enabled')} />}
       </div><p className="muted">{skill.localizedDescription ?? skill.description}</p>{skill.state === 'invalid' && <small className="diagnostic">需要修复 · {skill.diagnostics?.[0]?.message}</small>}
@@ -581,6 +615,7 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
     return <article className={`card market-card${installing ? ' is-installing' : ''}`} key={entry.id}>
       <div className="card-top">
         <button className="card-open" aria-label={`查看技能 ${entry.title}`} onClick={() => void openMarketDetail(entry)}><SkillMark name={entry.slug} title={entry.title} iconUrl={entry.icon} /><span className="card-title"><strong title={entry.title}>{entry.title}</strong><small className="slug">{entry.slug}</small>{sceneText ? <small className="tag" title={sceneText}>{sceneText}</small> : null}</span></button>
+        {entry.builtin ? <span className="builtin-pill">内置</span> : null}
         {isInstalled(entry)
           ? <span className="installed-pill">已安装</span>
           : installing
@@ -640,7 +675,11 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
     </nav>
     {tab === 'applications'
       ? <div className="listing-toolbar"><label className="listing-status-filter"><span>审批状态</span><Select aria-label="审批状态" value={applicationStatus} disabled={listingOptionsBusy} onChange={event => changeApplicationStatus(event.currentTarget.value)}><option value="">全部</option>{applicationStatusOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</Select></label>{listingOptionsError ? <span className="muted">状态字典读取失败，可按「刷新」重试。</span> : null}</div>
-      : <CategoryBar categories={options} values={activeScenes} onChange={changeScene} />}
+      : <div className="skill-filters">
+        {/* 是否内置与业务场景都是「胶囊栏 + 前置说明」，两个条件各自独立、可同时生效。 */}
+        <div className="filter-group builtin-filter"><span className="filter-label">是否内置：</span><CategoryBar categories={BUILTIN_OPTIONS} values={builtinFilter === undefined ? [] : [builtinFilter ? BUILTIN_YES : BUILTIN_OPTIONS[1]]} onChange={changeBuiltin} /></div>
+        <div className="filter-group scenes-filter"><span className="filter-label">业务场景：</span><CategoryBar categories={options} values={activeScenes} onChange={changeScene} /></div>
+      </div>}
     {tab === 'local' && batchMode ? batchBar : null}
     {countsLine}
 

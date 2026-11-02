@@ -14,10 +14,12 @@ export interface SkillMarketListState {
 
 export const emptySkillMarketList: SkillMarketListState = { items: [], total: 0, page: 0, hasMore: false };
 
-/** 当前生效的筛选条件：已选中的业务场景胶囊文案（多选，顺序即选择顺序）+ 搜索框关键词。 */
+/** 当前生效的筛选条件：已选中的业务场景胶囊文案（多选，顺序即选择顺序）+ 搜索框关键词 + 是否内置。 */
 export interface SkillMarketFilter {
   readonly scenes: readonly string[];
   readonly keyword: string;
+  /** 是否内置：缺省表示「全部」；true 只看内置，false 只看非内置。 */
+  readonly builtin?: boolean;
 }
 
 /** 业务场景文案 → 字典 value；未命中字典的值直接跳过，全部未命中时返回空数组，表示不下发筛选。 */
@@ -29,7 +31,7 @@ export function skillSceneCodes(scenes: readonly string[], dictionary: readonly 
 }
 
 /**
- * 一页的请求参数：业务场景与关键词都交给服务端，空值不下发。切换筛选时以 page = 1 重新取数。
+ * 一页的请求参数：业务场景、关键词与是否内置都交给服务端，空值不下发。切换筛选时以 page = 1 重新取数。
  * 多选时把各业务场景 value 用英文逗号连接后下发为单个 `bizScene`（如 `a,b`），语义为命中任一。
  */
 export function skillMarketQuery(filter: SkillMarketFilter, page: number, dictionary: readonly SkillScene[]): SkillMarketQuery {
@@ -40,6 +42,7 @@ export function skillMarketQuery(filter: SkillMarketFilter, page: number, dictio
     pageSize: SKILL_MARKET_PAGE_SIZE,
     ...(scenes.length ? { scene: scenes.join(',') } : {}),
     ...(keyword ? { keyword } : {}),
+    ...(filter.builtin === undefined ? {} : { builtin: filter.builtin }),
   };
 }
 

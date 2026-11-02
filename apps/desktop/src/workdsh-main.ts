@@ -22,6 +22,7 @@ import { AccountLogin, AccountStore, restoreAccountLogin, startAccountAuthority,
 import { EnterpriseLogin, startEnterpriseAuthority, type Authority } from './enterprise-auth.ts'
 import { desktopEnterprisePatch, desktopAccountPatch, desktopConnectorMarketPatch, desktopSkillMarketPatch, desktopPromptPatch, desktopModelMarketPatch, desktopExpertMarketPatch, accountSpace, accountModelStateDirectory, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher, type AccountActor } from './local-runtime.ts'
 import { manageCommand } from './command-management.ts'
+import { ACCOUNT_ONLY } from './carrier-policy.ts'
 import { createRuntimeOutputRedactor, redactRuntimeOutput, runtimeFailureDetail, runtimeFailureLog } from './runtime-diagnostics.ts'
 import { cleanOwnedProcessTree, reclaimOrphanedToolProcesses, stopOwnedProcess, terminateOwnedProcessImmediately, trackOwnedProcess } from './owned-process.ts'
 import { prepareRuntimePort, runtimePortConflict } from './runtime-port.ts'
@@ -1827,6 +1828,8 @@ function connectEntryNavigation(entry: BrowserWindow): void {
           openWindow('data:text/html;charset=utf-8,' + encodeURIComponent(enterpriseLoginHtml(enterprisePortal)), { mode: 'personal' }, true)
           connectEntryNavigation(window!)
         } else if (command.hostname === 'personal') {
+          // 账号专用产品：个人工作区入口在逻辑层拒绝，保留实现以便回退。
+          if (ACCOUNT_ONLY) throw new Error('本产品仅支持账号登录，个人工作区不可用，请登录账号后使用')
           if (enterprise) await leaveWorkspace()
           const home = runtimeHome()
           await entry.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(connectionLoadingHtml('正在启动个人工作区')))

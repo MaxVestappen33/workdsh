@@ -36,6 +36,11 @@ export interface ManagedSkillSummary {
   readonly localizedDescription?: string;
   readonly categories?: readonly string[];
   readonly iconUrl?: string;
+  /**
+   * 是否内置：取自技能市场安装记录的本地快照（从市场安装且市场标记为内置才为真）。
+   * 技能市场可用时界面以市场当前数据为准，该字段只用于市场不可用时的兜底。
+   */
+  readonly builtin?: boolean;
 }
 
 export interface ManagedSkillDetail extends ManagedSkillSummary {

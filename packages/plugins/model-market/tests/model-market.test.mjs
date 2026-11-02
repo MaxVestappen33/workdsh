@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { installability, installActionLabel, formatCapacity, mergeDiscoveredModels, modelRouteEntry, parseContextWindow } from '../dist/shared.js';
+import { installability, installActionLabel, formatCapacity, mergeDiscoveredModels, modelRouteEntry, parseContextWindow, validateReasoningEfforts } from '../dist/shared.js';
 import { normalizeModel } from '../dist/market.js';
 import { marketDefaultsMarker, marketRecordFile, readMarketRecords, writeMarketDefaultsMarker, writeMarketRecords } from '../dist/records.js';
 
@@ -72,6 +72,16 @@ test('pi-ai 模型条目携带容量与输入类型', () => {
     id: 'deepseek-flash', name: 'DeepSeek-V4.1-Flash', contextWindow: 131072, input: ['text'],
   });
   assert.deepEqual(modelRouteEntry({ ...model, modelType: 'MLLM' }).input, ['text', 'image']);
+});
+
+test('推理档位声明与官方适配器保持同一条拒绝规则', () => {
+  assert.equal(validateReasoningEfforts({ off: null, low: 'low', high: 'high' }), undefined);
+  assert.match(validateReasoningEfforts({ off: '', low: 'low' }), /需要填写 API 参数值/u);
+  assert.match(validateReasoningEfforts({ low: '' }), /需要填写 API 参数值/u);
+  assert.match(validateReasoningEfforts({ high: null }), /需要填写 API 参数值/u);
+  assert.match(validateReasoningEfforts({ off: null }), /至少添加一个 Off 以外的档位/u);
+  assert.match(validateReasoningEfforts({ turbo: 'high' }), /未知的推理档位/u);
+  assert.match(validateReasoningEfforts([]), /格式无效/u);
 });
 
 test('列表模型不包含 apiKey', () => {

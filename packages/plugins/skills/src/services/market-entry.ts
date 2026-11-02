@@ -1,6 +1,5 @@
 import { homedir } from 'node:os';
-import { join, dirname, resolve } from 'node:path';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import { Service } from '@deepseek-ai/cordis';
 import type { Context } from '@deepseek-ai/cordis';
 import {
@@ -9,6 +8,7 @@ import {
   type SkillMarketItem, type SkillMarketPage, type SkillMarketPaths, type SkillMarketQuery, type SkillScene,
 } from '../market.js';
 import type { SkillInstallScope } from '../shared.js';
+import { marketInstallFile, readMarketInstalls, writeMarketInstalls, type MarketInstallRecord } from './market-installs.js';
 
 /**
  * 市场接口路径缺省值：与 Desktop 随包 workdsh-app.json 的 server 段保持一致。
@@ -35,13 +35,13 @@ const MARKET_INSTALL_SCOPE: SkillInstallScope = 'shared-agents';
 const ALREADY_INSTALLED = 'skill/target-exists';
 
 /**
- * 市场安装记录文件：记住「哪个市场条目装成了本机哪个技能」。
- * 放在 SkillManager 同一个状态根下（DSH_HOME/agents/.workdsh-state），内容是一份 条目 id → 技能名 的映射。
+ * 市场安装记录文件：记住「哪个市场条目装成了本机哪个技能」以及最后一次同步的「是否内置」。
+ * 放在 SkillManager 同一个状态根下（DSH_HOME/agents/.workdsh-state）。
  */
 function installRecordFile(): string {
   const dshHome = resolve(process.env.DSH_HOME ?? join(homedir(), '.dsh'));
   const agentsHome = resolve(process.env.DSH_AGENTS_HOME ?? join(dshHome, 'agents'));
-  return join(agentsHome, '.workdsh-state', 'skills', 'market-installs.json');
+  return marketInstallFile(join(agentsHome, '.workdsh-state', 'skills'));
 }
 
 const describe = (error: unknown): string => error instanceof Error ? error.message : String(error);
@@ -70,7 +70,7 @@ export interface SkillMarket {
   list(input?: SkillMarketQuery, signal?: AbortSignal): Promise<SkillMarketPage>;
   categories(signal?: AbortSignal): Promise<readonly SkillScene[]>;
   /** 全量授权技能索引：本地技能按标识匹配业务场景用（带短 TTL 缓存）。 */
-  index(signal?: AbortSignal): Promise<readonly SkillMarketAuthorized[]>;
+  index(signal?: AbortSignal, refresh?: boolean): Promise<readonly SkillMarketAuthorized[]>;
   /**
    * 安装到本机：先调用后台安装接口上报行为，再下载条目附件（fjxxList 第一条），
    * 之后复用官方导入链路（暂存预检 → 确认写入共享技能目录）。缺少附件时直接拒绝安装。
@@ -121,46 +121,51 @@ export class SkillMarketService extends Service implements SkillMarket {
       return key ? local.get(key) : undefined;
     };
     const items: readonly SkillMarketItem[] = page.items.map(item => {
-      const name = findLocal(records.get(item.id)) ?? findLocal(item.slug) ?? findLocal(item.title);
+      const name = findLocal(records.get(item.id)?.name) ?? findLocal(item.slug) ?? findLocal(item.title);
       return name ? { ...item, installed: true, installedName: name } : { ...item, installed: false };
     });
     return { ...page, items };
   }
 
   /** 市场安装记录：文件不存在或格式损坏都按空处理，不影响列表与安装。 */
-  private async records(): Promise<ReadonlyMap<string, string>> {
-    try {
-      const parsed: unknown = JSON.parse(await readFile(this.recordFile, 'utf8'));
-      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return new Map();
-      return new Map(Object.entries(parsed as Record<string, unknown>)
-        .flatMap(([id, name]) => (typeof name === 'string' && name.trim() ? [[id, name.trim()] as const] : [])));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') this.ctx.logger.warn(`技能：读取市场安装记录失败（${describe(error)}）。`);
-      return new Map();
-    }
+  private async records(): Promise<Map<string, MarketInstallRecord>> {
+    return readMarketInstalls(this.recordFile, message => this.ctx.logger.warn(message));
   }
 
-  /** 记下「市场条目 → 本机技能名」。写失败只影响下次的已安装标记（还有名称匹配兜底），不阻断安装。 */
-  private async rememberInstall(id: string, name: string): Promise<void> {
-    const records = new Map(await this.records());
-    records.set(id, name);
-    try {
-      await mkdir(dirname(this.recordFile), { recursive: true, mode: 0o700 });
-      await writeFile(this.recordFile, `${JSON.stringify(Object.fromEntries(records), null, 2)}\n`, { mode: 0o600 });
-    } catch (error) {
-      this.ctx.logger.warn(`技能：写入市场安装记录失败（${describe(error)}）。`);
+  /** 记下「市场条目 → 本机技能名 + 当前内置属性」。写失败只影响下次的兜底展示，不阻断安装。 */
+  private async rememberInstall(id: string, name: string, builtin?: boolean): Promise<void> {
+    const records = await this.records();
+    records.set(id, { name, ...(builtin === undefined ? {} : { builtin }) });
+    await writeMarketInstalls(this.recordFile, records, message => this.ctx.logger.warn(message));
+  }
+
+  /**
+   * 内置属性以技能市场为准：每次真正取到授权索引（非缓存命中）后把最新值写回安装记录，
+   * 供市场不可用或索引取不到时，本地列表按快照兜底展示与筛选。
+   */
+  private async syncBuiltin(rows: readonly SkillMarketAuthorized[]): Promise<void> {
+    const records = await this.records();
+    let changed = false;
+    for (const row of rows) {
+      const record = records.get(row.id);
+      if (!record || row.builtin === undefined || record.builtin === row.builtin) continue;
+      records.set(row.id, { ...record, builtin: row.builtin });
+      changed = true;
     }
+    if (changed) await writeMarketInstalls(this.recordFile, records, message => this.ctx.logger.warn(message));
   }
 
   async categories(signal?: AbortSignal): Promise<readonly SkillScene[]> {
     return (await this.client_()).categories(signal);
   }
 
-  async index(signal?: AbortSignal): Promise<readonly SkillMarketAuthorized[]> {
+  /** `refresh` 为真时跳过短 TTL 缓存：用户点「刷新」后内置属性必须立即反映后台最新值。 */
+  async index(signal?: AbortSignal, refresh?: boolean): Promise<readonly SkillMarketAuthorized[]> {
     const now = Date.now();
-    if (this.cachedIndex && now - this.cachedIndex.at < INDEX_TTL_MS) return this.cachedIndex.rows;
+    if (!refresh && this.cachedIndex && now - this.cachedIndex.at < INDEX_TTL_MS) return this.cachedIndex.rows;
     const rows = await (await this.client_()).index(signal);
     this.cachedIndex = { at: now, rows };
+    await this.syncBuiltin(rows);
     return rows;
   }
 
@@ -192,12 +197,12 @@ export class SkillMarketService extends Service implements SkillMarket {
       // 本机已有同名技能：这条市场技能实际上已经装在本机了，按「已安装」处理并记录下来，
       // 界面显示已安装 / 卸载，而不是把用户卡在一个永远装不上的按钮上。
       if (cause instanceof Error && cause.message === ALREADY_INSTALLED) {
-        await this.rememberInstall(item.id, name);
+        await this.rememberInstall(item.id, name, item.builtin);
         return { name, state: 'existing' };
       }
       throw cause;
     }
-    await this.rememberInstall(item.id, name);
+    await this.rememberInstall(item.id, name, item.builtin);
     return { name, state: 'installed' };
   }
 
@@ -218,7 +223,7 @@ export class SkillMarketService extends Service implements SkillMarket {
     } catch (cause) {
       // 用户主动取消说明这次卸载没有被继续执行，不能当成「已尝试上报」吞掉。
       if (cause instanceof SkillMarketRequestError && cause.code === 'skill/request-cancelled') throw cause;
-      this.ctx.logger.warn(`技能：市场卸载上报失败（${cause instanceof Error ? cause.message : String(cause)}）。`);
+      this.ctx.logger.warn(`技能：市场卸载上报失败（${describe(cause)}）。`);
       return { reported: false };
     }
   }

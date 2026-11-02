@@ -611,7 +611,11 @@ export class ToolAccessBridge extends Service {
     } catch (error) {
       const code = error instanceof GovernanceContractError ? error.code : 'access/tool-policy-failed';
       if (actor) await this.auditTool(actor, exec, 'denied', code);
-      return { kind: 'deny', reason: `WorkDSH denied this tool call (${code}).` };
+      // 跨组织拒绝最常见于“旧个人工作区会话被账号身份打开”：给出可执行的处置建议，避免被误读为文件权限问题。
+      const reason = code === 'access/cross-organization'
+        ? `该会话属于个人工作区或其他账号身份（组织不一致），无法在当前账号下继续，请新建会话。（${code}）`
+        : `WorkDSH denied this tool call (${code}).`;
+      return { kind: 'deny', reason };
     }
     return next();
   }

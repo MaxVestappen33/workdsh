@@ -157,11 +157,16 @@ async function dispatch(manager: SkillManagementService, marketService: () => Sk
     if (endpoint === 'market-list') {
       const page = optionalCount(record(payload)?.page); const pageSize = optionalCount(record(payload)?.pageSize);
       const scene = optionalText(record(payload)?.scene); const keyword = optionalText(record(payload)?.keyword);
-      if (page === null || pageSize === null || scene === null || keyword === null) return fail('skill/invalid-request', '技能市场查询参数无效。');
-      return ok(await market().list({ page, pageSize, scene, keyword }, signal));
+      const builtin = record(payload)?.builtin;
+      if (page === null || pageSize === null || scene === null || keyword === null || (builtin !== undefined && typeof builtin !== 'boolean')) return fail('skill/invalid-request', '技能市场查询参数无效。');
+      return ok(await market().list({ page, pageSize, scene, keyword, ...(typeof builtin === 'boolean' ? { builtin } : {}) }, signal));
     }
     if (endpoint === 'market-categories') return ok(await market().categories(signal));
-    if (endpoint === 'market-index') return ok(await market().index(signal));
+    if (endpoint === 'market-index') {
+      const refresh = record(payload)?.refresh;
+      if (refresh !== undefined && typeof refresh !== 'boolean') return fail('skill/invalid-request', '技能市场索引请求参数无效。');
+      return ok(await market().index(signal, refresh === true));
+    }
     if (endpoint === 'market-install' && typeof record(payload)?.id === 'string' && (record(payload)?.id as string).trim()) {
       return ok(await market().install(record(payload)?.id as string, signal));
     }

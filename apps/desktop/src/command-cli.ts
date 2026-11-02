@@ -5,9 +5,12 @@ import { dirname, join, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
 import { enterpriseEnvironment } from './local-runtime.ts'
+import { ACCOUNT_ONLY } from './carrier-policy.ts'
 
 export interface CommandSpace { mode: 'personal' | 'enterprise'; home: string; root?: string; label: string }
 export function selectCommandSpace(context: { personalHome: string; active?: CommandSpace }, request?: string): CommandSpace {
+  // 账号专用产品：任何非账号入口都不可用，否则会以本地个人身份绑定会话（同一 dsh-home）。
+  if (ACCOUNT_ONLY) throw new Error('本产品仅支持账号登录，请在 Desktop 登录后使用图形界面；dsh 终端命令不可用')
   if (!isAbsolute(context.personalHome)) throw new Error('Invalid personal command space')
   if (request !== undefined && !['personal', 'enterprise'].includes(request)) throw new Error('请选择 personal 或 enterprise')
   const space = request === 'personal' || (!request && !context.active) ? { mode: 'personal' as const, home: context.personalHome, label: '个人工作区' } : context.active

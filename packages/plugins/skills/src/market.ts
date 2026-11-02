@@ -57,6 +57,10 @@ export interface SkillMarketItem {
   readonly icon?: string;
   /** 图标底色，可能为空。 */
   readonly color?: string;
+  /**
+   * 是否内置：后台 isNzzc 字段（1 是、0 否）。缺省表示后台没给出该属性，界面不显示徽标。
+   */
+  readonly builtin?: boolean;
   /** 技能附件（fjxxList 的第一条）：为空表示后台没有上传说明文件，不能安装。 */
   readonly file?: SkillMarketFile;
   /**
@@ -78,6 +82,11 @@ export interface SkillMarketQuery {
   readonly scene?: string;
   /** 关键词：下发为列表接口的 `keyword` 参数；为空表示不筛选。 */
   readonly keyword?: string;
+  /**
+   * 是否内置：下发为列表接口的 `isNzzc` 参数（1 是、0 否）。
+   * 缺省表示不筛选；后台按该条件过滤。
+   */
+  readonly builtin?: boolean;
 }
 
 /** 一页市场列表：`page` 是后台返回的当前页码（缺省时回落到请求页码）。 */
@@ -88,13 +97,17 @@ export interface SkillMarketPage {
 }
 
 /**
- * 授权技能索引项：本地技能按标识匹配业务场景时只需要这三个字段。
+ * 授权技能索引项：本地技能按标识匹配业务场景与内置属性时只需要这些字段。
  * 索引必须覆盖全部已授权技能，因此由 Host 侧翻页取全（见 index()）。
  */
 export interface SkillMarketAuthorized {
+  /** 后台技能 id：与安装记录同一口径，用于把市场内置属性同步回本地快照。 */
+  readonly id: string;
   readonly slug: string;
   readonly title: string;
   readonly sceneLabels: readonly string[];
+  /** 是否内置：本地技能的内置属性以它为准。 */
+  readonly builtin?: boolean;
 }
 
 /** 市场接口路径：全部由宿主配置注入，不写死在业务逻辑里。 */
@@ -148,6 +161,11 @@ const iconOf = (value: unknown): string | undefined => {
   const icon = text(value);
   return icon && /^https?:\/\//iu.test(icon) ? icon : undefined;
 };
+/** isNzzc 是后台的「是否内置资产」：1 是、0 否；其它取值一律视为未知，不展示徽标也不参与判定。 */
+const builtinOf = (value: unknown): boolean | undefined => {
+  const raw = text(value);
+  return raw === '1' ? true : raw === '0' ? false : undefined;
+};
 /** bizScene 是多值字段（逗号分隔）：拆成去空、去重的值数组，供筛选取值与界面展示。 */
 const scenesOf = (value: unknown): readonly string[] => {
   const raw = text(value);
@@ -195,11 +213,13 @@ const itemOf = (value: unknown): SkillMarketItem | undefined => {
   const version = text(row.skillVersion);
   const description = text(row.skillDescr);
   const icon = iconOf(row.icon); const color = text(row.color); const file = fileOf(row.fjxxList);
+  const builtin = builtinOf(row.isNzzc);
   return {
     id, title, slug, description: description ?? '',
     ...(version ? { version } : {}),
     scenes: scenesOf(row.bizScene), sceneLabels: sceneLabelsOf(row.bizSceneList),
     ...(icon ? { icon } : {}), ...(color ? { color } : {}), ...(file ? { file } : {}),
+    ...(builtin === undefined ? {} : { builtin }),
   };
 };
 
@@ -368,6 +388,8 @@ export class SkillMarketClient {
     if (scene) query.set('bizScene', scene);
     const keyword = text(input.keyword);
     if (keyword) query.set('keyword', keyword);
+    // 是否内置由后台过滤：1 是、0 否；缺省不下发，避免与「全部」混淆。
+    if (input.builtin !== undefined) query.set('isNzzc', input.builtin ? '1' : '0');
     const result = record(await this.request('GET', this.paths.list, query, undefined, signal));
     if (!result || !Array.isArray(result.records))
       throw new SkillMarketRequestError('skill/market-response-invalid', '技能市场列表返回的数据无法识别，请稍后重试。');
@@ -405,7 +427,10 @@ export class SkillMarketClient {
       for (const item of listed.items) {
         if (seen.has(item.id)) continue;
         seen.add(item.id);
-        rows.push({ slug: item.slug, title: item.title, sceneLabels: item.sceneLabels });
+        rows.push({
+          id: item.id, slug: item.slug, title: item.title, sceneLabels: item.sceneLabels,
+          ...(item.builtin === undefined ? {} : { builtin: item.builtin }),
+        });
         added += 1;
       }
       if (!added || rows.length >= listed.total || page >= INDEX_MAX_PAGES) break;

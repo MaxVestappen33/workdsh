@@ -3,8 +3,9 @@ import { createHash } from 'node:crypto';
 import { Service, type Context } from '@deepseek-ai/cordis';
 import { credentialRef } from '@deepseek-ai/dsh-credentials';
 import {
-  CUSTOM_API_PROTOCOLS, CUSTOM_PROVIDER_ID, DEFAULT_MODEL_MARKET_PATHS, installability, modelRouteEntry, protocolApi,
-  type CustomModelDefinition, type CustomModelDraft, type CustomModelEntry,
+  CUSTOM_API_PROTOCOLS, CUSTOM_PROVIDER_ID, DEFAULT_MODEL_MARKET_PATHS, REASONING_LEVELS,
+  installability, modelRouteEntry, protocolApi, validateReasoningEfforts,
+  type CustomModelDefinition, type CustomModelDraft, type CustomModelEntry, type CustomReasoningEfforts,
   type ModelMarketDetail, type ModelMarketInstallResult, type ModelMarketModel, type ModelMarketPage,
   type ModelMarketPaths, type ModelMarketQuery, type ModelMarketUninstallResult,
 } from './shared.js';
@@ -79,6 +80,13 @@ function sanitize(model: BackendModel): ModelMarketModel {
 
 const customProtocols = new Set<string>(CUSTOM_API_PROTOCOLS.map(([value]) => value));
 
+/** Provider 级默认推理档位：有值时写入 reasoning，留空时删除该字段以跟随供应商默认。 */
+function reasoningOp(route: string, level: string | undefined): SettingsPathOp {
+  return level
+    ? { op: 'set', path: ['providers', route, 'reasoning'], value: level }
+    : { op: 'unset', path: ['providers', route, 'reasoning'] };
+}
+
 function invalidCustom(message: string): never {
   throw new ModelMarketError('model-market/invalid-custom', message);
 }
@@ -105,12 +113,21 @@ function parseCustomModels(value: unknown): readonly CustomModelDefinition[] {
       ? [...new Set(row.input.filter((item): item is 'text' | 'image' => item === 'text' || item === 'image'))]
       : [];
     if (!inputs.length) invalidCustom(`模型 ${id} 至少选择一种输入类型。`);
+    // 推理档位先整体校验再写入：官方适配器会拒绝空值、未知档位与只有 Off 的声明。
+    let reasoningEfforts: CustomReasoningEfforts | undefined;
+    if (row.reasoningEfforts !== undefined) {
+      const invalid = validateReasoningEfforts(row.reasoningEfforts);
+      if (invalid) invalidCustom(`模型 ${id}：${invalid}`);
+      reasoningEfforts = Object.fromEntries(Object.entries(row.reasoningEfforts as Record<string, string | null>)
+        .map(([level, wire]) => [level, wire === null ? null : wire.trim()]));
+    }
     return {
       id,
       name: text(row.name).trim() || id,
       ...(contextValue === undefined ? {} : { contextWindow: contextValue }),
       ...(maxValue === undefined ? {} : { maxTokens: maxValue }),
       input: inputs,
+      ...(reasoningEfforts === undefined ? {} : { reasoningEfforts }),
     };
   });
 }
@@ -132,13 +149,25 @@ function parseCustomDraft(value: unknown, options: { requireKey?: boolean } = {}
   if (!customProtocols.has(apiProtocol)) invalidCustom('请选择支持的 API 协议。');
   const apiKey = text(row.apiKey).trim();
   if (!apiKey && options.requireKey !== false) invalidCustom('请填写 API 密钥。');
+  const models = parseCustomModels(row.models);
+  // Provider 级默认档位必须真实存在于某个模型的档位表中，否则官方解析会静默忽略。
+  const defaultReasoning = text(row.defaultReasoning).trim();
+  if (defaultReasoning) {
+    if (!(REASONING_LEVELS as readonly string[]).includes(defaultReasoning)) {
+      invalidCustom(`未知的默认推理等级：${defaultReasoning}。`);
+    }
+    if (!models.some(model => model.reasoningEfforts && defaultReasoning in model.reasoningEfforts)) {
+      invalidCustom(`默认推理等级 ${defaultReasoning} 未在任何模型的推理档位中声明。`);
+    }
+  }
   return {
     providerId,
     displayName: text(row.displayName).trim() || providerId,
     apiUrl,
     apiProtocol,
     apiKey,
-    models: parseCustomModels(row.models),
+    models,
+    ...(defaultReasoning ? { defaultReasoning } : {}),
     setDefault: row.setDefault === true,
   };
 }
@@ -294,14 +323,20 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
         const inputs = Array.isArray(row.input)
           ? row.input.filter((item): item is 'text' | 'image' => item === 'text' || item === 'image')
           : [];
+        const efforts = record(row.reasoningEfforts);
+        const reasoningEfforts: CustomReasoningEfforts | undefined = efforts
+          ? Object.fromEntries(Object.entries(efforts).filter(([, wire]) => wire === null || typeof wire === 'string')) as CustomReasoningEfforts
+          : undefined;
         return [{
           id,
           name: text(row.name) || id,
           ...(contextWindow === undefined ? {} : { contextWindow }),
           ...(maxTokens === undefined ? {} : { maxTokens }),
           input: inputs.length ? inputs : ['text'] as const,
+          ...(reasoningEfforts === undefined ? {} : { reasoningEfforts }),
         }];
       });
+      const defaultReasoning = text(provider.reasoning).trim();
       return [{
         key,
         providerId: install.route,
@@ -309,6 +344,7 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
         apiUrl: text(provider.baseURL),
         apiProtocol: text(provider.api),
         models,
+        ...(defaultReasoning ? { defaultReasoning } : {}),
         installed: true as const,
         isDefault: text(defaultSelection.provider) === install.route,
       }];
@@ -469,6 +505,7 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
           { op: 'set', path: ['providers', route, 'baseURL'], value: draft.apiUrl },
           { op: 'set', path: ['providers', route, 'apiKeyEnv'], value: credentialRefName },
           { op: 'set', path: ['providers', route, 'models'], value: draft.models },
+          reasoningOp(route, draft.defaultReasoning),
         ];
       });
     } catch (cause) {
@@ -495,6 +532,7 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
       apiUrl: draft.apiUrl,
       apiProtocol: draft.apiProtocol,
       models: draft.models,
+      ...(draft.defaultReasoning ? { defaultReasoning: draft.defaultReasoning } : {}),
       installed: true,
       isDefault: draft.setDefault,
     };
@@ -527,6 +565,7 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
       { op: 'set', path: ['providers', install.route, 'baseURL'], value: draft.apiUrl },
       { op: 'set', path: ['providers', install.route, 'apiKeyEnv'], value: install.credentialRef },
       { op: 'set', path: ['providers', install.route, 'models'], value: draft.models },
+      reasoningOp(install.route, draft.defaultReasoning),
     ]);
     await this.updateRecords(current => ({
       ...current,
@@ -550,6 +589,7 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
       apiUrl: draft.apiUrl,
       apiProtocol: draft.apiProtocol,
       models: draft.models,
+      ...(draft.defaultReasoning ? { defaultReasoning: draft.defaultReasoning } : {}),
       installed: true,
       isDefault: defaultRoute === install.route,
     };

@@ -54,12 +54,41 @@ export const CUSTOM_API_PROTOCOLS = [
 /** Provider ID：小写字母开头，只含小写字母、数字与连字符，最长 48 字符。 */
 export const CUSTOM_PROVIDER_ID = /^[a-z][a-z0-9-]{0,47}$/u;
 
+/** pi-ai 可声明的推理档位，按强度升序；与官方设置页的档位集合一致。 */
+export const REASONING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+
+/** 开启推理等级时的初始档位：Off 加常见三档，与官方编辑器的初始值一致。 */
+export const INITIAL_REASONING_LEVELS = ['off', 'low', 'medium', 'high'] as const;
+
+/** 档位到 API 参数值的映射；off 可以为 null，表示不发送任何参数。 */
+export type CustomReasoningEfforts = Readonly<Record<string, string | null>>;
+
+/** 校验推理档位声明：未知档位、缺少参数值与只有 Off 都会被官方适配器拒绝。 */
+export function validateReasoningEfforts(value: unknown): string | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return '推理等级配置格式无效。';
+  const known = new Set<string>(REASONING_LEVELS);
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (!entries.length) return '请至少添加一个档位。';
+  for (const [level, wire] of entries) {
+    if (!known.has(level)) return `未知的推理档位：${level}。`;
+    if (wire === null) {
+      if (level !== 'off') return `档位 ${level} 需要填写 API 参数值。`;
+      continue;
+    }
+    if (typeof wire !== 'string' || !wire.trim()) return `档位 ${level} 需要填写 API 参数值。`;
+  }
+  if (!entries.some(([level]) => level !== 'off')) return '至少添加一个 Off 以外的档位；不需要思考请关闭推理等级。';
+  return undefined;
+}
+
 export interface CustomModelDefinition {
   readonly id: string;
   readonly name: string;
   readonly contextWindow?: number;
   readonly maxTokens?: number;
   readonly input: readonly ('text' | 'image')[];
+  /** 可选推理档位；缺省表示手写模型不提供推理，会话选择器也不会显示推理等级。 */
+  readonly reasoningEfforts?: CustomReasoningEfforts;
 }
 
 export interface CustomModelDraft {
@@ -69,6 +98,8 @@ export interface CustomModelDraft {
   readonly apiProtocol: string;
   readonly apiKey: string;
   readonly models: readonly CustomModelDefinition[];
+  /** Provider 级默认推理档位；留空表示跟随供应商默认。 */
+  readonly defaultReasoning?: string;
   readonly setDefault: boolean;
 }
 
@@ -80,6 +111,8 @@ export interface CustomModelEntry {
   readonly apiUrl: string;
   readonly apiProtocol: string;
   readonly models: readonly CustomModelDefinition[];
+  /** Provider 级默认推理档位；缺省表示跟随供应商默认。 */
+  readonly defaultReasoning?: string;
   readonly installed: true;
   /** 是否为当前会话默认模型。 */
   readonly isDefault: boolean;

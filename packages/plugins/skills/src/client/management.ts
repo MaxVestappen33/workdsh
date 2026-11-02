@@ -82,8 +82,8 @@ export function createSkillManagementClient(ctx: Context, lifetime?: AbortSignal
     marketAvailable: () => invoke<{ available: boolean }>('market-available', {}),
     marketList: (input: SkillMarketQuery) => invoke<SkillMarketPage>('market-list', input),
     marketCategories: () => invoke<readonly SkillScene[]>('market-categories', {}),
-    /** 全量授权技能索引：本地技能的业务场景标签按标识匹配这份数据。 */
-    marketIndex: () => invoke<readonly SkillMarketAuthorized[]>('market-index', {}),
+    /** 全量授权技能索引：本地技能的业务场景标签与内置属性按标识匹配这份数据；refresh 跳过宿主缓存。 */
+    marketIndex: (refresh?: boolean) => invoke<readonly SkillMarketAuthorized[]>('market-index', refresh === undefined ? {} : { refresh }),
     /** 安装到本机：宿主下载市场附件后走官方导入链路（共享范围），返回技能名与落地状态。 */
     marketInstall: (id: string) => invoke<SkillMarketInstallResult>('market-install', { id }),
     /** 卸载上报：后台记账失败不阻断本机卸载，reported 表示上报是否成功。 */
