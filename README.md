@@ -4,9 +4,26 @@
 <p align="center">Inspired by WorkBuddy’s workflow and built on DeepSeek Harness plugins: start with personal use, then install Enterprise Connection for company models, collaboration, and colleague mentions.</p>
 <p align="center"><a href="#download-desktop">Download Desktop</a> · <a href="#from-material-to-deliverable">Explore the workflow</a> · <a href="#personal-and-enterprise-use">Personal and enterprise</a> · <a href="docs/user-guide.en.md">User guide</a> · <a href="README.zh-CN.md">简体中文</a></p>
 
-[![Desktop release](https://img.shields.io/badge/Desktop-3.0.0--alpha.3-176BFF)](https://github.com/techflag/workdsh/releases/tag/desktop-v3.0.0-alpha.3) [![GitHub stars](https://img.shields.io/github/stars/techflag/workdsh?label=stars)](https://github.com/techflag/workdsh) [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Desktop release](https://img.shields.io/badge/Desktop-3.0.0--alpha.4-176BFF)](https://github.com/techflag/workdsh/releases/tag/desktop-v3.0.0-alpha.4) [![GitHub stars](https://img.shields.io/github/stars/techflag/workdsh?label=stars)](https://github.com/techflag/workdsh) [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 [![GitHub Actions](https://github.com/techflag/workdsh/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/techflag/workdsh/actions/workflows/ci.yml) [![Gitee stars](https://gitee.com/techflag/workdsh/badge/star.svg?theme=dark)](https://gitee.com/techflag/workdsh/stargazers) [![Gitee forks](https://gitee.com/techflag/workdsh/badge/fork.svg?theme=dark)](https://gitee.com/techflag/workdsh/members)
+
+## Community spotlight: DSH Friends
+
+[![DSH Friends: add a public chat room to DSH](docs/images/dsh-friends/hero.png)](https://github.com/techflag/dsh-friends)
+
+**[DSH Friends](https://github.com/techflag/dsh-friends) adds public rooms directly to DSH and compatible WorkDSH hosts.** Read recent room messages, join a conversation without adding contacts first, quote a message, and move to encrypted private chat only when both people want to continue.
+
+Install it in **Plugins → Add plugin** from the official npm registry with `dsh-friends@0.1.0-alpha.11`, enable it, and fully restart Desktop. macOS and Windows use the same package. [Source and guide](https://github.com/techflag/dsh-friends) · [Download the universal `.tgz`](https://github.com/techflag/dsh-friends/releases/tag/v0.1.0-alpha.11) · [Public relay status](https://relay.techflag.cn/)
+
+<details>
+<summary>See the actual public-room interface</summary>
+
+![DSH Friends public room with quoted replies and recent messages](docs/images/dsh-friends/community-demo.png)
+
+<sub>Interface demonstration; the people and conversation are sample content.</sub>
+
+</details>
 
 ## Everyone can tailor their own AI service
 
@@ -32,7 +49,7 @@ A GitHub account is required to submit. Unsure which category fits? [Start here]
 
 **A personal workspace with installable enterprise capabilities is a defining WorkDSH feature.** Projects, the library, experts, skills, and connectors share the same implementation. Install Enterprise Connection and sign in to share text and files with `@` colleagues and use Collaboration; add company models through model settings. Independent business plugins can also reuse member authentication through `workdshEnterprise` to call company business APIs.
 
-The enterprise plugin is **not listed in a plugin marketplace**. [Download Enterprise Connection](https://github.com/techflag/workdsh/releases/download/desktop-v3.0.0-alpha.3/workdsh-enterprise-connection-0.1.0-alpha.2.tgz), enter the downloaded file’s full path in “Plugins → Add plugin”, install and activate it, then connect through “Settings → Enterprise account”. [Installation and login](#enterprise-connection-download-install-and-sign-in) · [Business plugin authentication](#enterprise-authentication-that-independent-plugins-can-reuse) · [Separate admin backend](https://github.com/techflag/workdsh-admin)
+The enterprise plugin is **not listed in a plugin marketplace**. [Download Enterprise Connection](https://github.com/techflag/workdsh/releases/download/desktop-v3.0.0-alpha.4/workdsh-enterprise-connection-0.1.0-alpha.2.tgz), enter the downloaded file’s full path in “Plugins → Add plugin”, install and activate it, then connect through “Settings → Enterprise account”. [Installation and login](#enterprise-connection-download-install-and-sign-in) · [Business plugin authentication](#enterprise-authentication-that-independent-plugins-can-reuse) · [Separate admin backend](https://github.com/techflag/workdsh-admin)
 
 ![WorkDSH projects home with project templates and the complete desktop sidebar](apps/web/assets/screenshots/workdsh-projects-alpha8-dark.png)
 
@@ -114,6 +131,12 @@ It helps to distinguish **the content people use** from **the software extension
 
 DSH plugins can be individual tools or combine UI, services, and other resources into a larger application scenario. For example, a data-management plugin could add data views and processing tools, then work with skills and experts across a workflow. This illustrates what the plugin model can support; it does not mean this release bundles such a data-management system. Users can discover and install skills through SkillHub and find DSH community plugins through dsh-market. Before installing a plugin, check what it provides and whether it supports the current DSH version.
 
+### Meet other DSH users with DSH Friends
+
+[DSH Friends](https://github.com/techflag/dsh-friends) is an independently installed community chat plugin for DeepSeek Harness and compatible WorkDSH hosts. It adds public rooms, quoted replies, encrypted private chat, recent public-message history, room presence and new-message reminders. Open a room first, talk about what you are building, and start a private conversation only when both people want to continue.
+
+In **Plugins → Add plugin**, select the official npm registry and install `dsh-friends@0.1.0-alpha.11`, then enable it and fully restart Desktop. The same package works on macOS and Windows. Source, privacy notes and current limitations are in the [project repository](https://github.com/techflag/dsh-friends); a universal `.tgz` is also available from [GitHub Releases](https://github.com/techflag/dsh-friends/releases). DSH Friends is not bundled with WorkDSH and should be reviewed before installation like any other community plugin.
+
 WorkDSH connects two independently maintained catalogs: [SkillHub](https://skillhub.cn/) for Skills and [dsh-market](https://dshmarket.com/zh/) for DSH plugins. SkillHub entries show their source and version, and open the source page for license information before installation. The DSH catalog is provided by the third-party dsh-market plugin inside the existing plugin page. Catalog entries are **not all preinstalled, reviewed, or endorsed by WorkDSH**; check each item's license, dependencies, and DSH compatibility. [Skill management](packages/plugins/skills/README.md) · [Plugin development](docs/plugin-development.en.md) · [Ecosystem manifesto](docs/plugin-ecosystem.en.md)
 
 ![SkillHub catalog inside WorkDSH, showing skill icons, versions, sources, and install actions](apps/web/assets/screenshots/workdsh-skillhub-2026-09.png)
@@ -161,7 +184,7 @@ Windows: C:\Users\your-name\Downloads\workdsh-enterprise-connection-0.1.0-alpha.
 
 Use your actual username and location. On macOS, select the file in Finder and press `Option + Command + C`; on Windows, right-click and choose Copy as path, removing surrounding quotes before pasting. Paste the full path into Settings → Built-in plugins → Plugin settings → Open plugin management → Add plugin, install, then click Enable now. Do not enter only the package name or upload the archive to the admin backend.
 
-[Download this release's Enterprise Connection tgz](https://github.com/techflag/workdsh/releases/download/desktop-v3.0.0-alpha.3/workdsh-enterprise-connection-0.1.0-alpha.2.tgz). Retain the original `.tgz` if your browser extracts downloads; an extracted folder path is not the archive path.
+[Download this release's Enterprise Connection tgz](https://github.com/techflag/workdsh/releases/download/desktop-v3.0.0-alpha.4/workdsh-enterprise-connection-0.1.0-alpha.2.tgz). Retain the original `.tgz` if your browser extracts downloads; an extracted folder path is not the archive path.
 
 The Enterprise Connection package is delivered independently through our [GitHub Releases](https://github.com/techflag/workdsh/releases), without a third-party marketplace. Download `workdsh-enterprise-connection-<version>.tgz` and enter its full path in Add plugin. Starting with Desktop 2.0.6-alpha.5, local plugin archives are copied into the application’s account-specific cache; moving or deleting the original download after successful installation does not block later plugin installations. Release assets include the compatible DSH version manifest and `SHA256SUMS`.
 
@@ -239,13 +262,13 @@ WorkDSH Admin — organization overview:
 
 ## Download Desktop
 
-Desktop **3.0.0-alpha.3** is published as the Latest release (Alpha version). The [GitHub Release](https://github.com/techflag/workdsh/releases/tag/desktop-v3.0.0-alpha.3) provides these complete installers:
+Desktop **3.0.0-alpha.4** is published as the Latest release (Alpha version). The [GitHub Release](https://github.com/techflag/workdsh/releases/tag/desktop-v3.0.0-alpha.4) provides these complete installers:
 
 | Platform | Download |
 | --- | --- |
-| Windows x64 | [WorkDSH Setup.exe](https://github.com/techflag/workdsh/releases/download/desktop-v3.0.0-alpha.3/dsh-plugin-desktop-windows-x64--WorkDSH-3.0.0-alpha.3-x64-Setup.exe) |
-| macOS Apple Silicon | [WorkDSH arm64.dmg](https://github.com/techflag/workdsh/releases/download/desktop-v3.0.0-alpha.3/dsh-plugin-desktop-macos-arm64--WorkDSH-3.0.0-alpha.3-arm64.dmg) |
-| macOS Intel | [WorkDSH x64.dmg](https://github.com/techflag/workdsh/releases/download/desktop-v3.0.0-alpha.3/dsh-plugin-desktop-macos-x64--WorkDSH-3.0.0-alpha.3-x64.dmg) |
+| Windows x64 | [WorkDSH Setup.exe](https://github.com/techflag/workdsh/releases/download/desktop-v3.0.0-alpha.4/dsh-plugin-desktop-windows-x64--WorkDSH-3.0.0-alpha.4-x64-Setup.exe) |
+| macOS Apple Silicon | [WorkDSH arm64.dmg](https://github.com/techflag/workdsh/releases/download/desktop-v3.0.0-alpha.4/dsh-plugin-desktop-macos-arm64--WorkDSH-3.0.0-alpha.4-arm64.dmg) |
+| macOS Intel | [WorkDSH x64.dmg](https://github.com/techflag/workdsh/releases/download/desktop-v3.0.0-alpha.4/dsh-plugin-desktop-macos-x64--WorkDSH-3.0.0-alpha.4-x64.dmg) |
 
 **Downloads in China (older mirror)**: the [Gitee 2.0.6-alpha.3 release](https://gitee.com/techflag/workdsh/releases/tag/desktop-v2.0.6-alpha.3) provides split archives for Windows x64 and macOS Apple Silicon. The current repository allows 100 MB per attachment and 1 GB total; download every part for your platform and its merge script, then follow the release instructions. The script verifies SHA256 before producing the installer. For Intel Mac or a complete single-file installer, use the GitHub links above. Enterprise plugin TGZ/ZIP files are also available directly on the Gitee release page.
 

@@ -12,7 +12,7 @@ describe('Desktop native Conversation frame guard', () => {
     try {
       await mkdir(join(pkg, 'lib'), { recursive: true })
       await writeFile(join(profile, 'package.json'), '{}')
-      await writeFile(join(pkg, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-client-ui-conversation', version: '0.2.1-rc.2' }))
+      await writeFile(join(pkg, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-client-ui-conversation', version: '0.2.1-rc.5' }))
       await writeFile(target, 'unexpected-runtime-bytes')
       await expect(ensureNativeWorkbenchFrame(profile)).rejects.toThrow('unsupported runtime bytes')
       await expect(verifyNativeWorkbenchFrame(profile)).rejects.toThrow('unsupported packaged runtime bytes')

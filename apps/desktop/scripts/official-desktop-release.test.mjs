@@ -73,24 +73,24 @@ test('every supported target has an immutable official URL and a full digest', (
   }
 })
 
-test('Intel tools retain their exact official archive version while npm Host/Client provenance stays rc.2',()=>{
+test('Intel tools retain their exact official archive version while npm Host/Client provenance stays rc.5',()=>{
   const directory=mkdtempSync(join(tmpdir(),'workdsh-intel-source-'))
   try{
     const target='mac-x64',artifact=officialDesktopArtifact(target)
-    assert.equal(lock.version,'0.2.1-rc.2');assert.equal(artifact.version,'0.2.1-rc.1')
+    assert.equal(lock.version,'0.2.1-rc.5');assert.equal(artifact.version,'0.2.1-rc.4')
     const original=JSON.stringify({desktopVersion:artifact.version,platform:'darwin',arch:'x64',...lock.primaryRuntime,payloadDigest:'b'.repeat(64)})+'\n'
     writeFileSync(join(directory,'runtime.json'),original)
     const receipt=writeOfficialRuntimeProvenance(directory,target)
     assert.deepEqual(createOfficialRuntimeProvenance(new TextEncoder().encode(original),target),receipt)
     assert.equal(readFileSync(join(directory,'runtime.json'),'utf8'),original,'official runtime.json is never relabelled')
-    assert.equal(receipt.npmDshVersion,'0.2.1-rc.2');assert.deepEqual(receipt.artifact,artifact)
+    assert.equal(receipt.npmDshVersion,'0.2.1-rc.5');assert.deepEqual(receipt.artifact,artifact)
     assert.deepEqual(verifyOfficialRuntimeProvenance(directory,target),receipt)
     for(const key of ['version','url','sha512','size']){
       writeFileSync(join(directory,OFFICIAL_PROVENANCE_FILE),JSON.stringify({...receipt,artifact:{...artifact,[key]:key==='size'?artifact.size+1:'tampered'}}))
       assert.throws(()=>verifyOfficialRuntimeProvenance(directory,target),/provenance mismatch/)
     }
     writeFileSync(join(directory,OFFICIAL_PROVENANCE_FILE),JSON.stringify(receipt))
-    writeFileSync(join(directory,'runtime.json'),original.replace('0.2.1-rc.1','0.2.1-rc.2'))
+    writeFileSync(join(directory,'runtime.json'),original.replace('0.2.1-rc.4','0.2.1-rc.5'))
     assert.throws(()=>verifyOfficialRuntimeProvenance(directory,target),/metadata does not match/)
     writeFileSync(join(directory,'runtime.json'),original+' ')
     assert.throws(()=>verifyOfficialRuntimeProvenance(directory,target),/provenance mismatch/,'even a formatting change to upstream metadata is detected')
@@ -98,7 +98,7 @@ test('Intel tools retain their exact official archive version while npm Host/Cli
 })
 
 test('binary source locking has no guessed version, range or automatic fallback',()=>{
-  for(const replacement of [undefined,'^0.2.1','0.2.1-rc.2']){
+  for(const replacement of [undefined,'^0.2.1','0.2.1-rc.5']){
     const changed=structuredClone(lock);changed.desktopArtifacts['mac-x64'].version=replacement
     assert.throws(()=>officialDesktopArtifact('mac-x64',changed),/locked|invalid/)
   }

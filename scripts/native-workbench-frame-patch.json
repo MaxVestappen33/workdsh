@@ -1,9 +1,9 @@
 {
   "package": "@deepseek-ai/dsh-client-ui-conversation",
-  "version": "0.2.1-rc.2",
+  "version": "0.2.1-rc.5",
   "file": "lib/client.js",
-  "originalSha256": "8554738cbeeb5218ad1bfa4773ef094363b066d052a1893d7a96797c5bc33a63",
-  "patchedSha256": "aa6f96333035fa62c2464b9fd94732333bb759d876dd85c5e3bfaf22170ba2a1",
+  "originalSha256": "cfbd9fd95b0509f7c93a22a62a67ebc10481c8eda611704ea50c2e195b9a5a69",
+  "patchedSha256": "f7c22cfd56b2fffb29ff9bc1b2d20b1b798fdf9d1c58fc39b3316bb01808dfc5",
   "replacements": [
     [
       "return renderSlot(\"main.conversation\", {});",

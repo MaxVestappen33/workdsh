@@ -25,7 +25,7 @@ MCP client 是一种执行适配，复用官方 stdio/Streamable HTTP 生命周�
 
 ### 市场安装与本机依赖
 
-市场条目由后台维护，安装口径见 [MCP 市场接口规范 §2.7](../../../mcp-market-api-spec.md)。`transport = stdio` 且 `command` 是包管理器（`npx` / `npm` / `pnpm` / `yarn` / `bunx`…）时，条目依赖 npm 包：客户端先用**随包 pnpm** 从宿主注入的内网仓库（`workdsh-app.json` 的 `server.mcpPackageRegistry`，指向 Sonatype Nexus 的 npm group）把包及其全部依赖装到 `<DSH_HOME>/mcp/<serverName>`，再读包内 `bin` 解析入口、用**随包 Node** 以绝对路径启动；卸载时删除该目录。因此内网离线机器不需要预装 Node/npm，也不需要访问公网。装包耗时由仓库与包体积决定，界面每 5 秒轮询一次安装状态，失败原因就地展示并可直接重试。宿主未注入内网仓库时该能力整体关闭：这类条目会明确报错，而直接执行本机命令（node/python/绝对路径）的条目不受影响；`python` / `uvx` 等非 node 运行时的自动安装不在本轮范围内。
+市场条目由后台维护，安装口径见 MCP 市场接口规范 §2.7（该规范文档未随仓库提交，仅内部维护）。`transport = stdio` 且 `command` 是包管理器（`npx` / `npm` / `pnpm` / `yarn` / `bunx`…）时，条目依赖 npm 包：客户端先用**随包 pnpm** 从宿主注入的内网仓库（`workdsh-app.json` 的 `server.mcpPackageRegistry`，指向 Sonatype Nexus 的 npm group）把包及其全部依赖装到 `<DSH_HOME>/mcp/<serverName>`，再读包内 `bin` 解析入口、用**随包 Node** 以绝对路径启动；卸载时删除该目录。因此内网离线机器不需要预装 Node/npm，也不需要访问公网。装包耗时由仓库与包体积决定，界面每 5 秒轮询一次安装状态，失败原因就地展示并可直接重试。宿主未注入内网仓库时该能力整体关闭：这类条目会明确报错，而直接执行本机命令（node/python/绝对路径）的条目不受影响；`python` / `uvx` 等非 node 运行时的自动安装不在本轮范围内。
 
 完整 D05 仍须完成对应 PLAN 任务及 [验收矩阵](../../../apps/web/docs/ACCEPTANCE.md) 的交互式 OAuth、多账号、公共授权、写操作确认和审计场景。本 alpha 不代表完整连接器产品已验收。
 

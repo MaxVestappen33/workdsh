@@ -55,7 +55,7 @@ test('official Cordis Host and Client graphs survive a verified old managed work
   // bytes, rather than confusing the unnormalized source with an installation.
   await promisify(execFile)('tar',['-xzf',archive,'--strip-components=1','-C',installed],{timeout:15000});
   const verify=createWorkbenchInstallationVerifier(directory,async()=>({path:archive,sha256,workbenchId:descriptor.id}),
-   value=>semver.satisfies('0.2.1-rc.2',value.hostCompatibility.harness,{includePrerelease:true}));
+   value=>semver.satisfies('0.2.1-rc.5',value.hostCompatibility.harness,{includePrerelease:true}));
   await host.plugin(Loader,{baseUrl:pathToFileURL(directory+'/').href});
   registration=new HostWorkbenchRegistration(host.loader,new InstalledWorkbenchManifestReader(directory),verify);
   host.provide('workdshWorkbenchRegistration',registration);
