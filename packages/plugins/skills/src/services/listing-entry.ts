@@ -21,7 +21,11 @@ const DEFAULT_LISTING_PATHS: SkillListingPaths = {
   scenes: '/desktop-client/queryAiBizSceneList',
   dict: '/desktop-client/getDictItems',
   upload: '/desktop-client/upload',
+  ssoParams: '/sys/generateCasLoginParams',
 };
+
+/** 本地开发默认的后台管理系统单点入口；打包时由 workdsh-app.json 覆盖。 */
+const DEFAULT_ADMIN_SSO_URL = 'http://localhost:3100/clientSSO';
 
 /** 表单字典的字典编码：技能类型、审批状态与是否公开。 */
 const SKILL_TYPE_DICT = 'skill_type';
@@ -45,6 +49,8 @@ export interface SkillListingPaths {
   /** 通用字典前缀，实际请求为 `${dict}/${dictCode}`。 */
   readonly dict: string;
   readonly upload: string;
+  /** 生成后台管理系统单点登录加密参数。 */
+  readonly ssoParams: string;
 }
 
 /** 通用后台通道在本插件用到的最小结构（结构化类型，避免跨包依赖）。 */
@@ -57,6 +63,8 @@ export interface SkillListingBackend {
 
 export interface SkillListingServiceOptions {
   readonly paths?: Partial<SkillListingPaths>;
+  /** 后台管理系统单点入口（不含 `?params=`）；未配置时回退本地开发地址。 */
+  readonly ssoUrl?: string;
 }
 
 /** 上架申请请求错误：code 为宿主侧错误码，message 为可直接展示的中文文案。 */
@@ -77,6 +85,14 @@ export interface SkillListing {
   submit(input: SkillListingRequest, signal?: AbortSignal): Promise<string>;
   /** 单文件上传（图标等）：返回后台文件地址与文件信息。 */
   upload(fileName: string, bytes: Uint8Array, signal?: AbortSignal): Promise<SkillListingUpload>;
+  /** 后台管理系统单点地址；绑定缺失或参数生成失败时退回纯地址并标记 degraded。 */
+  adminSsoTarget(menuId: string, bizParams: Readonly<Record<string, string>>, signal?: AbortSignal): Promise<AdminSsoTarget>;
+}
+
+/** 单点跳转结果：degraded 为 true 时只拿到纯登录地址。 */
+export interface AdminSsoTarget {
+  readonly url: string;
+  readonly degraded: boolean;
 }
 
 declare module '@deepseek-ai/cordis' { interface Context { workdshSkillListing: SkillListing } }
@@ -114,6 +130,7 @@ const pathsOf = (value: SkillListingPaths): SkillListingPaths => ({
   scenes: pathOf(value?.scenes, '业务场景'),
   dict: pathOf(value?.dict, '字典'),
   upload: pathOf(value?.upload, '上传'),
+  ssoParams: pathOf(value?.ssoParams, '单点参数'),
 });
 
 /**
@@ -239,6 +256,7 @@ const itemOf = (value: unknown): SkillListingItem | undefined => {
 /** 宿主侧上架申请服务：只声明路径与字段映射，请求头与信封由通用通道负责。 */
 export class SkillListingService extends Service implements SkillListing {
   private readonly paths: SkillListingPaths;
+  private readonly adminSsoUrl: string;
 
   constructor(ctx: Context, options: SkillListingServiceOptions = {}) {
     super(ctx, 'workdshSkillListing');
@@ -250,7 +268,31 @@ export class SkillListingService extends Service implements SkillListing {
       scenes: paths.scenes?.trim() || DEFAULT_LISTING_PATHS.scenes,
       dict: paths.dict?.trim() || DEFAULT_LISTING_PATHS.dict,
       upload: paths.upload?.trim() || DEFAULT_LISTING_PATHS.upload,
+      ssoParams: paths.ssoParams?.trim() || DEFAULT_LISTING_PATHS.ssoParams,
     });
+    this.adminSsoUrl = typeof options.ssoUrl === 'string' && /^https?:\/\//u.test(options.ssoUrl.trim())
+      ? options.ssoUrl.trim().replace(/\/+$/u, '')
+      : DEFAULT_ADMIN_SSO_URL;
+  }
+
+  /** 后台管理系统单点地址；绑定缺失或参数生成失败时退回纯地址并标记 degraded。 */
+  async adminSsoTarget(menuId: string, bizParams: Readonly<Record<string, string>>, signal?: AbortSignal): Promise<AdminSsoTarget> {
+    signal?.throwIfAborted();
+    const fallback: AdminSsoTarget = { url: this.adminSsoUrl, degraded: true };
+    const channel = this.channel();
+    if (!channel) return fallback;
+    try {
+      if (!(await channel.available())) return fallback;
+    } catch {
+      return fallback;
+    }
+    try {
+      const result = await channel.post(this.paths.ssoParams, { menuId, bizParams }, undefined, signal);
+      if (typeof result !== 'string' || !result.trim()) return fallback;
+      return { url: `${this.adminSsoUrl}?params=${encodeURIComponent(result.trim())}`, degraded: false };
+    } catch {
+      return fallback;
+    }
   }
 
   async available(): Promise<boolean> {

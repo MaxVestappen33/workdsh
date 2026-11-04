@@ -443,5 +443,10 @@ export const expertsCss = `${modalCss}
 .expert-listing-dialog .listing-footer{display:flex;justify-content:flex-end;gap:10px;padding:14px 28px;border-top:1px solid var(--dsw-alias-border-l2)}
 .wd-dialog.expert-listing-dialog{width:min(880px,calc(100vw - 56px));max-height:min(88vh,900px)}
 @media(max-width:640px){.wd-dialog.expert-listing-dialog{width:calc(100vw - 24px);max-height:calc(100dvh - 24px)}.expert-listing-dialog .listing-grid{grid-template-columns:1fr}}
+.wd-dialog.sso-dialog{width:min(460px,calc(100vw - 32px));padding:24px}
+.sso-dialog .sso-dialog-body{display:flex;flex-direction:column;gap:10px}
+.sso-dialog h2{margin:0;font-size:16px;line-height:24px;color:var(--dsw-alias-label-primary)}
+.sso-dialog p{margin:0;font-size:13px;line-height:22px;color:var(--dsw-alias-label-secondary)}
+.sso-dialog .sso-dialog-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:8px}
 ${controlsCss}
 `;

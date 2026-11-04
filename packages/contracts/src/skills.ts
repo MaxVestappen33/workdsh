@@ -275,7 +275,7 @@ export interface SkillListingUpload {
   readonly size: number;
 }
 
-export type SkillManagementEndpoint = 'list' | 'detail' | 'update' | 'resource' | 'write-resource' | 'set-enabled' | 'dependency-impact' | 'uninstall' | 'batch' | 'trash-list' | 'restore' | 'commit-import' | 'discard-import' | 'catalog' | 'install-catalog' | 'market-available' | 'market-list' | 'market-categories' | 'market-index' | 'market-install' | 'market-uninstall' | 'market-document' | 'listing-options' | 'listing-list' | 'listing-submit';
+export type SkillManagementEndpoint = 'list' | 'detail' | 'update' | 'resource' | 'write-resource' | 'set-enabled' | 'dependency-impact' | 'uninstall' | 'batch' | 'trash-list' | 'restore' | 'commit-import' | 'discard-import' | 'catalog' | 'install-catalog' | 'market-available' | 'market-list' | 'market-categories' | 'market-index' | 'market-install' | 'market-uninstall' | 'market-document' | 'listing-options' | 'listing-list' | 'listing-submit' | 'listing-sso';
 export interface SkillManagementFailure { readonly code: string; readonly message: string; }
 export type SkillManagementResult<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: SkillManagementFailure };
 

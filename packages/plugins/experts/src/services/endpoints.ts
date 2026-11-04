@@ -31,6 +31,8 @@ export interface ExpertApiPaths {
   nodes: string;
   /** 字典前缀，实际请求为 `${dict}/${dictCode}`。 */
   dict: string;
+  /** 生成后台管理系统单点登录加密参数。 */
+  adminSsoParams: string;
 }
 
 /** 后台 desktop-client 命名空间的既有约定；未注入配置时使用。 */
@@ -46,6 +48,7 @@ export const DEFAULT_EXPERT_API_PATHS: ExpertApiPaths = {
   upload: '/desktop-client/upload',
   nodes: '/desktop-client/queryAiNodeList',
   dict: '/desktop-client/getDictItems',
+  adminSsoParams: '/sys/generateCasLoginParams',
 };
 
 /**

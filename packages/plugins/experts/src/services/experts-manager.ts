@@ -116,6 +116,8 @@ const EXPERT_DOMAIN = 'workdsh-experts';
 const PLAN_TTL_MS = 10 * 60 * 1000;
 const HANDOFF_TTL_MS = 10 * 60 * 1000;
 const STAGED_IMPORT_PATTERN = /^[a-z0-9-]{1,64}$/;
+/** 本地开发默认的后台管理系统单点入口；打包时由 workdsh-app.json 覆盖。 */
+const DEFAULT_ADMIN_SSO_URL = 'http://localhost:3100/clientSSO';
 
 interface StagedImport {
   readonly fileName: string;
@@ -288,6 +290,12 @@ function listingFailure(error: unknown): string {
 
 declare module '@deepseek-ai/cordis' { interface Context { workdshConnectors: ConnectorManagementService; } }
 
+/** 后台管理系统单点跳转结果：degraded 为 true 时只拿到纯登录地址。 */
+export interface AdminSsoTarget {
+  readonly url: string;
+  readonly degraded: boolean;
+}
+
 export interface ExpertsManagerOptions {
   agentsHome?: string;
   includeDefaultSkillRoots?: boolean;
@@ -296,6 +304,11 @@ export interface ExpertsManagerOptions {
    * 未配置时回退到内置默认值，以兼容 Desktop/Web 共用的 Profile 包。
    */
   paths?: Partial<ExpertApiPaths>;
+  /**
+   * 后台管理系统单点登录入口（不含 `?params=`）。由宿主从 `workdsh-app.json`
+   * 的 `server.adminSsoUrl` 注入；未配置时回退到本地开发地址。
+   */
+  adminSsoUrl?: string;
   /**
    * 出厂不预置默认专家：随包模板只在显式开启时写入本地目录，供探针与本地调试
    * 当夹具使用。未开启时，旧版本种下且用户未改过的默认专家会被一次性归档，
@@ -341,6 +354,7 @@ export class ExpertsManager extends Service implements ExpertsService {
   private readonly seedDefaults?: boolean;
   private readonly requireInstalledExpert: boolean;
   private readonly paths: ExpertApiPaths;
+  private readonly adminSsoUrl: string;
 
   constructor(ctx: Context, options: ExpertsManagerOptions = {}) {
     super(ctx, 'workdshExperts');
@@ -350,6 +364,9 @@ export class ExpertsManager extends Service implements ExpertsService {
     this.seedDefaults = options.seedDefaults;
     this.requireInstalledExpert = options.requireInstalledExpert !== false;
     this.paths = resolveExpertApiPaths(options.paths);
+    this.adminSsoUrl = typeof options.adminSsoUrl === 'string' && /^https?:\/\//u.test(options.adminSsoUrl.trim())
+      ? options.adminSsoUrl.trim().replace(/\/+$/u, '')
+      : DEFAULT_ADMIN_SSO_URL;
     this.stagingRoot = join(agentsHome, '.workdsh-state', 'experts', 'staging');
     // The business backend is optional: personal mode has no binding and the
     // catalog degrades to "unavailable" instead of failing plugin load.
@@ -2052,6 +2069,26 @@ export class ExpertsManager extends Service implements ExpertsService {
       count: String(result.items.length), total: String(result.total),
     });
     return result;
+  }
+
+  /** 后台管理系统单点地址；绑定缺失或参数生成失败时退回纯地址并标记 degraded。 */
+  async adminSsoTarget(menuId: string, bizParams: Readonly<Record<string, string>>, signal?: AbortSignal): Promise<AdminSsoTarget> {
+    signal?.throwIfAborted();
+    const fallback: AdminSsoTarget = { url: this.adminSsoUrl, degraded: true };
+    const channel = this.ctx.reflect.get('workdshBackend') as BackendChannelLike | undefined;
+    if (!channel) return fallback;
+    try {
+      if (!(await channel.available())) return fallback;
+    } catch {
+      return fallback;
+    }
+    try {
+      const params = await channel.post<unknown>(this.paths.adminSsoParams, { menuId, bizParams }, undefined, signal);
+      if (typeof params !== 'string' || !params.trim()) return fallback;
+      return { url: `${this.adminSsoUrl}?params=${encodeURIComponent(params.trim())}`, degraded: false };
+    } catch {
+      return fallback;
+    }
   }
 
   /** Withdraw one pending application; the backend owns the resulting state. */

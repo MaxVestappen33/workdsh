@@ -13,7 +13,6 @@ import { expertDraftId } from '../domain/navigation.js';
 import { ExpertDraftEditor } from './ExpertDraftEditor.js';
 import { ImportExpertModal } from './ImportExportModals.js';
 import { RemoteExperts } from './RemoteExperts.js';
-import { ExpertListingModal } from './ExpertListingModal.js';
 import { MyApplications } from './MyApplications.js';
 import { expertsCss } from './styles.js';
 
@@ -38,6 +37,15 @@ type Notice = { kind: 'info' | 'warn' | 'error'; text: string };
 function messageOf(cause: unknown): string { return cause instanceof Error ? cause.message : '专家操作失败，请重试。'; }
 function codeOf(cause: unknown): string { const code = (cause as unknown as { code?: unknown })?.code; return typeof code === 'string' ? code : ''; }
 function icon(name: string) { return <Icon name={name as IconName} />; }
+
+/**
+ * 打开后台管理系统：Desktop 的 window.open 由主进程转交系统浏览器，
+ * Web 预览被拦截时退回当前页跳转。
+ */
+function openAdminSso(url: string): void {
+  const popup = window.open(url, '_blank', 'noopener');
+  if (!popup && !/Electron/iu.test(navigator.userAgent)) window.location.assign(url);
+}
 
 const ORIGIN_LABEL: Record<string, string> = { default: '默认模板', personal: '我的专家', organization: '组织' };
 const AVAILABILITY_LABEL: Record<ExpertAvailability, string> = { enabled: '已启用', disabled: '已停用', archived: '已归档' };
@@ -68,14 +76,13 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
   const [error, setError] = useState('');
   const [notice, setNotice] = useState<Notice | undefined>();
   const [mineCount, setMineCount] = useState(0);
-  /** 「我的申请」按类型的条数：既用于顶部按钮总数，也用于「我的申请」页签上的数字统计。 */
-  const [applicationCounts, setApplicationCounts] = useState({ agent: 0, team: 0 });
+  /** 绑定不可用时待确认打开的单点地址，非空即弹出提醒。 */
+  const [ssoPromptUrl, setSsoPromptUrl] = useState<string>();
   const [detailId, setDetailId] = useState<string>();
   /** Set when the detail was opened from the backend catalog: only 召唤 and 卸载 apply. */
   const [detailRemote, setDetailRemote] = useState<{ remoteKey: string; boundSessions: number }>();
   /** `expertId → remoteKey` for experts installed from the backend catalog. */
   const [installations, setInstallations] = useState<ReadonlyMap<string, string>>(new Map());
-  const [listingId, setListingId] = useState<string>();
   const [editorId, setEditorId] = useState<string | undefined>(() => expertDraftId(window.location.search));
   const [importOpen, setImportOpen] = useState(false);
   const [actionMenu, setActionMenu] = useState<string>();
@@ -135,17 +142,25 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
     void load();
   }, [load, view]);
   useEffect(() => { void loadMineCount(); }, [loadMineCount, items]);
-  /** 「我的申请」数字统计：两类申请的总条数（后台台账，不含本地记录）。 */
-  const loadApplicationCount = useCallback(async () => {
+  /** 上架入口：按当前类型跳转后台管理系统的申请页；绑定不可用时先提示再打开登录页。 */
+  const openListingAdmin = useCallback(async () => {
+    if (acting) return;
+    setActing(true);
+    setError('');
     try {
-      const [agent, team] = await Promise.all([
-        management.myListings({ expertType: 'agent', pageNo: 1, pageSize: 1 }),
-        management.myListings({ expertType: 'team', pageNo: 1, pageSize: 1 }),
-      ]);
-      setApplicationCounts({ agent: agent.available ? agent.total : 0, team: team.available ? team.total : 0 });
-    } catch { setApplicationCounts({ agent: 0, team: 0 }); }
-  }, [management]);
-  useEffect(() => { void loadApplicationCount(); }, [loadApplicationCount]);
+      const target = await management.adminSso(kind);
+      if (target.degraded) {
+        // 绑定不可用时不阻断跳转：弹窗提醒后由用户确认继续打开后台登录页。
+        setSsoPromptUrl(target.url);
+      } else {
+        openAdminSso(target.url);
+      }
+    } catch (cause) {
+      setError(messageOf(cause));
+    } finally {
+      setActing(false);
+    }
+  }, [acting, kind, management]);
   const loadInstallations = useCallback(async () => {
     try {
       const rows = await management.installations();
@@ -176,8 +191,7 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
     if (view === 'mine') void load();
     void loadMineCount();
     void loadInstallations();
-    void loadApplicationCount();
-  }, [load, loadMineCount, loadInstallations, loadApplicationCount, view]);
+  }, [load, loadMineCount, loadInstallations, view]);
   const closeEditor = () => {
     setEditorId(undefined);
     const url = new URL(window.location.href);
@@ -277,8 +291,7 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
         placeholder={view === 'mine' ? `搜索我创建的${kind === 'team' ? '专家团' : '专家'}` : view === 'applications' ? '搜索我的上架申请' : `搜索${kindLabel}`}
         value={query}
         onChange={event => setQuery(event.currentTarget.value)} />
-      <Button className={`mine-toggle ${view === 'applications' ? 'active' : ''}`} aria-pressed={view === 'applications'}
-        onClick={() => { setView('applications'); setQuery(''); }}>我的申请 {applicationCounts.agent + applicationCounts.team}</Button>
+      <Button variant="primary" className="mine-toggle" disabled={acting} onClick={() => void openListingAdmin()}>上架申请</Button>
       <Button className={`mine-toggle ${view === 'mine' ? 'active' : ''}`} aria-pressed={view === 'mine'}
         onClick={() => { setView('mine'); setQuery(''); }}>我的专家 {mineCount}</Button>
       <details className="create-menu"><summary className="create-expert">制作专家</summary><div role="menu">
@@ -289,7 +302,7 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
 
     {view !== 'center' && <Button variant="ghost" size="sm" className="back-center" onClick={() => { setView('center'); setQuery(''); setStateFilter('all'); }}>‹ 全部专家</Button>}
     <div className="section-head">
-      <nav className="work-types" aria-label={view === 'mine' ? '我的作品类型' : '专家中心类型'}>{([['agent', '专家'], ['team', '专家团']] as const).map(([type, label]) => <button key={type} className={kind === type ? 'active' : ''} aria-pressed={kind === type} onClick={() => { setKind(type); setQuery(''); }}>{label}{view === 'mine' && <span>{typeCounts[type]}</span>}{view === 'applications' && <span>{applicationCounts[type]}</span>}</button>)}</nav>
+      <nav className="work-types" aria-label={view === 'mine' ? '我的作品类型' : '专家中心类型'}>{([['agent', '专家'], ['team', '专家团']] as const).map(([type, label]) => <button key={type} className={kind === type ? 'active' : ''} aria-pressed={kind === type} onClick={() => { setKind(type); setQuery(''); }}>{label}{view === 'mine' && <span>{typeCounts[type]}</span>}</button>)}</nav>
       <div className="section-actions">
         {view !== 'applications' && <Button onClick={() => setImportOpen(true)}>导入</Button>}
         <Button onClick={refresh} disabled={busy}>刷新</Button>
@@ -360,7 +373,6 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
                     {summary.canEdit && !draft && <button role="menuitem" onClick={() => { setActionMenu(undefined); void editInConversation(summary.id); }}>编辑</button>}
                     <button role="menuitem" disabled={acting} onClick={() => { setActionMenu(undefined); void copyToMine(summary); }}>复制到我的专家</button>
                     <button role="menuitem" disabled={acting} onClick={() => { setActionMenu(undefined); void exportExpert(summary); }}>导出</button>
-                    <button role="menuitem" disabled={acting} onClick={() => { setActionMenu(undefined); setListingId(summary.id); }}>申请上架</button>
                     <button className="danger" role="menuitem" disabled={acting} onClick={() => { setActionMenu(undefined); void deleteLocalById(summary.id); }}>删除</button>
                   </>}
                 </div>}
@@ -374,7 +386,6 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
               {draft && <span className="badge">未发布</span>}
               {summary.executionBlocked === 'approval-required' && <span className="badge warn">需上架审核</span>}
               {summary.origin === 'default' && <span className="badge">默认</span>}
-              {!summary.installedFromCatalog && <Button size="sm" className="listing-entry" disabled={acting} onClick={() => setListingId(summary.id)}>申请上架</Button>}
               <button className={`pin ${summary.pinned ? 'on' : ''}`} role="switch" aria-checked={summary.pinned}
                 aria-label={`${summary.pinned ? '取消置顶' : '置顶'}专家 ${summary.name}`}
                 onClick={() => void setPreference(summary, !summary.pinned)}>★</button>
@@ -392,7 +403,7 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
         onUninstall={detailRemote
           ? () => void uninstallInstalled(detailRemote)
           : installations.has(detailId) ? () => void uninstallById(detailId) : undefined}
-        onSubmitListing={installations.has(detailId) ? undefined : () => { const id = detailId; setDetailId(undefined); setListingId(id); }}
+        onSubmitListing={undefined}
         onDelete={installations.has(detailId) ? undefined : () => void deleteLocalById(detailId)}
         onClose={() => { setDetailId(undefined); setDetailRemote(undefined); }}
         onSummon={(expertId, revisionId, draftText) => void runSummon(expertId, revisionId, draftText)}
@@ -416,14 +427,6 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
         onChanged={refresh} />}
     </Modal>
 
-    {listingId && <ExpertListingModal expertId={listingId} management={management}
-      onClose={() => setListingId(undefined)}
-      onSubmitted={message => {
-        setListingId(undefined);
-        setNotice({ kind: 'info', text: message });
-        refresh();
-      }} />}
-
     {editorId && <ExpertDraftEditor expertId={editorId} management={management}
       onClose={closeEditor}
       onSaved={refresh}
@@ -433,6 +436,17 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
     <Modal open={importOpen} label="导入专家" className="import-dialog" onClose={() => setImportOpen(false)}>
       {importOpen && <ImportExpertModal management={management} onClose={() => setImportOpen(false)}
         onImported={id => { setImportOpen(false); refresh(); setEditorId(id); }} />}
+    </Modal>
+
+    <Modal open={Boolean(ssoPromptUrl)} label="后台未接入提醒" className="sso-dialog" onClose={() => setSsoPromptUrl(undefined)}>
+      <div className="sso-dialog-body">
+        <h2>无法自动登录后台</h2>
+        <p>当前未接入业务后台或登录已失效。继续将打开后台管理系统登录页，请登录后重新发起上架申请。</p>
+        <div className="sso-dialog-actions">
+          <Button onClick={() => setSsoPromptUrl(undefined)}>取消</Button>
+          <Button variant="primary" onClick={() => { const url = ssoPromptUrl; setSsoPromptUrl(undefined); if (url) openAdminSso(url); }}>继续打开</Button>
+        </div>
+      </div>
     </Modal>
   </section>;
 }

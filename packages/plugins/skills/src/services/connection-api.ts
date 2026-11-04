@@ -149,6 +149,20 @@ async function dispatch(manager: SkillManagementService, marketService: () => Sk
         stagedId: input.stagedId as string,
       }, signal));
     }
+    if (endpoint === 'listing-sso') {
+      const input = record(payload);
+      const menuId = input?.menuId;
+      const box = record(input?.bizParams);
+      if (typeof menuId !== 'string' || !/^\d{10,25}$/u.test(menuId) || !box) return fail('skill/invalid-request', '单点登录参数不完整。');
+      const bizParams: Record<string, string> = {};
+      for (const [key, value] of Object.entries(box)) {
+        if (!/^[A-Za-z][A-Za-z0-9_]{0,63}$/u.test(key) || typeof value !== 'string' || !value.trim() || value.length > 200) {
+          return fail('skill/invalid-request', '单点登录业务参数不合法。');
+        }
+        bizParams[key] = value;
+      }
+      return ok(await listing().adminSsoTarget(menuId, bizParams, signal));
+    }
     // 技能市场：业务场景与关键词都由服务端筛选，参数非法直接拒绝，不把错误取值带给后台。
     if (endpoint === 'market-available') {
       const service = marketService();

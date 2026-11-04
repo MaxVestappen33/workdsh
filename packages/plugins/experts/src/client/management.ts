@@ -39,6 +39,18 @@ const path = '/api/workdsh-experts';
 const importPath = '/api/workdsh-experts/import';
 const exportPath = '/api/workdsh-experts/export';
 
+/** 后台管理系统的专家/专家团上架菜单与登录后动作；按业务固定，保存在客户端。 */
+export const EXPERT_ADMIN_SSO = {
+  agent: { menuId: '1990210000000000002', bizParams: { postLoginAction: 'addExpert' } },
+  team: { menuId: '1990210000000000002', bizParams: { postLoginAction: 'addExpertGroup' } },
+} as const;
+
+/** 单点跳转结果：degraded 时只拿到纯登录地址，界面据此提示。 */
+export interface AdminSsoTarget {
+  readonly url: string;
+  readonly degraded: boolean;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -180,6 +192,9 @@ export function createExpertManagementClient(ctx: Context, lifetime?: AbortSigna
     /** Withdraw a pending listing application; resolves the backend message. */
     withdrawListing: (request: WithdrawListingRequest, signal?: AbortSignal) =>
       invoke<string>('withdraw-listing', request, signal, 60_000),
+    /** Backend admin console SSO URL for the current expert kind. */
+    adminSso: (expertType: 'agent' | 'team', signal?: AbortSignal) =>
+      invoke<AdminSsoTarget>('admin-sso', EXPERT_ADMIN_SSO[expertType], signal, 60_000),
     /** Streaming upload of an export package; returns the staged artifact reference for preview/commit. */
     stageImport: (file: File, signal?: AbortSignal) =>
       request<{ uploadedArtifactRef: string }>(importPath, {

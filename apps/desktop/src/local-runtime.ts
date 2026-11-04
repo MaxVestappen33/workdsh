@@ -226,12 +226,17 @@ export function desktopSkillMarketPatch(home: string, server: ServerConfig): str
     ['scenes', server.skillListingScenePath],
     ['dict', server.skillDictPath],
     ['upload', server.skillUploadPath],
+    ['ssoParams', server.adminSsoParamsPath],
   ] as const).flatMap(([name, value]) => (typeof value === 'string' && /^\//u.test(value) ? [[name, value] as const] : []))
-  if (marketRows.length === 0 && listingRows.length === 0) return undefined
-  const section = (name: string, rows: readonly (readonly [string, string])[]): string => rows.length === 0 ? ''
-    : `    ${name}:\n      paths:\n${rows.map(([key, value]) => `        ${key}: ${JSON.stringify(value)}\n`).join('')}`
+  const ssoUrl = typeof server.adminSsoUrl === 'string' && /^https?:\/\//u.test(server.adminSsoUrl) ? server.adminSsoUrl : undefined
+  if (marketRows.length === 0 && listingRows.length === 0 && ssoUrl === undefined) return undefined
+  const market = marketRows.length === 0 ? ''
+    : `    market:\n      paths:\n${marketRows.map(([key, value]) => `        ${key}: ${JSON.stringify(value)}\n`).join('')}`
+  // 上架申请段同时承载接口路径与单点登录地址：地址缺失时只写路径，插件回退内置默认值。
+  const listing = listingRows.length === 0 && ssoUrl === undefined ? ''
+    : `    listing:\n${listingRows.length === 0 ? '' : `      paths:\n${listingRows.map(([key, value]) => `        ${key}: ${JSON.stringify(value)}\n`).join('')}`}${ssoUrl === undefined ? '' : `      ssoUrl: ${JSON.stringify(ssoUrl)}\n`}`
   const patch = join(home, '.skill-market.patch.yml')
-  writeFileSync(patch, `- id: workdsh-skills\n  config:\n${section('market', marketRows)}${section('listing', listingRows)}`, { mode: 0o600 })
+  writeFileSync(patch, `- id: workdsh-skills\n  config:\n${market}${listing}`, { mode: 0o600 })
   return patch
 }
 
@@ -294,10 +299,13 @@ export function desktopExpertMarketPatch(home: string, server: ServerConfig): st
     ['upload', server.skillUploadPath],
     ['nodes', server.skillListingNodePath],
     ['dict', server.skillDictPath],
+    ['adminSsoParams', server.adminSsoParamsPath],
   ] as const).flatMap(([name, value]) => (typeof value === 'string' && /^\//u.test(value) ? [[name, value] as const] : []))
-  if (rows.length === 0) return undefined
+  const ssoUrl = typeof server.adminSsoUrl === 'string' && /^https?:\/\//u.test(server.adminSsoUrl) ? server.adminSsoUrl : undefined
+  if (rows.length === 0 && ssoUrl === undefined) return undefined
+  const sso = ssoUrl === undefined ? '' : `    adminSsoUrl: ${JSON.stringify(ssoUrl)}\n`
   const patch = join(home, '.expert-market.patch.yml')
-  writeFileSync(patch, `- id: workdsh-experts\n  config:\n    paths:\n${rows.map(([name, value]) => `      ${name}: ${JSON.stringify(value)}\n`).join('')}`, { mode: 0o600 })
+  writeFileSync(patch, `- id: workdsh-experts\n  config:\n    paths:\n${rows.map(([name, value]) => `      ${name}: ${JSON.stringify(value)}\n`).join('')}${sso}`, { mode: 0o600 })
   return patch
 }
 

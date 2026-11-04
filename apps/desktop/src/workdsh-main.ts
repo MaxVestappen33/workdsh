@@ -1046,6 +1046,85 @@ function workdshCommand(target: string): string | undefined {
   try { return new URL(target).hostname } catch { return undefined }
 }
 
+/**
+ * 优先浏览器的启动命令：找到 Google Chrome 时返回拉起方式，否则返回 undefined，
+ * 由系统默认浏览器接管。仅做存在性判断，不写注册表、不改用户默认浏览器设置。
+ */
+function chromeLauncher(): { command: string; args: readonly string[] } | undefined {
+  if (process.platform === 'darwin') {
+    const installed = ['/Applications/Google Chrome.app', join(app.getPath('home'), 'Applications/Google Chrome.app')].some(existsSync)
+    // 用 open -a 走 LaunchServices，不直接执行 App 包内的二进制。
+    return installed ? { command: 'open', args: ['-a', 'Google Chrome'] } : undefined
+  }
+  if (process.platform === 'win32') {
+    const roots = [process.env.PROGRAMFILES, process.env['PROGRAMFILES(X86)'], process.env.LOCALAPPDATA]
+    const executable = roots
+      .flatMap(root => (typeof root === 'string' && root ? [join(root, 'Google', 'Chrome', 'Application', 'chrome.exe')] : []))
+      .find(existsSync)
+    return executable ? { command: executable, args: [] } : undefined
+  }
+  const executable = ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/opt/google/chrome/chrome'].find(existsSync)
+  return executable ? { command: executable, args: [] } : undefined
+}
+
+/**
+ * 尝试用 Chrome 打开；没有安装、拉起失败或进程非正常退出时返回 false。
+ * Chrome 是常驻应用，已运行时不会退出，因此超时后按成功处理。
+ */
+function openInChrome(target: string): Promise<boolean> {
+  const launcher = chromeLauncher()
+  if (!launcher) return Promise.resolve(false)
+  return new Promise<boolean>(resolve => {
+    let settled = false
+    const settle = (opened: boolean): void => { if (!settled) { settled = true; resolve(opened) } }
+    try {
+      const child = spawn(launcher.command, [...launcher.args, target], { detached: true, stdio: 'ignore' })
+      child.unref()
+      child.once('error', () => settle(false))
+      child.once('exit', code => settle(code === 0))
+      setTimeout(() => settle(true), 1500)
+    } catch {
+      resolve(false)
+    }
+  })
+}
+
+/** 系统浏览器不可用时的兜底：用独立的内置窗口加载同一地址，仍失败则给出可复制的链接。 */
+function openInBuiltinWindow(target: string): void {
+  try {
+    const fallback = new BrowserWindow({
+      width: 1180,
+      height: 820,
+      minWidth: 900,
+      minHeight: 600,
+      title: '后台管理系统',
+      autoHideMenuBar: true,
+      webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+    })
+    // 内置窗口里再次弹出的链接仍交给外部浏览器，避免层层嵌套。
+    fallback.webContents.setWindowOpenHandler(({ url }) => {
+      if (url.startsWith('https://') || url.startsWith('http://')) void shell.openExternal(url)
+      return { action: 'deny' }
+    })
+    void fallback.loadURL(target).catch(() => {
+      dialog.showErrorBox('无法打开后台管理系统', `请手动复制以下链接到浏览器打开：\n${target}`)
+      fallback.destroy()
+    })
+  } catch {
+    dialog.showErrorBox('无法打开后台管理系统', `请手动复制以下链接到浏览器打开：\n${target}`)
+  }
+}
+
+/**
+ * 外部链接的打开顺序：已安装的 Google Chrome → 系统默认浏览器 → 内置窗口兜底。
+ */
+function openExternalWithFallback(target: string): void {
+  void openInChrome(target).then(opened => {
+    if (opened) return
+    void shell.openExternal(target).catch(() => openInBuiltinWindow(target))
+  })
+}
+
 function openWindow(url: string, connection: DesktopConnection = { mode: 'personal' }, carrier = false, reveal = true, backgroundColor = '#111113'): void {
   const previous = window
   const previousEntrySurface = entrySurface
@@ -1077,7 +1156,7 @@ function openWindow(url: string, connection: DesktopConnection = { mode: 'person
   })
   if (connection.mode === 'enterprise') enterpriseWindows.add(page)
   window.webContents.setWindowOpenHandler(({ url: target }) => {
-    if (target.startsWith('https://') || target.startsWith('http://')) void shell.openExternal(target)
+    if (target.startsWith('https://') || target.startsWith('http://')) openExternalWithFallback(target)
     return { action: 'deny' }
   })
   if (!carrier) {

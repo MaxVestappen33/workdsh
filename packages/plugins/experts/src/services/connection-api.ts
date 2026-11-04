@@ -5,7 +5,6 @@ import type {
   ExpertDefinition,
   ExpertExample,
   ExpertListQuery,
-  ExpertsService,
   FutureRequirement,
   ModelSelectionRequest,
   MutationContext,
@@ -39,7 +38,7 @@ type Endpoint =
   | 'consume-handoff' | 'prepare-handoff' | 'create-handoff' | 'preview-import'
   | 'commit-import' | 'export' | 'operation' | 'verify-binding'
   | 'remote-list' | 'install' | 'uninstall' | 'installations'
-  | 'listing-options' | 'submit-listing' | 'delete-expert' | 'my-listings' | 'withdraw-listing';
+  | 'listing-options' | 'submit-listing' | 'delete-expert' | 'my-listings' | 'withdraw-listing' | 'admin-sso';
 
 const ok = <T>(value: T): ConnectionRpcResult<T> => ({ ok: true, value });
 const fail = (code: string, message: string, details: object = {}): ConnectionRpcResult<never> => ({ ok: false, error: { code, message, details } });
@@ -154,7 +153,7 @@ function listQuery(payload: unknown): ExpertListQuery {
   };
 }
 
-async function dispatch(manager: ExpertsService, actor: ActorContext, rawEndpoint: unknown, payload: unknown, signal: AbortSignal): Promise<ConnectionRpcResult<unknown>> {
+async function dispatch(manager: ExpertsManager, actor: ActorContext, rawEndpoint: unknown, payload: unknown, signal: AbortSignal): Promise<ConnectionRpcResult<unknown>> {
   if (typeof rawEndpoint !== 'string') return fail('experts/invalid-request', '专家管理操作无效。');
   const endpoint = rawEndpoint as Endpoint;
   const input = record(payload);
@@ -366,6 +365,20 @@ async function dispatch(manager: ExpertsService, actor: ActorContext, rawEndpoin
           expertType, remoteId,
           ...(str(input?.reason) === undefined ? {} : { reason: str(input?.reason) }),
         }, signal));
+      }
+      case 'admin-sso': {
+        // 菜单与业务动作由客户端常量提供：这里只做形状校验，账号信息由后台按 token 注入。
+        const menuId = str(input?.menuId);
+        const box = record(input?.bizParams);
+        if (!menuId || !/^\d{10,25}$/u.test(menuId) || !box) return fail('experts/invalid-request', '单点登录参数不完整。');
+        const bizParams: Record<string, string> = {};
+        for (const [key, value] of Object.entries(box)) {
+          if (!/^[A-Za-z][A-Za-z0-9_]{0,63}$/u.test(key) || typeof value !== 'string' || !value.trim() || value.length > 200) {
+            return fail('experts/invalid-request', '单点登录业务参数不合法。');
+          }
+          bizParams[key] = value;
+        }
+        return ok(await manager.adminSsoTarget(menuId, bizParams, signal));
       }
       default:
         return fail('experts/unknown-endpoint', '未知的专家管理操作。');

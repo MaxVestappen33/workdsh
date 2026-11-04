@@ -7,6 +7,15 @@ import type { ManagedSkillDetail, ManagedSkillResource, ManagedSkillSummary, Ski
 
 const path = '/api/workdsh-skills';
 
+/** 后台管理系统的技能上架菜单与登录后动作；按业务固定，保存在客户端。 */
+export const SKILL_ADMIN_SSO = { menuId: '1990270000000000002', bizParams: { postLoginAction: 'addSkill' } } as const;
+
+/** 单点跳转结果：degraded 时只拿到纯登录地址，界面据此提示。 */
+export interface AdminSsoTarget {
+  readonly url: string;
+  readonly degraded: boolean;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 function failure(value: unknown): Error {
   if (isRecord(value) && typeof value.message === 'string') return Object.assign(new Error(value.message), { code: typeof value.code === 'string' ? value.code : 'skill/request-failed' });
@@ -95,6 +104,8 @@ export function createSkillManagementClient(ctx: Context, lifetime?: AbortSignal
     listingList: (input: SkillListingQuery) => invoke<SkillListingPage>('listing-list', input),
     /** 提交上架申请：宿主读取本地预检暂存文件上传后台后再调申请接口。 */
     submitListing: (input: SkillListingRequest, signal?: AbortSignal) => invoke<string>('listing-submit', input, signal),
+    /** 后台管理系统单点地址：按技能上架业务固定参数生成。 */
+    adminSso: (signal?: AbortSignal) => invoke<AdminSsoTarget>('listing-sso', SKILL_ADMIN_SSO, signal),
     /** 图标上传：图片原始字节交给宿主转发后台，返回可回填到表单的文件地址。 */
     uploadListingIcon: async (file: File, signal?: AbortSignal) => {
       return request<{ readonly url: string; readonly fileName: string; readonly size: number }>(`${path}/listing-upload`, {

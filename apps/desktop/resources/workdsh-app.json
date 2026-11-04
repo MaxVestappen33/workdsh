@@ -10,6 +10,7 @@
   "server": {
     "appId": "police-assistant",
     "baseUrl": "http://127.0.0.1:18080/ytsj-ai",
+    "adminSsoUrl": "http://localhost:3100/clientSSO",
     "mcpPackageRegistry": "http://56.82.7.213:8081/repository/npm-group/",
     "syncIntervalSeconds": 300,
     "updateCheckIntervalMinutes": 5,

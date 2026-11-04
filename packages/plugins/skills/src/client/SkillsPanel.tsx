@@ -34,6 +34,14 @@ const BUILTIN_YES = BUILTIN_OPTIONS[0];
 
 function icon(kind: string) { return <Icon name={kind as IconName} />; }
 function messageOf(cause: unknown): string { return cause instanceof Error ? cause.message : '技能操作失败，请重试。'; }
+/**
+ * 打开后台管理系统：Desktop 的 window.open 由主进程转交系统浏览器，
+ * Web 预览被拦截时退回当前页跳转。
+ */
+function openAdminSso(url: string): void {
+  const popup = window.open(url, '_blank', 'noopener');
+  if (!popup && !/Electron/iu.test(navigator.userAgent)) window.location.assign(url);
+}
 /** 附件大小展示：与导入预检里的口径一致。 */
 function sizeOf(bytes: number): string { return bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KiB` : `${(bytes / 1024 / 1024).toFixed(1)} MiB`; }
 /** 审批状态徽标配色：按文案关键词归类，后台新增或改名状态时不会丢配色。 */
@@ -103,8 +111,11 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
   const [trashOpen, setTrashOpen] = useState(false);
   const [confirmUninstall, setConfirmUninstall] = useState<{ skill: ManagedSkillSummary; impact: SkillDependencyImpact; market?: { reported: boolean } }>();
   const [creating, setCreating] = useState(false);
+  /** 上架申请跳转的请求占用：与创建流程分开，避免互相禁用。 */
+  const [ssoBusy, setSsoBusy] = useState(false);
+  /** 绑定不可用时待确认打开的单点地址，非空即弹出提醒。 */
+  const [ssoPromptUrl, setSsoPromptUrl] = useState<string>();
   const [listingOpen, setListingOpen] = useState(false);
-  const [addMenuOpen, setAddMenuOpen] = useState(false);
   // 上架申请：表单字典（技能类型 / 审批状态 / 来源节点 / 业务场景树）与我的申请列表。
   const [listingOptions, setListingOptions] = useState<SkillListingOptions>();
   const [listingOptionsBusy, setListingOptionsBusy] = useState(false);
@@ -123,7 +134,6 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
   const [selectedNames, setSelectedNames] = useState<readonly string[]>([]);
   const [confirmBatchUninstall, setConfirmBatchUninstall] = useState(false);
   const search = useRef<HTMLInputElement>(null);
-  const addMenu = useRef<HTMLDivElement>(null);
   /** 分类字典的同步快照：发请求时立即读取，避免等待 state 更新。 */
   const dictionaryRef = useRef<readonly SkillScene[]>([]);
   /** 请求代号：筛选变化时递增，用于丢弃过期响应，避免旧结果覆盖新筛选。 */
@@ -145,11 +155,6 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
     window.addEventListener('focus', revalidate); document.addEventListener('visibilitychange', revalidate);
     return () => { window.removeEventListener('focus', revalidate); document.removeEventListener('visibilitychange', revalidate); };
   }, [refresh]);
-  useEffect(() => {
-    if (!addMenuOpen) return;
-    const outside = (event: PointerEvent) => { if (!addMenu.current?.contains(event.target as Node)) setAddMenuOpen(false); };
-    document.addEventListener('pointerdown', outside); return () => document.removeEventListener('pointerdown', outside);
-  }, [addMenuOpen]);
   useEffect(() => {
     if (!actionMenu) return;
     const outside = (event: PointerEvent) => { if (!(event.target instanceof Element) || !event.target.closest('.card-actions')) setActionMenu(undefined); };
@@ -304,11 +309,26 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
     catch (cause) { setError(messageOf(cause)); }
   };
   const beginSkillTask = async (kind: SkillTaskKind) => {
-    setCreating(true); setAddMenuOpen(false); setError('');
+    setCreating(true); setError('');
     try { await startSkillTask(kind); }
     catch (cause) { setError(messageOf(cause)); setCreating(false); }
   };
   const trial = async (name: string) => { setCreating(true); try { await startSkillTrial(name); } catch (cause) { setError(messageOf(cause)); setCreating(false); } };
+  /** 上架申请：跳转后台管理系统；绑定不可用时先提示，再打开纯登录地址。 */
+  const openListingAdmin = async () => {
+    if (ssoBusy) return;
+    setSsoBusy(true); setError('');
+    try {
+      const target = await management.adminSso();
+      if (target.degraded) {
+        // 绑定不可用时不阻断跳转：弹窗提醒后由用户确认继续打开后台登录页。
+        setSsoPromptUrl(target.url);
+      } else {
+        openAdminSso(target.url);
+      }
+    } catch (cause) { setError(messageOf(cause)); }
+    finally { setSsoBusy(false); }
+  };
   const setEnabled = async (skill: ManagedSkillSummary, enabled: boolean) => {
     setActionMenu(undefined); setError('');
     try { await management.setEnabled(skill.name, enabled); await refresh(); if (selected?.name === skill.name) await openDetail(skill.name); }
@@ -665,13 +685,13 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
       <Input ref={search} className="search" aria-label="搜索技能" placeholder="搜索技能" value={query} onChange={event => changeQuery(event.currentTarget.value)} />
       <Button className={batchMode ? 'batch-toggle active' : 'batch-toggle'} onClick={toggleBatch}>{batchMode ? '退出批量' : '批量管理'}</Button>
       <Button className="trash-button" onClick={() => void openTrash()}>最近卸载</Button>
-      <div className="add-menu-wrap" ref={addMenu}><Button variant="primary" className="add-skill" disabled={creating} aria-haspopup="menu" aria-expanded={addMenuOpen} onClick={() => setAddMenuOpen(open => !open)}>＋ 添加技能</Button>{addMenuOpen && <div className="add-menu" role="menu"><button role="menuitem" onClick={() => { setAddMenuOpen(false); setListingOpen(true); }}>技能上架申请</button><button role="menuitem" onClick={() => void beginSkillTask('create')}>创建技能</button></div>}</div>
+      <Button className="create-skill" disabled={creating} onClick={() => void beginSkillTask('create')}>创建技能</Button>
+      <Button variant="primary" className="add-skill" disabled={ssoBusy} onClick={() => void openListingAdmin()}>上架申请</Button>
     </header>
     <div className="section-head"><h1>技能管理</h1><Button className="refresh" onClick={() => void reloadAll()} disabled={busy}>刷新</Button></div>
     <nav className="source-tabs" aria-label="技能来源">
       <button className={tab === 'local' ? 'active' : ''} aria-current={tab === 'local' ? 'page' : undefined} onClick={() => switchTab('local')}>本地技能<i className="count" title="本机已安装技能数量">{skills.length}</i></button>
       {marketOn ? <button className={tab === 'market' ? 'active' : ''} aria-current={tab === 'market' ? 'page' : undefined} onClick={() => switchTab('market')}>技能市场{/* 数量恒取后台授权总数，首次加载完成前不显示 0 */}{marketBusy && !market.total ? null : <i className="count" title="后台已授权技能数量">{market.total}</i>}</button> : null}
-      {marketOn ? <button className={tab === 'applications' ? 'active' : ''} aria-current={tab === 'applications' ? 'page' : undefined} onClick={() => switchTab('applications')}>我的申请{/* 数量跟着当前查询条件走 */}{applicationBusy && !applications.total ? null : <i className="count" title="上架申请数量（随查询条件更新）">{applications.total}</i>}</button> : null}
     </nav>
     {tab === 'applications'
       ? <div className="listing-toolbar"><label className="listing-status-filter"><span>审批状态</span><Select aria-label="审批状态" value={applicationStatus} disabled={listingOptionsBusy} onChange={event => changeApplicationStatus(event.currentTarget.value)}><option value="">全部</option>{applicationStatusOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</Select></label>{listingOptionsError ? <span className="muted">状态字典读取失败，可按「刷新」重试。</span> : null}</div>
@@ -684,7 +704,7 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
     {countsLine}
 
     {tab === 'local' ? <>
-      {!busy && !visibleLocal.length ? <div className="empty"><strong>{skills.length ? '没有匹配的技能' : '尚未发现已安装技能'}</strong><span className="muted">{skills.length ? '换个关键词，或点「全部」清空筛选。' : '点「＋ 添加技能」提交上架申请或创建技能。'}</span></div> : null}
+      {!busy && !visibleLocal.length ? <div className="empty"><strong>{skills.length ? '没有匹配的技能' : '尚未发现已安装技能'}</strong><span className="muted">{skills.length ? '换个关键词，或点「全部」清空筛选。' : '点「上架申请」到后台提交，或「创建技能」新建本地技能。'}</span></div> : null}
       {visibleLocal.length ? <div className="grid">{visibleLocal.map(renderSkillCard)}</div> : null}
     </> : tab === 'market' ? <>
       {marketError ? <p className="error" role="alert">{marketError}<Button className="secondary" disabled={marketBusy} onClick={() => void loadMarket(filter)}>重试</Button></p> : null}
@@ -734,6 +754,7 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
     <Modal open={Boolean(confirmUninstall)} label="确认卸载技能" className="confirm-dialog" onClose={() => setConfirmUninstall(undefined)}>{confirmUninstall && <div><h2>卸载 {confirmUninstall.skill.name}？</h2><p>技能将移入回收目录，并从所有任务的可调用技能中移除。</p>{confirmUninstall.impact.dependents.length ? <div className="dependency-impact"><strong>依赖影响</strong><ul>{confirmUninstall.impact.dependents.map(item => <li key={`${item.kind}-${item.id}`}>{item.label}{item.blocking ? '（需先解除）' : ''}</li>)}</ul></div> : <p className="dependency-clear">未发现依赖此技能的对象。</p>}<div className="confirm-actions"><Button onClick={() => setConfirmUninstall(undefined)}>取消</Button><Button tone="danger" className="danger solid" disabled={confirmUninstall.impact.dependents.some(item => item.blocking)} onClick={() => void uninstall()}>确认卸载</Button></div></div>}</Modal>
     <Modal open={confirmBatchUninstall} label="确认批量卸载技能" className="confirm-dialog" onClose={() => setConfirmBatchUninstall(false)}><div><h2>卸载所选 {selectedNames.length} 个技能？</h2><p>每个成功卸载的技能会分别进入可恢复目录；失败项会保留选择并显示原因。</p><div className="confirm-actions"><Button onClick={() => setConfirmBatchUninstall(false)}>取消</Button><Button tone="danger" className="danger solid" onClick={() => void runBatch('uninstall')}>确认卸载</Button></div></div></Modal>
     <Modal open={trashOpen} label="最近卸载的技能" className="trash-dialog" onClose={() => setTrashOpen(false)}><h2>最近卸载</h2>{trash.length ? <div className="trash-list">{trash.map(entry => <div key={entry.id}><div><strong>{entry.name}</strong><small>{new Date(entry.removedAt).toLocaleString()} · {entry.previousState === 'enabled' ? '原为启用' : '原为停用'}</small></div><Button disabled={busy} onClick={() => void restore(entry)}>恢复</Button></div>)}</div> : <p className="muted">没有可恢复的技能。</p>}{error && <p className="error" role="alert">{error}</p>}</Modal>
+    <Modal open={Boolean(ssoPromptUrl)} label="后台未接入提醒" className="confirm-dialog" onClose={() => setSsoPromptUrl(undefined)}><div><h2>无法自动登录后台</h2><p>当前未接入业务后台或登录已失效。继续将打开后台管理系统登录页，请登录后重新发起上架申请。</p><div className="confirm-actions"><Button onClick={() => setSsoPromptUrl(undefined)}>取消</Button><Button variant="primary" onClick={() => { const url = ssoPromptUrl; setSsoPromptUrl(undefined); if (url) openAdminSso(url); }}>继续打开</Button></div></div></Modal>
     <SkillListingModal open={listingOpen} management={management} options={listingOptions} optionsError={listingOptionsError} onReloadOptions={() => void loadListingOptions()} onClose={() => setListingOpen(false)} onSubmitted={focusApplications} />
   </section>;
 }

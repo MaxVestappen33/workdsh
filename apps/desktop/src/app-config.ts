@@ -86,6 +86,10 @@ export interface ServerConfig {
   promptListPath: string
   /** 正在使用的客户端发布接口路径（相对 baseUrl）。 */
   latestVersionPath: string
+  /** 后台管理系统单点登录地址（不含查询参数），客户端跳转时追加 `?params=`。 */
+  adminSsoUrl: string
+  /** 生成单点登录加密参数的接口路径（相对 baseUrl）。 */
+  adminSsoParamsPath: string
   /** 发布记录中的应用标识，与服务端表 app_id 对应。 */
   appId: string
   /** 自动检查更新的间隔（分钟），默认 360。 */
@@ -179,6 +183,10 @@ export const APP_CONFIG_DEFAULTS: AppConfig = {
     promptListPath: '/desktop-client/prompt/queryAuthorizedPromptList',
     /** 客户端版本检查与后台版本管理表共用 desktop-client 命名空间。 */
     latestVersionPath: '/desktop-client/queryLatestVersionApp',
+    /** 后台管理系统单点登录入口：换端口部署时由 workdsh-app.json 覆盖。 */
+    adminSsoUrl: 'http://localhost:3100/clientSSO',
+    /** 生成单点登录加密参数：与 baseUrl 同源。 */
+    adminSsoParamsPath: '/sys/generateCasLoginParams',
   },
 }
 
@@ -207,10 +215,11 @@ export const SERVER_PATH_FIELDS = [
   'feedbackAddPath',
   'promptListPath',
   'latestVersionPath',
+  'adminSsoParamsPath',
 ] as const
 
 /** server 段中非路径的标量字段，各自有独立校验。 */
-const SERVER_SCALAR_FIELDS = ['baseUrl', 'appId', 'updateCheckIntervalMinutes', 'updateEnabled', 'syncIntervalSeconds', 'mcpPackageRegistry'] as const
+const SERVER_SCALAR_FIELDS = ['baseUrl', 'adminSsoUrl', 'appId', 'updateCheckIntervalMinutes', 'updateEnabled', 'syncIntervalSeconds', 'mcpPackageRegistry'] as const
 
 /** Highest-priority declared value for the first matching field, override files first. */
 function pickLogo(sources: ConfigSource[], fields: LogoField[]): { value: string, dir: string } | undefined {
@@ -257,6 +266,10 @@ export function parseAppConfig(value: unknown): PartialAppConfig {
     if (a.baseUrl !== undefined) {
       if (typeof a.baseUrl !== 'string') throw new Error('server.baseUrl 必须是字符串')
       result.server = { ...(result.server ?? {}), baseUrl: normalizeBase(a.baseUrl) }
+    }
+    if (a.adminSsoUrl !== undefined) {
+      if (typeof a.adminSsoUrl !== 'string') throw new Error('server.adminSsoUrl 必须是字符串')
+      result.server = { ...(result.server ?? {}), adminSsoUrl: normalizeAdminSsoUrl(a.adminSsoUrl) }
     }
     for (const k of SERVER_PATH_FIELDS) {
       const raw = a[k]
@@ -339,5 +352,21 @@ export function readAppConfig(resources: string, userData: string): ResolvedAppC
 
 function normalizeBase(value: string): string {
   const url = new URL(value.includes('://') ? value : `http://${value}`)
+  return url.origin + url.pathname.replace(/\/+$/u, '')
+}
+
+/**
+ * 单点登录地址只保留 origin + pathname：配置里允许写成 `.../clientSSO?params=`，
+ * 查询串由宿主在拿到加密参数后统一拼接，避免重复或签名参数被截断。
+ */
+function normalizeAdminSsoUrl(value: string): string {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    throw new Error('server.adminSsoUrl 必须是合法的 http(s) 地址')
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('server.adminSsoUrl 必须是 http(s) 地址')
+  if (url.username || url.password) throw new Error('server.adminSsoUrl 不能包含用户名或密码')
   return url.origin + url.pathname.replace(/\/+$/u, '')
 }
