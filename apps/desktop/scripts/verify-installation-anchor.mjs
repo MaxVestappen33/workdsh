@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+﻿#!/usr/bin/env node
 /** Boot the public official Profile API with release resources and no local node_modules. */
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { materializeRuntimeProfile, officialHostLauncher } from '../src/local-runtime.ts'
 import { DSH_VERSION } from './runtime-version.mjs'
 import { BUILTIN_BUNDLES, PRODUCT_PACKAGES } from './workdsh-package-boundary.mjs'
-import { verifyOfficialWebPackages } from './verify-profile-release.mjs'
+import { verifyOfficialWebPackages, verifyOfficialClientGraph, disabledEntryIds } from './verify-profile-release.mjs'
 import { prepareHostSmokeProbe, hostSmokeEnvironment, waitForPackagedHostReady, scrubHostDiagnostics as scrub } from './packaged-host-smoke.mjs'
 
 const runtime = resolve(process.argv[2] ?? fileURLToPath(new URL('../build/workdsh-runtime', import.meta.url)))
@@ -51,9 +51,10 @@ try {
   if (!match) throw new Error('Official Web did not advertise its Client boot graph')
   const graph = JSON.parse(match[1])
   const ids = new Set(graph.entries.map(entry => entry.id))
-  for (const client of release.officialWeb.clients.filter(row => !row.conditional)) {
-    if (!ids.has(client.package)) throw new Error('Unconditional official Web client missing at runtime: ' + client.package)
-  }
+  // 组合配置（含 WorkDSH profile patch）显式关闭的官方客户端不算缺失，但要逐条打印出来便于追溯。
+  const intentionallyDisabled = verifyOfficialClientGraph(release.officialWeb.clients, ids,
+    disabledEntryIds(readFileSync(join(source, 'cordis.patch.yml'), 'utf8')))
+  if (intentionallyDisabled.length) console.log(JSON.stringify({ intentionallyDisabledOfficialClients: intentionallyDisabled, reason: 'declared disabled: true in composed cordis.patch.yml' }))
   // Built-in third-party bundles must render from the immutable runtime on a
   // fresh Profile: their client is part of the boot graph, not installed later.
   for (const name of Object.keys(BUILTIN_BUNDLES)) {
@@ -73,7 +74,7 @@ try {
   }
   if (existsSync(join(profile, 'node_modules'))) throw new Error('Runtime wrote a shared or copied dependency tree into the writable Profile')
   if (/failed to import|startup.*failed|ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND/iu.test(diagnostics())) throw new Error('Official Host reported a startup/import failure: ' + diagnostics())
-  console.log(JSON.stringify({ dsh: actual, independentWritableProfile: true, noProfileNodeModules: true, installationProvidedProductBundles: PRODUCT_PACKAGES, initializedProductServices: receipt.services, officialRoster: release.officialWeb.clients.length, loadedOfficialClients: [...ids].filter(name => name.startsWith('@deepseek-ai/dsh')).length, ownedClients: owned, clientBatches: graph.batches.length, modelCallsRequested: 0, guiLaunchRequested: false }))
+  console.log(JSON.stringify({ dsh: actual, independentWritableProfile: true, noProfileNodeModules: true, installationProvidedProductBundles: PRODUCT_PACKAGES, initializedProductServices: receipt.services, officialRoster: release.officialWeb.clients.length, intentionallyDisabledOfficialClients: intentionallyDisabled, loadedOfficialClients: [...ids].filter(name => name.startsWith('@deepseek-ai/dsh')).length, ownedClients: owned, clientBatches: graph.batches.length, modelCallsRequested: 0, guiLaunchRequested: false }))
 } finally {
   if (child && child.exitCode === null) {
     child.kill('SIGTERM')

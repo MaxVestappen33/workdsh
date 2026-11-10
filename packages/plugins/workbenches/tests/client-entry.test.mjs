@@ -16,14 +16,14 @@ test('built browser module loads through native envelope and withdraws authoring
  const ctx = { get: () => ({ locate() {}, resolve() {} }), effect: body => { const stop=body(); stops.push(stop); return stop; }, provide: (name,service) => { assert.equal(name,'workdshWorkbenchClientRegistration'); assert.equal(typeof service.registerManaged,'function'); }, slots: { inject: (_name, cb) => { const stop = cb(); stops.push(stop); return stop; }, register: (options, component) => {
   const row = { options, component }; rows.push(row); return () => { const i = rows.indexOf(row); if (i >= 0) rows.splice(i, 1); };
  }, entriesOfSlot: name => rows.filter(row => row.options.name === name) }, layout: { panelInfo: { getSnapshot: () => ({ activePanelId: panel }), subscribe: () => () => {} }, selectPanel: id => { panel = id; } }, uiWorkspace: { openSession() {} } };
- loaded.apply(ctx); assert.equal(rows.length, 4);
+ loaded.apply(ctx); assert.equal(rows.length, 3);
  assert.equal(rows.some(row => row.options.name.startsWith("workdsh.workbench.conversation:")),false);
  assert.equal(typeof loaded.NativeWorkbenchConversation, 'function');
  assert.equal(typeof loaded.handoffNativeWorkbenchDraft, 'function');
- assert.deepEqual(rows.filter(row => row.options.name === 'sidebar.panellist').map(row => row.options.label), ['工作台']);
+ assert.deepEqual(rows.filter(row => row.options.name === 'sidebar.panellist').map(row => row.options.label), []);
  assert.equal(rows.filter(row => row.options.name === 'main').length, 2);
- assert.equal(rows.filter(row=>row.options.name==='sidebar.footer.action').length,0);
- assert.equal(rows.filter(row=>row.options.name==='shell.overlay').length,0);
+ assert.equal(rows.filter(row => row.options.name === 'sidebar.footer.action').length,0);
+ assert.equal(rows.filter(row => row.options.name === 'shell.overlay').length,0);
  assert.equal(rows.some(row => row.options.children?.['conversation.header']), false, 'the SDK-owned main header is not redeclared');
  for(const stop of [...stops].reverse())stop?.(); assert.equal(rows.length, 0); assert.equal(panel, null);assert.equal(listeners.size,0);
 });

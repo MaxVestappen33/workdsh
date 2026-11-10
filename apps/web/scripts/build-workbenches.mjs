@@ -29,5 +29,8 @@ const {rm}=await import('node:fs/promises');
 for(const name of await readdir(join(dist,'runtime')))if(name.endsWith('.js'))await rm(join(dist,'runtime',name));
 
 // Official browser module envelope; React is supplied by the native renderer.
-const client = await build({entryPoints:[fileURLToPath(new URL('src/client.tsx',root))],bundle:true,write:false,platform:'browser',format:'cjs',target:'es2022',external:['@deepseek-ai/dsh-client-ui-primitives','react','react/jsx-runtime','react-dom']});
+// 构建变体开关：默认关闭侧栏「工作台」入口，只隐藏入口（管理页/制作页/业务页仍注册）。
+// 需要恢复侧栏入口时以 WORKDSH_SIDEBAR_WORKBENCHES=1 重新构建。
+const workbenchesSidebar = process.env.WORKDSH_SIDEBAR_WORKBENCHES === '1';
+const client = await build({entryPoints:[fileURLToPath(new URL('src/client.tsx',root))],bundle:true,write:false,platform:'browser',format:'cjs',target:'es2022',define:{__WORKDSH_WORKBENCHES_SIDEBAR__:String(workbenchesSidebar)},external:['@deepseek-ai/dsh-client-ui-primitives','react','react/jsx-runtime','react-dom']});
 await writeFile(new URL('dist/client.browser.js',root), `window.__ModuleLoader__.load({id:"workdsh-plugin-workbenches",factory:function(require){const module={exports:{}};\n${client.outputFiles[0].text}\nreturn module.exports;}});\n`);

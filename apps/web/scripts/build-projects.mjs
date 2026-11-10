@@ -1,6 +1,10 @@
 import { build } from 'esbuild'; import { writeFile } from 'node:fs/promises'; import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-const entry=new URL('../../../packages/plugins/projects/',import.meta.url);const result=await build({entryPoints:[fileURLToPath(new URL('src/client.tsx',entry))],bundle:true,write:false,format:'cjs',platform:'browser',target:'es2022',external:['@deepseek-ai/dsh-client-ui-primitives','react','react-dom','react/jsx-runtime']});await writeFile(new URL('dist/client.browser.js',entry),`window.__ModuleLoader__.load({id: "workdsh-plugin-projects", factory: function(require) { const module = {exports:{}};\n${result.outputFiles[0].text}\nreturn module.exports; }});\n`);
+const entry=new URL('../../../packages/plugins/projects/',import.meta.url);
+// 构建变体开关：默认关闭侧栏「项目」入口，只隐藏入口（main 面板仍注册）。
+// 需要恢复侧栏入口时以 WORKDSH_SIDEBAR_PROJECTS=1 重新构建。
+const projectsSidebar = process.env.WORKDSH_SIDEBAR_PROJECTS === '1';
+const result=await build({entryPoints:[fileURLToPath(new URL('src/client.tsx',entry))],bundle:true,write:false,format:'cjs',platform:'browser',target:'es2022',define:{__WORKDSH_PROJECTS_SIDEBAR__:String(projectsSidebar)},external:['@deepseek-ai/dsh-client-ui-primitives','react','react-dom','react/jsx-runtime']});await writeFile(new URL('dist/client.browser.js',entry),`window.__ModuleLoader__.load({id: "workdsh-plugin-projects", factory: function(require) { const module = {exports:{}};\n${result.outputFiles[0].text}\nreturn module.exports; }});\n`);
 
 // Public governance validation is shared source, not an unpublished runtime
 // dependency of the independently installed Projects package.

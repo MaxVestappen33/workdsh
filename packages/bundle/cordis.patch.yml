@@ -52,3 +52,13 @@
 # 「设置 → 模型」里给 DeepSeek 填一次 DEEPSEEK_API_KEY。
 - id: llm-deepseek
   disabled: true
+# WorkDSH 定制：关闭官方 entry-customization —— 左侧栏「更多」行的唯一来源。
+# 官方侧栏只在 sidebar.panellist.actions 有注册时才渲染「更多」菜单，而该槽位仅由本插件提供。
+# 注意：同一插件还注册会话头部与右侧栏 tab 的「更多」入口，禁用后三处一起消失（已知取舍）。
+# 恢复：删除下面两行。
+- id: entry-customization
+  disabled: true
+# WorkDSH 定制：侧栏「项目」「工作台」入口默认隐藏，由客户端插件构建期常量控制
+# （__WORKDSH_PROJECTS_SIDEBAR__ / __WORKDSH_WORKBENCHES_SIDEBAR__，默认 false）。
+# 两个入口的 main 面板仍然注册，项目任务会话、工作台业务页等程序化打开链路不受影响。
+# 恢复侧栏入口：以 WORKDSH_SIDEBAR_PROJECTS=1 / WORKDSH_SIDEBAR_WORKBENCHES=1 重新构建插件包并重新打包。

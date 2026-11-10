@@ -36,6 +36,37 @@ export function verifyInstalledDshVersions(profile, expectedDshVersion) {
   return instances.size
 }
 
+/** 组合补丁中显式 `disabled: true` 的条目 id（仅静态可判定字面量；`!!js` 表达式按未关闭处理）。 */
+export function disabledEntryIds(text) {
+  const ids = new Set()
+  let current
+  for (const raw of String(text).split(/\r?\n/)) {
+    const line = raw.replace(/\s+#.*$/, '')
+    if (/^\s*-\s+insert:\s*$/.test(line)) { current = undefined; continue }
+    const id = /^\s*-\s+id:\s*['"]?([^'"\s]+)['"]?\s*$/.exec(line)
+    if (id) { current = id[1]; continue }
+    if (!current) continue
+    if (/^\s*-\s/.test(line)) { current = undefined; continue }
+    const disabled = /^\s+disabled:\s*(.+?)\s*$/.exec(line)
+    if (disabled && disabled[1].toLowerCase() === 'true') ids.add(current)
+  }
+  return ids
+}
+
+/** 官方客户端完整性：被组合配置显式关闭的条目跳过，其余仍逐项要求出现在 boot graph。 */
+export function verifyOfficialClientGraph(clients, loaded, disabled) {
+  const intentionallyDisabled = []
+  for (const client of clients.filter(row => !row.conditional)) {
+    if (disabled.has(client.id)) {
+      if (loaded.has(client.package)) throw new Error('Official Web client is disabled in composition but still loaded: ' + client.package)
+      intentionallyDisabled.push(client.package)
+      continue
+    }
+    if (!loaded.has(client.package)) throw new Error('Unconditional official Web client missing at runtime: ' + client.package)
+  }
+  return intentionallyDisabled
+}
+
 export function verifyOfficialWebPackages(manifest, profile, config) {
   const roster = manifest.officialWeb
   if (!roster?.clients?.length || roster.sources?.length !== 2) throw new Error('Missing shared official Web roster')

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import { strict as assert } from 'node:assert'
-import { requiredRuntimeDependencies, composeProfilePatches, verifyBuiltPackageExports, verifyDefaultComposition, verifyDefaultProfile, verifyInstalledDshVersions, verifyPackageDshReferences, verifyProfileRelease, verifyReleaseArchives } from './verify-profile-release.mjs'
+import { requiredRuntimeDependencies, composeProfilePatches, disabledEntryIds, verifyOfficialClientGraph, verifyBuiltPackageExports, verifyDefaultComposition, verifyDefaultProfile, verifyInstalledDshVersions, verifyPackageDshReferences, verifyProfileRelease, verifyReleaseArchives } from './verify-profile-release.mjs'
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -233,4 +233,21 @@ test('includes packages loaded from owned patches even when declared as dependen
  assert.equal(result['@deepseek-ai/cordis'],'4.0.5')
  assert.equal(result.optional,undefined)
  assert.equal(result.buildOnly,undefined)
+})
+
+test('official clients are skipped only when the composed patch explicitly disables them', () => {
+  const patch = ['- id: entry-customization', '  disabled: true', '- id: llm-deepseek', '  disabled: !!js process.env.X', '- insert:', '    - id: skillhub', '      config: {}', ''].join('\n')
+  const disabled = disabledEntryIds(patch)
+  assert.deepEqual([...disabled], ['entry-customization'])
+  const roster = [
+    { id: 'entry-customization', package: '@deepseek-ai/dsh-client-ui-entry-customization', conditional: false },
+    { id: 'chat', package: '@deepseek-ai/dsh-client-ui-chat', conditional: false },
+    { id: 'optional', package: '@deepseek-ai/dsh-client-ui-optional', conditional: true },
+  ]
+  const loaded = new Set(['@deepseek-ai/dsh-client-ui-chat'])
+  assert.deepEqual(verifyOfficialClientGraph(roster, loaded, disabled), ['@deepseek-ai/dsh-client-ui-entry-customization'])
+  // 未声明关闭的官方客户端缺失仍然报错，门禁不能空转。
+  assert.throws(() => verifyOfficialClientGraph(roster, new Set(), disabled), /Unconditional official Web client missing at runtime: @deepseek-ai\/dsh-client-ui-chat/)
+  // 声明关闭却仍在运行时加载，同样报错。
+  assert.throws(() => verifyOfficialClientGraph(roster, new Set(['@deepseek-ai/dsh-client-ui-chat', '@deepseek-ai/dsh-client-ui-entry-customization']), disabled), /disabled in composition but still loaded/)
 })

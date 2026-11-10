@@ -24,6 +24,12 @@ declare module '@deepseek-ai/dsh-api-session-controller/client' { interface Sess
 export const name = 'workdsh-projects-client';
 export const inject = ['slots', 'layout', 'connection', 'sessions', 'workspaces', 'conversation', 'uiWorkspace', 'inputTriggers'];
 
+/** 侧栏「项目」入口（构建变体开关，默认关闭）：只隐藏侧栏入口，`main` 面板与项目任务会话链路
+ * 仍然注册，程序化打开（会话/路线 chip）不受影响。重新打开：以 WORKDSH_SIDEBAR_PROJECTS=1
+ * 重新构建（apps/web/scripts/build-projects.mjs 注入 define），与 __WORKDSH_WORD_ONLY__ 同一机制。 */
+declare const __WORKDSH_PROJECTS_SIDEBAR__: boolean;
+const sidebarEntryEnabled = typeof __WORKDSH_PROJECTS_SIDEBAR__ !== 'undefined' && __WORKDSH_PROJECTS_SIDEBAR__;
+
 export function apply(ctx: Context): void {
   const lifetime = new AbortController();
   ctx.effect(() => () => lifetime.abort(), 'workdsh.projects.client');
@@ -145,7 +151,9 @@ export function apply(ctx: Context): void {
       order: -20,
       inject: () => ({ management, focusProject }),
     }, ProjectLineageChip));
-  ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({name:'sidebar.panellist',id:'workdsh-projects',label:'项目',order:20}, () => <Icon name="project" />));
+  if (sidebarEntryEnabled) {
+    ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({name:'sidebar.panellist',id:'workdsh-projects',label:'项目',order:20}, () => <Icon name="project" />));
+  }
   ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'workdsh-projects', inject: () => ({ management, startTask, openTask, focusProject, goHome: () => ctx.layout.selectPanel('workdsh-projects' as Parameters<typeof ctx.layout.selectPanel>[0]) }) }, ProjectsPanel));
   ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'workdsh-project-detail', inject: () => ({ management, startTask, openTask, detail: true, focusProject, goHome: () => ctx.layout.selectPanel('workdsh-projects' as Parameters<typeof ctx.layout.selectPanel>[0]) }) }, ProjectsPanel));
 }
