@@ -68,6 +68,15 @@
 
 这是全方案唯一会出现「后台没改、用户忽然不能用一个新工具」的地方，必须写进交付说明，并在管理端工具选择框附近提示。
 
+### 3.6 凭据下发与可见性（现状，2026-11-12）
+
+连接器的「可见」与「凭据下发」使用同一口径：**显式授权命中，或已上架且 `is_public=1`**。
+
+- 满足任一条件：连接器出现在授权快照的 `assets.mcp` 中，市场 `queryAuthorizedMcpToolList` 下发 `requestHeaders`（含 `Authorization` 等），客户端安装时写入本地凭据并在建连时还原。
+- 未公开且未授权：连接器既不出现在客户端市场/本机可见列表，也拿不到任何凭据。
+- `token` 字段废弃：后台保留该列与实体字段以兼容历史数据，但**不再下发**；客户端市场安装只读 `requestHeaders`，不再从 `token` 回退。手工新建表单仍可使用 `authorizationToken` 入参，由客户端本地组装成 `Authorization` 头。
+- 工具收窄不影响连接器可见性与凭据下发：连接器级授权且未指定工具时按「全部工具」处理，照常下发凭据。
+
 ## 四、数据模型
 
 ### 4.1 落库：复用现有列
@@ -84,6 +93,8 @@
 `ai_asset_auth_grant` 的更新是「整段重建」（逻辑删旧行 + 插新行），`del_flag` 由 `@TableLogic` 处理，因此删除分段即工具授权一起失效，不会产生孤儿记录。
 
 不新建「工具授权表」的理由：工具清单本身就是 JSON 列，再建一张授权表会出现两套一致性来源；工具级授权只在生成快照时被消费一次，当前没有按工具维度出报表的需求。若日后需要，再迁至 `(auth_id, mcp_asset_id, tool_name, del_flag)`，并配 PostgreSQL 部分唯一索引 `UNIQUE (auth_id, mcp_asset_id, tool_name) WHERE del_flag = 0`——逻辑删除必须带 `del_flag = 0` 条件，否则重建授权会撞唯一键。
+
+**`token` 字段现状（2026-11-12）**：`ai_mcp_tool.token` 列与实体字段保留，但已废弃，不再下发；桌面客户端市场安装只读取 `requestHeaders`，不从 `token` 回退。后台连接器凭据统一通过 `requestHeaders` 下发，条件是「显式授权命中 或 已上架且 `is_public=1`」。
 
 ### 4.2 快照结构（条目化）
 
@@ -342,6 +353,8 @@ deny          = 实际注册工具名(以 mcp__<serverName>__ 开头) − allowe
  → 下一次工具调用即按新白名单判定
 ```
 
+> 说明：这里的「窗口重新聚焦」指闸门自身的触发式策略/快照校验，与市场页取数无关。专家、专家团、连接器三个市场页自 2026-11-12 起不再监听 `focus` / `visibilitychange`，取数只剩进入页面/切页签、切换筛选搜索、点击刷新。
+
 - **最迟 60 秒、通常一个请求往返**即生效；后台一配白名单，客户端下一轮快照就收窄。
 - 已在进行中的会话：执行层每次调用都查内存快照，**立即生效**；模型可见工具清单在掩码重算后生效。
 - 与既有「授权实时性」要求一致：工具级走的是同一条快照通道，没有引入更慢的路径，也没有新增缓存层。
@@ -395,6 +408,26 @@ deny          = 实际注册工具名(以 mcp__<serverName>__ 开头) − allowe
 - 主闸门关或 `mcp` 关时：不读条目、不推导名字、不注册新逻辑、不产生新审计，工具枚举耗时不变。
 - `mcp` 开但快照无工具明细时：行为与今天完全一致。
 - 100 个受限连接器 × 30 工具的本地判定耗时在可忽略量级（内存查表）。
+
+### 14.1 联调实测（2026-11-12）
+
+**后台部署前置条件（现状）**
+
+- 四个 MCP 入口 `ytsj`、`dbhub`、`jeecg-coding`、`knowledge`（含 `dbclient` 视图）已补 `server/discover`；客户端初始化时先发该方法，失败不阻断后续 `initialize`。
+- `ai_mcp_tool.token` 中的 dbhub 凭据必须与上游 dbhub 启动参数 `--auth-token` 完全一致；不一致时上游返回 401，`tools/list` 最终以 503 报 401。
+
+**实测结果（连接器「全部数据库查询服务」，`assetId=2112794313345085442`）**
+
+| 项 | 实测值 |
+| --- | --- |
+| `server/discover` | 200（12ms），`serverInfo=ytsj-dbhub-mcp 1.0.0`，`protocolVersion=2025-03-26` |
+| `initialize` | 200（6ms），协商 `2025-11-25` |
+| `notifications/initialized` | 202（正常空响应） |
+| `GET`（SSE 可选流） | 405，`Allow: POST, DELETE`；客户端未中断 |
+| `tools/list` | 200（71ms），1 个工具 `execute_sql_ytsj_ai` |
+| 凭据 | `.credentials.yaml` 有 `Authorization`（`Bearer ***`），连接器定义 `authorizationCredentialRef` 指向该条目 |
+| 工具调用 | `execute_sql_ytsj_ai` 已在客户端实际执行成功（用户实测）；本轮只读复核到 `tools/list` 返回该工具 |
+| 市场页切屏 | 专家、专家团、连接器三页切走再切回期间，host-http 无市场类请求 |
 
 **时效**
 

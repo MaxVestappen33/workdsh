@@ -39,9 +39,7 @@ export function ConnectorPicker({ management, openManagement, sessionId }: Props
     // 不会被轮询覆盖，空白会话打开时也不会把默认值写死成显式选择。
     void refresh();
     const timer = window.setInterval(() => { if (!document.hidden) void refresh(); }, 5_000);
-    const visible = () => { if (!document.hidden) void refresh(); };
-    document.addEventListener('visibilitychange', visible);
-    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', visible); };
+    return () => { window.clearInterval(timer); };
   }, [management, refresh, sessionId]);
   useEffect(() => { if (open) void refresh(); }, [open, refresh]);
   useEffect(() => {
