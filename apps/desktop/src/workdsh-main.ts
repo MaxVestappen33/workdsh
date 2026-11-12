@@ -20,10 +20,10 @@ import { readAppConfig, type AppEnvironment, type ResolvedAppConfig } from './ap
 import { createDebugLog, type DebugLog } from './debug-log.ts'
 import { AccountLogin, AccountStore, restoreAccountLogin, startAccountAuthority, type AccountAuthority } from './member-auth.ts'
 import { EnterpriseLogin, startEnterpriseAuthority, type Authority } from './enterprise-auth.ts'
-import { desktopEnterprisePatch, desktopAccountPatch, desktopConnectorMarketPatch, desktopSkillMarketPatch, desktopPromptPatch, desktopModelMarketPatch, desktopExpertMarketPatch, desktopAssetGatePatch, accountSpace, accountModelStateDirectory, accountAssetGateStateDirectory, assetGatePolicyDirectory, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher, type AccountActor } from './local-runtime.ts'
+import { desktopEnterprisePatch, desktopAccountPatch, desktopConnectorMarketPatch, desktopSkillMarketPatch, desktopPromptPatch, desktopModelMarketPatch, desktopExpertMarketPatch, desktopAssetGatePatch, accountSpace, accountModelStateDirectory, accountAssetGateStateDirectory, assetGatePolicyDirectory, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher, quarantineCredentialsResidue, type AccountActor } from './local-runtime.ts'
 import { manageCommand } from './command-management.ts'
 import { ACCOUNT_ONLY } from './carrier-policy.ts'
-import { createRuntimeOutputRedactor, redactRuntimeOutput, runtimeFailureDetail, runtimeFailureLog } from './runtime-diagnostics.ts'
+import { createRuntimeOutputRedactor, redactRuntimeOutput, retryStartupAfterHandleExhaustion, runtimeFailureDetail, runtimeFailureLog, startupFailureLogName } from './runtime-diagnostics.ts'
 import { cleanOwnedProcessTree, reclaimOrphanedToolProcesses, stopOwnedProcess, terminateOwnedProcessImmediately, trackOwnedProcess } from './owned-process.ts'
 import { prepareRuntimePort, runtimePortConflict } from './runtime-port.ts'
 import { runOfficialCommand } from './official-command.ts'
@@ -1366,7 +1366,7 @@ function waitModelDefaults(stateDir: string | undefined, cancelled: () => boolea
   })
 }
 
-async function startRuntime(home: string, connection: DesktopConnection, patches: string[] = [], existingHome = false, onReady?: () => void, modelStateDir?: string, assetGateStateDir?: string, assetGatePolicyDir?: string): Promise<void> {
+async function startRuntime(home: string, connection: DesktopConnection, patches: string[] = [], existingHome = false, onReady?: () => void, modelStateDir?: string, assetGateStateDir?: string, assetGatePolicyDir?: string, attempt = 0): Promise<void> {
   rememberCommandSpace(home)
   if (quitRequested) throw new Error('启动已取消')
   const executable = bundledNodeExecutable()
@@ -1375,6 +1375,10 @@ async function startRuntime(home: string, connection: DesktopConnection, patches
   // 兜底回收必须早于端口探测：上次被强杀（任务管理器 / 系统终止）遗留的 Host 仍占着
   // Home 记录的地址时，端口检查会判定“被其它应用占用”而直接拒绝启动，看起来就是永远卡在过场页。
   reclaimOrphanedToolProcesses(join(home, '.workdsh-host.mjs'))
+  // 上一轮异常退出/外部工具可能留下凭据的 .bak、.tmp 或死锁；先隔离再拉起 Host，
+  // 用户不必手工清 dsh-home，残留文件也不会一直堆积。
+  const residue = quarantineCredentialsResidue(home)
+  if (residue.length > 0) process.stderr.write(`[startup] 凭据目录残留已隔离：${residue.join('、')}\n`)
   // upstream 的端口管理：把空闲端口作为补丁层交给官方 Web 内核，替代原来的 --port 0。
   const port = await prepareRuntimePort(home, [join(home, 'profiles', PROFILE_NAME, 'cordis.yml'), join(home, 'profiles', PROFILE_NAME, 'cordis.patch.yml'), join(home, 'cordis.yml'), join(home, 'cordis.patch.yml'), ...patches], { existingHome })
   if (quitRequested) throw new Error('启动已取消')
@@ -1414,6 +1418,7 @@ async function startRuntime(home: string, connection: DesktopConnection, patches
     if (match?.[1] !== undefined) {
       ready = true
       runtimeStarting = false
+      if (attempt > 0) process.stderr.write(`[startup] 句柄耗尽重试成功：第 ${attempt + 1} 次启动已就绪\n`)
       markStartup(`DSH 已就绪，开始打开主界面（主机启动 ${Date.now() - hostSpawnedAt}ms）`)
       onReady?.()
       const url = match[1]
@@ -1429,8 +1434,8 @@ async function startRuntime(home: string, connection: DesktopConnection, patches
     try {
       const directory = join(app.getPath('userData'), 'logs')
       mkdirSync(directory, { recursive: true })
-      const path = join(directory, 'runtime-failure.log')
-      writeFileSync(path, runtimeFailureLog(ready, code, diagnosticOutput, cleanupFailed), { mode: 0o600 })
+      const path = join(directory, startupFailureLogName(attempt))
+      writeFileSync(path, runtimeFailureLog(ready, code, diagnosticOutput, cleanupFailed, attempt), { mode: 0o600 })
       return `${detail}\n\n错误记录：${path}`
     } catch { return detail }
   }
@@ -1448,10 +1453,19 @@ async function startRuntime(home: string, connection: DesktopConnection, patches
     if (runtime !== child) return
     void cleanOwnedProcessTree(child).then(() => {
       if (runtime === child) { runtime = undefined; runtimeStarting = false }
-      if (!quitting && !switching && !updaterInstalling && !updaterStoppedRuntimes.has(child)) {
-        dialog.showErrorBox('本机运行已停止', failureDetail(code))
+      if (quitting || switching || updaterInstalling || updaterStoppedRuntimes.has(child)) return
+      const report = (cleanupFailed = false): void => {
+        if (attempt > 0) process.stderr.write(`[startup] 句柄耗尽重试仍失败（第 ${attempt + 1} 次）；两次失败记录已分别保存\n`)
+        dialog.showErrorBox('本机运行已停止', failureDetail(code, cleanupFailed))
         void returnToLogin()
       }
+      if (ready) return report()
+      // 句柄耗尽多为系统级瞬时压力：首次失败等一小段时间再拉起一次，第二次仍失败才报错。
+      // 重试动作自己兜住拉起异常，避免被误判成“进程回收未确认”。
+      void retryStartupAfterHandleExhaustion(diagnosticOutput, attempt, () => startRuntime(home, connection, patches, existingHome, onReady, modelStateDir, assetGateStateDir, assetGatePolicyDir, attempt + 1).catch(error => {
+        process.stderr.write(`[startup] 重试启动无法拉起 Host：${error instanceof Error ? error.message : String(error)}\n`)
+        if (!quitting && !switching) report()
+      }), { log: line => process.stderr.write(`${line}\n`) }).then(outcome => { if (outcome === 'stop' && !quitting && !switching) report() })
     }).catch(error => {
       // 回收未确认不能让应用停在“启动中”：记录原因、提示一次后照常回到登录页，用户仍可重试或退出。
       recordCleanupFailure('startup-exit', error)

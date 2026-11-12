@@ -168,7 +168,9 @@ export function parseClientRelease(value: unknown, context: ReleaseValidationCon
   if (hash === undefined) return { ok: false, reason: 'invalid-hash' }
 
   const notes = optionalText(input.notes, MAX_RELEASE_NOTES_LENGTH)
-  if (input.notes !== undefined && input.notes !== null && notes === undefined) {
+  // 升级说明是可选字段：空串或纯空白视为“未填写”，只影响文案，不能阻断升级。
+  // 只有真正超长的字符串才判失败。
+  if (typeof input.notes === 'string' && input.notes.length > MAX_RELEASE_NOTES_LENGTH) {
     return { ok: false, reason: 'notes-too-long' }
   }
   const publishedAt = optionalText(input.publishedTime, MAX_TEXT_LENGTH)

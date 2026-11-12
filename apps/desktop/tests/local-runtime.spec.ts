@@ -1,9 +1,10 @@
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync, rmSync, existsSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { load } from 'js-yaml'
 import { afterEach, expect, it } from 'vitest'
-import { desktopConnectorMarketPatch, desktopSkillMarketPatch, desktopModelMarketPatch, desktopExpertMarketPatch, desktopEnterprisePatch, accountModelStateDirectory, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher } from '../src/local-runtime.ts'
+import { desktopConnectorMarketPatch, desktopSkillMarketPatch, desktopModelMarketPatch, desktopExpertMarketPatch, desktopEnterprisePatch, accountModelStateDirectory, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher, quarantineCredentialsResidue } from '../src/local-runtime.ts'
 import type { ServerConfig } from '../src/app-config.ts'
 
 const roots: string[] = []
@@ -318,4 +319,46 @@ it.each(['pnpm@10.34.5', 'yarn@4.18.0', undefined])('keeps a user-owned package 
   expect(JSON.parse(readFileSync(manifest, 'utf8')).packageManager).toBe(custom)
   expect(materializeRuntimeProfile(source, home).changed).toBe(false)
   expect(JSON.parse(readFileSync(manifest, 'utf8')).packageManager).toBe(custom)
+})
+
+it('quarantines stale credentials backups, temp files and dead locks without touching the document', () => {
+  const { home } = fixture()
+  mkdirSync(home, { recursive: true })
+  const document = join(home, '.credentials.yaml')
+  writeFileSync(document, 'version: 1\nrefs: {}\nrecords: {}\n', { mode: 0o600 })
+  writeFileSync(join(home, '.credentials.yaml.bak'), 'stale backup')
+  writeFileSync(join(home, '.credentials.yaml.0123456789ab.tmp'), 'abandoned temp')
+  const dead = spawnSync(process.execPath, ['-e', '']).pid
+  expect(typeof dead).toBe('number')
+  writeFileSync(join(home, '.credentials.yaml.lock'), `${dead}\n`)
+  writeFileSync(join(home, '.credentials.yaml.lock.takeover-0123456789abcdef'), `${dead}\n`)
+  const unrelated = join(home, '.credentials.yaml.md')
+  writeFileSync(unrelated, 'not residue')
+
+  expect(quarantineCredentialsResidue(home).sort()).toEqual([
+    '.credentials.yaml.0123456789ab.tmp',
+    '.credentials.yaml.bak',
+    '.credentials.yaml.lock',
+    '.credentials.yaml.lock.takeover-0123456789abcdef',
+  ])
+  // 凭据正文与其他文件原地保留；残留被移到 quarantine，dsh-home 根目录恢复干净。
+  expect(existsSync(document)).toBe(true)
+  expect(existsSync(unrelated)).toBe(true)
+  for (const name of ['.credentials.yaml.bak', '.credentials.yaml.0123456789ab.tmp', '.credentials.yaml.lock', '.credentials.yaml.lock.takeover-0123456789abcdef']) expect(existsSync(join(home, name))).toBe(false)
+  const [stamp] = readdirSync(join(home, '.workdsh-state', 'quarantine'))
+  expect(readdirSync(join(home, '.workdsh-state', 'quarantine', stamp!)).sort()).toEqual([
+    '.credentials.yaml.0123456789ab.tmp',
+    '.credentials.yaml.bak',
+    '.credentials.yaml.lock',
+    '.credentials.yaml.lock.takeover-0123456789abcdef',
+  ])
+})
+
+it('keeps a credentials lock whose holder is still running', () => {
+  const { home } = fixture()
+  mkdirSync(home, { recursive: true })
+  const lock = join(home, '.credentials.yaml.lock')
+  writeFileSync(lock, `${process.pid}\n`)
+  expect(quarantineCredentialsResidue(home)).toEqual([])
+  expect(existsSync(lock)).toBe(true)
 })

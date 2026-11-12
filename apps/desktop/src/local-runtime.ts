@@ -1,6 +1,6 @@
 /** Writable Profile/configuration over the official installation anchor. No custom Loader. */
 import { createHash, randomUUID } from 'node:crypto'
-import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { load, dump } from 'js-yaml'
@@ -126,6 +126,52 @@ export function markProfileUpdated(source: string, profile: string): void {
   const version = json(join(source, 'node_modules', '@deepseek-ai', 'dsh', 'package.json')).version as string
   const digest = baseDigest(source, release, version)
   writeJson(join(profile, BASE_STATE), { digest, base })
+}
+
+/**
+ * 凭据文档旁边的残留文件：备份（`.bak`）、原子写留下的临时文件（`.tmp`）、
+ * 上一个进程异常退出后没释放的锁（`.lock` / `.lock.takeover-<hash>`）。
+ * 官方凭据 provider 只读精确路径 `.credentials.yaml`，从不扫描目录、也不匹配 `.bak`，
+ * 因此这些文件本身不会让启动失败；但它们是外部工具或异常退出留下的垃圾，
+ * 不该要求用户手工删除。启动前把它们移出 `dsh-home` 根目录，留在
+ * `.workdsh-state/quarantine/<时间戳>/` 便于事后追查；持锁进程仍活着的锁一律不动。
+ * @param home - 本次启动使用的 DSH Home。
+ * @returns 已隔离的文件名。
+ */
+export function quarantineCredentialsResidue(home: string): string[] {
+  let names: string[]
+  try { names = readdirSync(home) } catch { return [] }
+  const moved: string[] = []
+  let directory: string | undefined
+  for (const name of names) {
+    if (!CREDENTIAL_RESIDUE.test(name)) continue
+    const file = join(home, name)
+    if (name.includes('.lock') && lockStillHeld(file)) continue
+    try {
+      directory ??= join(home, '.workdsh-state', 'quarantine', new Date().toISOString().replace(/[:.]/gu, '-'))
+      mkdirSync(directory, { recursive: true, mode: 0o700 })
+      renameSync(file, join(directory, name))
+      moved.push(name)
+    } catch { /* 隔离失败不影响启动：读取端本来就只认精确路径 */ }
+  }
+  return moved
+}
+
+/** `.credentials.yaml` 的备份、临时文件与锁（含 atomic-write 的 takeover 探针）。 */
+const CREDENTIAL_RESIDUE = /^\.credentials\.yaml\.(?:bak.*|.*\.tmp|lock(?:\.takeover-[0-9a-f]+)?)$/u
+
+/** 锁记录的持锁进程是否仍存在；记录不完整时按修改时间判断，宁可不删。 */
+function lockStillHeld(file: string): boolean {
+  let record: string
+  let mtime: number
+  try { record = readFileSync(file, 'utf8'); mtime = statSync(file).mtimeMs }
+  catch (error) { return (error as NodeJS.ErrnoException).code !== 'ENOENT' }
+  const match = /^(\d+)\n$/u.exec(record)
+  if (!match) return Date.now() - mtime < 60_000
+  const pid = Number(match[1])
+  if (pid === 0 || pid === process.pid) return true
+  try { process.kill(pid, 0); return true }
+  catch (error) { return (error as NodeJS.ErrnoException).code !== 'ESRCH' }
 }
 
 export function enterpriseSpace(userData: string, backend: string, actor: EnterpriseMember): { root: string, home: string, deviceId: string } {

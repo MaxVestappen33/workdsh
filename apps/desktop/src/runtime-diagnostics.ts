@@ -61,8 +61,51 @@ export function runtimeFailureDetail(ready: boolean, code: number | null, output
 }
 
 /** Preserve the bounded redacted trace in the local record, not in a giant alert. */
-export function runtimeFailureLog(ready: boolean, code: number | null, output: string, cleanupFailed = false): string {
-  return `${new Date().toISOString()}\n${runtimeFailureDetail(ready, code, output, cleanupFailed)}\n\n最近的运行输出：\n${redactRuntimeOutput(output).trim().slice(-16_384)}\n`;
+export function runtimeFailureLog(ready: boolean, code: number | null, output: string, cleanupFailed = false, attempt = 0): string {
+  const label = attempt === 0 ? '首次启动' : `第 ${attempt + 1} 次启动（句柄耗尽后重试）`
+  return `${new Date().toISOString()}\n[${label}]\n${runtimeFailureDetail(ready, code, output, cleanupFailed)}\n\n最近的运行输出：\n${redactRuntimeOutput(output).trim().slice(-16_384)}\n`;
+}
+
+/**
+ * 句柄/文件描述符耗尽。Windows 上多为系统级句柄压力（安全软件、大量子进程同时启动），
+ * 进程重启通常即可恢复，因此只对这一种失败做一次兜底重试。
+ */
+const HANDLE_EXHAUSTION = /\b(?:EMFILE|ENFILE)\b/u;
+
+/** 失败输出是否属于句柄耗尽。 */
+export function isHandleExhaustion(output: string): boolean {
+  return HANDLE_EXHAUSTION.test(output)
+}
+
+/** 只对“首次启动 + 句柄耗尽”放行重试；其它失败、以及重试后的再次失败都不再重试。 */
+export function shouldRetryStartup(output: string, attempt: number): boolean {
+  return attempt === 0 && isHandleExhaustion(output)
+}
+
+/** 每次尝试写独立记录：首次失败与重试结果不会互相覆盖。 */
+export function startupFailureLogName(attempt: number): string {
+  return attempt === 0 ? 'runtime-failure.log' : `runtime-failure-retry-${attempt}.log`
+}
+
+/**
+ * 句柄耗尽兜底：先等待一小段时间让回收的子进程释放句柄，再发起一次启动。
+ * @param output - 上一次启动的原始输出（未脱敏，仅在本机判断）。
+ * @param attempt - 上一次是第几次尝试（从 0 开始）。
+ * @param retry - 重新拉起 Host 的动作；调用方负责在里面处理自身的失败。
+ * @returns `retried` 表示已发起重试；`stop` 表示交给原有失败弹窗处理。
+ */
+export async function retryStartupAfterHandleExhaustion(
+  output: string,
+  attempt: number,
+  retry: () => Promise<void>,
+  options: { delayMs?: number, log?: (line: string) => void } = {},
+): Promise<'retried' | 'stop'> {
+  if (!shouldRetryStartup(output, attempt)) return 'stop'
+  const delay = options.delayMs ?? 800
+  options.log?.(`[startup] 首次启动因句柄耗尽失败（EMFILE/ENFILE），${delay}ms 后重试一次`)
+  await new Promise(resolve => setTimeout(resolve, delay))
+  await retry()
+  return 'retried'
 }
 
 export function officialCommandFailureDetail(code: number | null, output: string, cause?: string): string {

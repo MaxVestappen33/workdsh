@@ -124,10 +124,14 @@ window.addEventListener('DOMContentLoaded', () => {
 
   const renderNotes = (view: UpdateView): void => {
     const hasNotes = view.notesHtml !== undefined && view.notesHtml.length > 0
-    show(notesWrap, hasNotes)
-    if (notes !== null && hasNotes) {
+    // 后台升级说明可选：没填时展示占位文案，不影响“立即更新”按钮可用。
+    show(notesWrap, true)
+    if (notes === null) return
+    if (hasNotes) {
       // notesHtml 由主进程用受限 Markdown 渲染器生成，所有原始 HTML 均已转义。
       notes.innerHTML = view.notesHtml ?? ''
+    } else {
+      notes.textContent = '无升级说明'
     }
   }
 

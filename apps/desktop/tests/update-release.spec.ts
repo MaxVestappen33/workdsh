@@ -124,6 +124,14 @@ it('rejects over-long notes and non-object records', () => {
   expect(parseClientRelease([], context)).toEqual({ ok: false, reason: 'not-an-object' })
 })
 
+it('treats empty or blank notes as absent without blocking the upgrade', () => {
+  for (const notes of ['', '   ', null]) {
+    const parsed = parseClientRelease(record({ notes }), context)
+    expect(parsed.ok).toBe(true)
+    if (parsed.ok) expect(parsed.release.notes).toBeUndefined()
+  }
+})
+
 it('normalizes releaseType to a lowercase label without affecting filtering', () => {
   expect(accepted(record({ releaseType: 'Stable' })).releaseType).toBe('stable')
   expect(accepted(record({ releaseType: 'Beta' })).releaseType).toBe('beta')
