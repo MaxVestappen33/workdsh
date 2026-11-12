@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join, normalize, resolve, sep } from 'node:path';
 import { unzipSync } from 'fflate';
+import { snapshotAssetFiles, type AssetManifestFile } from 'workdsh-asset-manifest';
 import type { SkillImportInspection, SkillInstallScope, SkillMutationReceipt, StagedSkillImport } from '../shared.js';
 
 const maximumUploadBytes = 50 * 1024 * 1024;
@@ -155,6 +156,15 @@ export class SkillImportStaging {
   async discard(id: string): Promise<void> {
     if (!importIdPattern.test(id)) throw new Error('skill/import-invalid-id');
     await rm(join(this.root, id), { recursive: true, force: true });
+  }
+
+  /**
+   * 暂存区当前文件集合：市场安装验签时用服务端签名里的 files 与它逐项比对。
+   * 这里重新读取收据并复核指纹，防止 stage 之后、验签之前暂存内容被改动。
+   */
+  async snapshot(id: string, signal?: AbortSignal): Promise<readonly AssetManifestFile[]> {
+    const receipt = await this.readReceipt(id, signal);
+    return snapshotAssetFiles(receipt.source, signal);
   }
 
   /**

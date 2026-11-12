@@ -2,19 +2,22 @@ import { createHash } from 'node:crypto';
 import { Service } from '@deepseek-ai/cordis';
 import type { Context } from '@deepseek-ai/cordis';
 import type { BackendChannel } from 'workdsh-provider-backend-channel';
+import {
+  ASSET_OPERATION_REPORT_PATH, AssetOperationReporter, assetOperationEventId, clientIdOf, isPermissionFailure,
+  type AssetOperationFailReason, type AssetOperationResult,
+} from 'workdsh-contracts/asset-operation';
 import { ConnectorMarketClient, MarketRequestError, type MarketCategory, type MarketItem, type MarketPage, type MarketPaths, type MarketQuery } from './market.js';
 import { installNodePackage, removeNodePackage, type ConnectorInstallOptions } from './install-package.js';
 import type { ConnectorInstallState, ConnectorInstallTask, ConnectorSummary, MarketInstallResult } from './shared.js';
 
 /**
  * 市场接口路径缺省值：与 Desktop 随包 workdsh-app.json 的 server 段保持一致。
- * 列表、分类字典与安装/卸载上报都在 desktop-client 命名空间；Desktop 侧可通过插件选项覆盖。
+ * 列表、分类字典与资产操作记录都在 desktop-client 命名空间；Desktop 侧可通过插件选项覆盖。
  */
 const DEFAULT_MARKET_PATHS: MarketPaths = {
   list: '/desktop-client/mcptool/queryAuthorizedMcpToolList',
   categories: '/desktop-client/mcptool/queryMcpToolBizSceneList',
-  install: '/desktop-client/mcptool/installMcpTool',
-  uninstall: '/desktop-client/mcptool/unInstallMcpTool',
+  report: ASSET_OPERATION_REPORT_PATH,
 };
 
 export interface ConnectorMarketOptions {
@@ -28,6 +31,8 @@ export interface ConnectorMarketOptions {
    * 缺失时市场里需要下载依赖的条目会明确报错，直接执行与本机自建的条目不受影响。
    */
   readonly install?: ConnectorInstallOptions;
+  /** 客户端应用标识：由宿主（Desktop）从 ServerConfig.appId 注入，用于资产操作记录。 */
+  readonly clientId?: string;
 }
 
 export interface ConnectorMarketUninstall {
@@ -50,6 +55,13 @@ function localServerNameOf(serviceId: string): string {
   const digest = createHash('sha256').update(service).digest('hex').slice(0, 8);
   const head = clean.slice(0, SERVER_NAME_LIMIT - digest.length - 1).replace(/[-_]+$/u, '');
   return `${head || 'mcp'}-${digest}`;
+}
+
+/** 用户取消导致的中断：AbortSignal 的 abort 原因与 DOMException AbortError 都按取消处理。 */
+function isAbortError(cause: unknown): boolean {
+  if (!(cause instanceof Error)) return false;
+  if (cause.name === 'AbortError') return true;
+  return (cause as { code?: unknown }).code === 'ABORT_ERR';
 }
 
 /** 卸载结果：`reported` 表示后台卸载上报是否成功（上报失败不阻断本地卸载）。 */
@@ -99,7 +111,7 @@ export class ConnectorMarketService extends Service implements ConnectorMarket {
   }
 
   /**
-   * 从市场安装：先调安装上报接口告知后台（后台只记录，不回传业务字段），再按条目描述的启动方式在本机建连。
+   * 从市场安装：先按条目描述的启动方式在本机建连，成功后再上报一次 install。
    * 启动方式有两种：直接执行（node/python/绝对路径，本机自备）同步完成；
    * 依赖 npm 包（command 是 npx/npm/pnpm…）则先从内网仓库装包，安装期间返回 installing 由界面轮询。
    */
@@ -111,19 +123,27 @@ export class ConnectorMarketService extends Service implements ConnectorMarket {
     // 同一条目重复点击时复用正在跑的安装任务：不能让两份 pnpm 同时装同一个目录。
     if (this.tasks.get(item.originId)?.state === 'installing')
       return { originId: item.originId, title: item.title, state: 'installing' };
-    await client.reportInstall(item.originId, item.serverName, signal);
-    // 市场 serviceId 可能超出官方 serverName 约束，这里换算成本机标识后再落盘；上报仍用原始 serviceId。
+    // 事件标识在流程开始时生成一次：同一条安装流程的成功与失败上报共用它，后台据此幂等。
+    const eventId = assetOperationEventId();
+    // 市场 serviceId 可能超出官方 serverName 约束，这里换算成本机标识后再落盘。
     const serverName = localServerNameOf(item.serverName);
     if (item.launch === 'direct') {
-      await this.createFrom(item, item.transport === 'stdio'
-        ? { kind: 'stdio', command: item.command, args: item.args }
-        : { kind: 'http', url: item.url }, serverName);
+      try {
+        await this.createFrom(item, item.transport === 'stdio'
+          ? { kind: 'stdio', command: item.command, args: item.args }
+          : { kind: 'http', url: item.url }, serverName);
+      } catch (cause) {
+        await this.reportFailure(item, eventId, 'install', cause);
+        throw cause;
+      }
       this.record(item, 'ready');
+      // 建连成功之后再上报 install/success；上报失败只记日志，不影响已完成的安装。
+      await this.reportOperation(item, eventId, 'install', { result: 'success' });
       return { originId: item.originId, title: item.title, state: 'ready' };
     }
     // 装包耗时无法在一次请求里等完：先落任务态再进后台，超时/失败都留在任务里可见、可重试。
     this.record(item, 'installing');
-    void this.installPackage(item, serverName);
+    void this.installPackage(item, serverName, eventId);
     return { originId: item.originId, title: item.title, state: 'installing' };
   }
 
@@ -132,9 +152,9 @@ export class ConnectorMarketService extends Service implements ConnectorMarket {
   }
 
   /**
-   * 从市场卸载：先调卸载上报接口，再移除本机实例，最后清理该条目的本机安装目录。
+   * 从市场卸载：先移除本机实例并清理该条目的安装目录，成功后再上报 uninstall。
    * 上报失败不阻断本地卸载：后台异常或网络问题时若先报错，用户会卡在「卸载不了、也删不掉」的状态；
-   * 这里优先保证本机可清理，上报结果通过返回值暴露，界面据此提示后台记录可能未同步。
+   * 上报结果通过返回值暴露，界面据此提示后台记录可能未同步。
    */
   async uninstall(target: ConnectorMarketUninstall, signal?: AbortSignal): Promise<ConnectorMarketUninstallResult> {
     const manager = this.ctx.workdshConnectors;
@@ -144,29 +164,95 @@ export class ConnectorMarketService extends Service implements ConnectorMarket {
     const originId = target.originId?.trim() || local?.originId;
     if (!originId) throw new MarketRequestError('connector/market-origin-required', '该 MCP 不是从市场安装的，无法从市场卸载。');
     const matched = local ?? rows.find(row => row.originId === originId);
-    let reported = true;
+    const eventId = assetOperationEventId();
+    const asset = { originId, title: matched?.title ?? matched?.serverName ?? originId };
     try {
-      await (await this.client_()).reportUninstall(originId, matched?.marketServiceId ?? matched?.serverName, signal);
-    } catch {
-      reported = false;
-    }
-    if (matched?.id) await manager.remove(matched.id);
-    // 安装目录是市场安装的产物：卸载条目时一并清掉，避免留下没人引用的包树。
-    const install = this.options.install;
-    if (install && matched?.serverName) {
-      await removeNodePackage(install.root, matched.serverName).catch(cause => {
-        this.ctx.logger.warn(`连接器：清理 ${matched.serverName} 的安装目录失败（${cause instanceof Error ? cause.message : String(cause)}）。`);
-      });
+      if (matched?.id) await manager.remove(matched.id);
+      // 安装目录是市场安装的产物：卸载条目时一并清掉，避免留下没人引用的包树。
+      const install = this.options.install;
+      if (install && matched?.serverName) {
+        await removeNodePackage(install.root, matched.serverName).catch(cause => {
+          this.ctx.logger.warn(`连接器：清理 ${matched.serverName} 的安装目录失败（${cause instanceof Error ? cause.message : String(cause)}）。`);
+        });
+      }
+    } catch (cause) {
+      // 本机卸载失败：如实上报 failed，然后仍把错误抛给界面（本机状态优先）。
+      await this.reportFailure(asset, eventId, 'uninstall', cause);
+      throw cause;
     }
     this.tasks.delete(originId);
-    return { uninstalled: true, reported };
+    // 本机卸载成功后才上报 uninstall/success；上报失败只记日志，不阻断。
+    const outcome = await this.reportOperation(asset, eventId, 'uninstall', { result: 'success' });
+    return { uninstalled: true, reported: outcome.reported };
+  }
+
+  /** 资产操作记录：一次一条实时上报；上报失败只记日志，不阻断本机安装/卸载。 */
+  private async reportOperation(
+    asset: { readonly originId: string; readonly title: string },
+    eventId: string,
+    operationType: 'install' | 'uninstall',
+    outcome: { readonly result: AssetOperationResult; readonly failReason?: AssetOperationFailReason; readonly detail?: string },
+  ): Promise<{ readonly reported: boolean }> {
+    const channel = this.channel();
+    if (!channel) return { reported: false };
+    const reporter = new AssetOperationReporter({
+      backend: channel,
+      // 客户端应用标识来自载体配置 server.appId；缺失时上报器会跳过并记日志。
+      clientId: () => clientIdOf(this.options.clientId),
+      ...(this.options.paths?.report?.trim() ? { path: this.options.paths.report.trim() } : {}),
+      warn: message => this.ctx.logger.warn(message),
+    });
+    return reporter.report({
+      eventId,
+      assetType: 'mcp',
+      assetId: asset.originId,
+      assetName: asset.title,
+      operationType,
+      operationResult: outcome.result,
+      ...(outcome.failReason ? { failReason: outcome.failReason } : {}),
+      ...(outcome.detail ? { failDetail: outcome.detail } : {}),
+    });
+  }
+
+  /** 失败上报：用户取消按 canceled，其余结合错误码归类。 */
+  private async reportFailure(
+    asset: { readonly originId: string; readonly title: string },
+    eventId: string,
+    operationType: 'install' | 'uninstall',
+    cause: unknown,
+  ): Promise<void> {
+    const canceled = isAbortError(cause);
+    await this.reportOperation(asset, eventId, operationType, {
+      result: canceled ? 'canceled' : 'failed',
+      failReason: this.failReasonOf(cause, canceled),
+      detail: cause instanceof Error ? cause.message : String(cause),
+    });
+  }
+
+  /** 失败大类：取消、权限优先，其余按市场/依赖安装错误码归类。 */
+  private failReasonOf(cause: unknown, canceled: boolean): AssetOperationFailReason {
+    if (canceled) return 'canceled_by_user';
+    if (isPermissionFailure(cause)) return 'permission_denied';
+    if (cause instanceof MarketRequestError) {
+      switch (cause.code) {
+        case 'connector/market-unavailable':
+        case 'connector/market-unauthorized':
+        case 'connector/market-authority-changed': return 'network_failed';
+        case 'connector/package-install-unsupported':
+        case 'connector/package-spec-missing':
+        case 'connector/package-install-failed':
+        case 'connector/package-entry-missing': return 'dependency_missing';
+        default: break;
+      }
+    }
+    return 'other';
   }
 
   /**
    * 需要依赖的条目：先用随包 pnpm 从内网仓库把包（含全部依赖）装到本机目录，
    * 再用「随包 Node + 包内入口」建连。整个过程在后台跑，状态写进安装任务供界面轮询。
    */
-  private async installPackage(item: MarketItem, serverName: string): Promise<void> {
+  private async installPackage(item: MarketItem, serverName: string, eventId: string): Promise<void> {
     try {
       const install = this.options.install;
       if (!install) throw new MarketRequestError('connector/package-install-unsupported', '当前环境未配置内网包仓库，无法安装依赖 npm 包的 MCP。');
@@ -175,10 +261,13 @@ export class ConnectorMarketService extends Service implements ConnectorMarket {
       await this.createFrom(item, { kind: 'stdio', command: install.node, args: [installed.entry, ...(item.packageArgs ?? [])] }, serverName);
       this.record(item, 'ready');
       this.ctx.logger.info(`连接器：已从内网仓库安装 ${installed.packageName}@${installed.version}（${installed.directory}）。`);
+      // 装包与建连都成功之后再上报 install/success；上报失败只记日志。
+      await this.reportOperation(item, eventId, 'install', { result: 'success' });
     } catch (cause) {
       const message = cause instanceof Error && cause.message ? cause.message : '依赖安装失败，请重试。';
       this.record(item, 'failed', message);
       this.ctx.logger.warn(`连接器：市场条目 ${item.serverName} 安装失败（${message}）。`);
+      await this.reportFailure(item, eventId, 'install', cause);
     }
   }
 
@@ -229,8 +318,8 @@ export class ConnectorMarketService extends Service implements ConnectorMarket {
       paths: {
         list: paths.list?.trim() || DEFAULT_MARKET_PATHS.list,
         categories: paths.categories?.trim() || DEFAULT_MARKET_PATHS.categories,
-        install: paths.install?.trim() || DEFAULT_MARKET_PATHS.install,
-        uninstall: paths.uninstall?.trim() || DEFAULT_MARKET_PATHS.uninstall,
+        // 资产操作记录有内置缺省路径；宿主注入时以注入值为准。
+        report: paths.report?.trim() || DEFAULT_MARKET_PATHS.report,
       },
       backend: channel,
     });

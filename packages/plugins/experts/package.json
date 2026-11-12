@@ -25,8 +25,9 @@
     "locale/*.json"
   ],
   "scripts": {
-    "build": "node ../../../apps/web/node_modules/pnpm/bin/pnpm.cjs --dir ../../../apps/web --filter workdsh-contracts build && node ../../../apps/web/node_modules/pnpm/bin/pnpm.cjs --dir ../../../apps/web --filter workdsh-ui build && node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && node ../../../apps/web/scripts/build-experts.mjs",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "build": "node ../../../apps/web/node_modules/pnpm/bin/pnpm.cjs --dir ../../../apps/web --filter workdsh-contracts build && node ../../../apps/web/node_modules/pnpm/bin/pnpm.cjs --dir ../../../apps/web --filter workdsh-asset-manifest build && node ../../../scripts/write-bundled-skill-manifests.mjs --mode ${WORKDSH_BUILTIN_SIGNATURE_MODE:-warn} resources/skills && node ../../../apps/web/node_modules/pnpm/bin/pnpm.cjs --dir ../../../apps/web --filter workdsh-ui build && node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && node ../../../apps/web/scripts/build-experts.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test tests/*.test.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.5",

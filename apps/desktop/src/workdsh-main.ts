@@ -20,7 +20,7 @@ import { readAppConfig, type AppEnvironment, type ResolvedAppConfig } from './ap
 import { createDebugLog, type DebugLog } from './debug-log.ts'
 import { AccountLogin, AccountStore, restoreAccountLogin, startAccountAuthority, type AccountAuthority } from './member-auth.ts'
 import { EnterpriseLogin, startEnterpriseAuthority, type Authority } from './enterprise-auth.ts'
-import { desktopEnterprisePatch, desktopAccountPatch, desktopConnectorMarketPatch, desktopSkillMarketPatch, desktopPromptPatch, desktopModelMarketPatch, desktopExpertMarketPatch, accountSpace, accountModelStateDirectory, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher, type AccountActor } from './local-runtime.ts'
+import { desktopEnterprisePatch, desktopAccountPatch, desktopConnectorMarketPatch, desktopSkillMarketPatch, desktopPromptPatch, desktopModelMarketPatch, desktopExpertMarketPatch, desktopAssetGatePatch, accountSpace, accountModelStateDirectory, accountAssetGateStateDirectory, assetGatePolicyDirectory, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher, type AccountActor } from './local-runtime.ts'
 import { manageCommand } from './command-management.ts'
 import { ACCOUNT_ONLY } from './carrier-policy.ts'
 import { createRuntimeOutputRedactor, redactRuntimeOutput, runtimeFailureDetail, runtimeFailureLog } from './runtime-diagnostics.ts'
@@ -1318,7 +1318,7 @@ function rememberCommandSpace(home?: string): void {
  * 把载体配置里的 MCP / 技能市场接口路径与本机包安装参数作为补丁层交给对应插件（缺配置时它们用内置默认值）。
  * 配置读取失败不阻断工作区启动：账号流程在启动前已读取并校验过同一份配置，这里退化为内置默认值。
  */
-function marketPatchLayers(home: string, modelStateDir?: string): string[] {
+function marketPatchLayers(home: string, modelStateDir?: string, assetGateStateDir?: string, assetGatePolicyDir?: string): string[] {
   try {
     const server = loadConfig().server
     const connector = desktopConnectorMarketPatch(home, server, { node: bundledNodeExecutable(), pnpm: join(bundledPrimaryRuntime(), 'dependencies', 'pnpm', 'bin', 'pnpm.cjs') })
@@ -1326,7 +1326,8 @@ function marketPatchLayers(home: string, modelStateDir?: string): string[] {
     const prompt = desktopPromptPatch(home, server)
     const model = desktopModelMarketPatch(home, server, modelStateDir)
     const expert = desktopExpertMarketPatch(home, server)
-    return [connector, skill, prompt, model, expert].filter((patch): patch is string => patch !== undefined)
+    const assetGate = desktopAssetGatePatch(home, server, assetGateStateDir, assetGatePolicyDir)
+    return [connector, skill, prompt, model, expert, assetGate].filter((patch): patch is string => patch !== undefined)
   } catch (error) {
     process.stderr.write(`[startup] 市场接口路径与本机包安装配置未注入，插件将使用内置默认值：${error instanceof Error ? error.message : String(error)}\n`)
     return []
@@ -1365,7 +1366,7 @@ function waitModelDefaults(stateDir: string | undefined, cancelled: () => boolea
   })
 }
 
-async function startRuntime(home: string, connection: DesktopConnection, patches: string[] = [], existingHome = false, onReady?: () => void, modelStateDir?: string): Promise<void> {
+async function startRuntime(home: string, connection: DesktopConnection, patches: string[] = [], existingHome = false, onReady?: () => void, modelStateDir?: string, assetGateStateDir?: string, assetGatePolicyDir?: string): Promise<void> {
   rememberCommandSpace(home)
   if (quitRequested) throw new Error('启动已取消')
   const executable = bundledNodeExecutable()
@@ -1377,7 +1378,7 @@ async function startRuntime(home: string, connection: DesktopConnection, patches
   // upstream 的端口管理：把空闲端口作为补丁层交给官方 Web 内核，替代原来的 --port 0。
   const port = await prepareRuntimePort(home, [join(home, 'profiles', PROFILE_NAME, 'cordis.yml'), join(home, 'profiles', PROFILE_NAME, 'cordis.patch.yml'), join(home, 'cordis.yml'), join(home, 'cordis.patch.yml'), ...patches], { existingHome })
   if (quitRequested) throw new Error('启动已取消')
-  const layers = [...(existsSync(basePatch) ? [basePatch] : []), ...patches, ...marketPatchLayers(home, modelStateDir), ...(port.managed ? [port.patch] : [])]
+  const layers = [...(existsSync(basePatch) ? [basePatch] : []), ...patches, ...marketPatchLayers(home, modelStateDir, assetGateStateDir, assetGatePolicyDir), ...(port.managed ? [port.patch] : [])]
   const launcher = officialHostLauncher(bundledProfileDirectory(), home, executable, join(bundledPrimaryRuntime(), 'dependencies', 'pnpm', 'bin', 'pnpm.cjs'), layers)
   const hostSpawnedAt = Date.now()
   const child = spawn(executable, [launcher, '--no-open'], {
@@ -1704,17 +1705,11 @@ function startAccountSync(session: { login: AccountLogin, store: AccountStore })
     if (verifying || switching) { schedule(jitter(baseDelay)); return }
     verifying = true
     try {
-      // ① 本地 exp 已过期：直接登出，不发请求。
-      if (session.login.isExpired()) {
-        stopped = true
-        dialog.showErrorBox('账号登录已过期', '登录已失效，本机运行将停止，请重新登录。')
-        void returnToLogin()
-        return
-      }
       const result = await session.login.syncProfile()
       if (stopped) return
       if (result.outcome === 'unauthorized') {
-        // ② 仅后台明确 401：弹提示并退回登录页。
+        // ① 仅后台明确 401：弹提示并退回登录页。会话是否过期以后台为准，
+        //    本地不再按 JWT exp 提前判定（后台会在 token 字符串不变的前提下持续续期）。
         stopped = true
         dialog.showErrorBox('账号登录已失效', result.message)
         void returnToLogin()
@@ -1727,7 +1722,7 @@ function startAccountSync(session: { login: AccountLogin, store: AccountStore })
         schedule(jitter(baseDelay))
         return
       }
-      // ③ 其他失败（网络/超时/5xx/服务端异常）：容忍并退避。
+      // ② 其他失败（网络/超时/5xx/服务端异常）：容忍并退避。
       failures += 1
       schedule(Math.min(baseDelay * 2 ** (failures - 1), maxDelay))
     } finally {
@@ -1760,7 +1755,7 @@ async function startAccountRuntime(home: string): Promise<void> {
   session.deviceId = space.deviceId
   // A restored session restarts its loopback authority here; a fresh login already bound one.
   if (!session.authority) {
-    session.authority = await startAccountAuthority(session.login, () => { void returnToLogin() }, () => { void returnToLogin() }, abandonAccountSession)
+    session.authority = await startAccountAuthority(session.login, () => { void returnToLogin() }, abandonAccountSession)
   }
   const { authority } = session
   if (!authority) throw new Error('账号授权未就绪')
@@ -1769,7 +1764,7 @@ async function startAccountRuntime(home: string): Promise<void> {
   entrySurface = false
   // “环境已就绪”标记只在 DSH 真正起来后才落盘：避免“标记已写、依赖却没装成”导致后续启动跳过准备。
   // 模型市场的安装记录与默认模型标记跟随登录账号，避免不同账号互相影响补齐结果。
-  await startRuntime(home, { mode: 'personal' }, [patch.patch], false, () => markEnvironmentReady(), accountModelStateDirectory(home, actor.principalId))
+  await startRuntime(home, { mode: 'personal' }, [patch.patch], false, () => markEnvironmentReady(), accountModelStateDirectory(home, actor.principalId), accountAssetGateStateDirectory(home, actor.principalId), assetGatePolicyDirectory(home))
   // 会话校验 + 用户信息同步：随运行时启动，随登出/切换停止（重复启动先停旧的）。
   session.stopSync?.()
   session.stopSync = startAccountSync(session)
@@ -1854,9 +1849,10 @@ async function autoStartAccountWorkspace(): Promise<void> {
     const store = new AccountStore(app.getPath('userData'))
     const restored = store.read()
     if (restored) {
-      const login = restoreAccountLogin(config.server, restored.user, restored.token, restored.session.expiry, restored.session.rawUserInfo)
-      if (login.isExpired()) store.clear()
-      else account = { login, store, deviceId: '' }
+      // 会话有效性交给后台判定（后台以 Redis 白名单为准）：本地不再按 JWT exp 丢弃登录态，
+      // 否则活跃用户的会话会在 token 的 exp 到期时被误清，而后台其实仍然认这个 token。
+      const login = restoreAccountLogin(config.server, restored.user, restored.token, restored.session.rawUserInfo)
+      account = { login, store, deviceId: '' }
     }
 
     if (!isEnvironmentReady()) {
@@ -1956,7 +1952,7 @@ async function activateEnterprise(existingHome: boolean): Promise<void> {
   const connection: DesktopConnection = { mode: 'enterprise', portalOrigin: session.login.backendUrl, organizationId: session.login.actor.organizationId, principalId: session.login.actor.id }
   if (window) await window.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(connectionLoadingHtml('正在启动企业工作区')))
   entrySurface = false
-  await startRuntime(session.home, connection, [patch.patch], existingHome)
+  await startRuntime(session.home, connection, [patch.patch], existingHome, undefined, undefined, accountAssetGateStateDirectory(session.home, session.login.actor.id), assetGatePolicyDirectory(session.home))
   verifyTimer = setInterval(() => {
     if (verifying || switching) return
     verifying = true
@@ -1993,7 +1989,7 @@ function installLoginHandlers(): void {
       store.write(login.seal())
       account = { login, store, deviceId: '' }
       // Bind the account identity to a loopback authority held in Main.
-      const authority = await startAccountAuthority(login, () => { void returnToLogin() }, () => { void returnToLogin() }, abandonAccountSession)
+      const authority = await startAccountAuthority(login, () => { void returnToLogin() }, abandonAccountSession)
       account.authority = authority
       // 登录成功：把入口窗口切到过场页，用它的展示时间覆盖本机 DSH 的启动等待；主机就绪后直接换成主界面。
       const home = runtimeHome()

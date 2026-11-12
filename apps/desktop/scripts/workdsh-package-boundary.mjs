@@ -1,6 +1,7 @@
 // Review this inventory when the WorkDSH release adds or removes a package.
 // Only product packages are selected or exposed by the default personal Profile.
 export const PRODUCT_PACKAGES = Object.freeze([
+  'workdsh-plugin-asset-gate',
   'workdsh-plugin-connectors',
   'workdsh-plugin-experts',
   'workdsh-plugin-library',
@@ -29,7 +30,7 @@ export const CATALOG_PACKAGES = Object.freeze({
 // Their own `dsh.bundle.patch` supplies the Loader entries; never copy those rows
 // into the Profile patch, which would duplicate entry ids.
 export const BUILTIN_BUNDLES = Object.freeze({
-  'dsh-mnemon': '0.5.36',
+  'dsh-mnemon': '0.5.41',
 })
 
 // Loader ids each built-in bundle must contribute to the default composition.
@@ -45,6 +46,8 @@ export const BUILTIN_BUNDLE_ENTRIES = Object.freeze({
 })
 
 export const RELEASE_PACKAGES = Object.freeze([
+  'workdsh-asset-manifest',
+  'workdsh-asset-signature',
   'workdsh-contracts',
   'workdsh-ui',
   'workdsh-provider-identity-local',
@@ -53,6 +56,7 @@ export const RELEASE_PACKAGES = Object.freeze([
   'workdsh-provider-browser-session',
   'workdsh-plugin-audit',
   'workdsh-plugin-access',
+  'workdsh-plugin-asset-gate',
   'workdsh-plugin-account-settings',
   'workdsh-plugin-skills',
   'workdsh-plugin-experts',
@@ -66,6 +70,8 @@ export const RELEASE_PACKAGES = Object.freeze([
 ])
 
 export const PACKAGE_DIRECTORIES = Object.freeze({
+  'workdsh-asset-manifest': '../../packages/asset-manifest',
+  'workdsh-asset-signature': '../../packages/asset-signature',
   'workdsh-contracts': '../../packages/contracts',
   'workdsh-ui': '../../packages/ui',
   'workdsh-provider-identity-local': '../../packages/providers/identity-local',
@@ -74,6 +80,7 @@ export const PACKAGE_DIRECTORIES = Object.freeze({
   'workdsh-provider-browser-session': '../../packages/providers/browser-session',
   'workdsh-plugin-audit': '../../packages/plugins/audit',
   'workdsh-plugin-access': '../../packages/plugins/access',
+  'workdsh-plugin-asset-gate': '../../packages/plugins/asset-gate',
   'workdsh-plugin-account-settings': '../../packages/plugins/account-settings',
   'workdsh-plugin-skills': '../../packages/plugins/skills',
   'workdsh-plugin-experts': '../../packages/plugins/experts',

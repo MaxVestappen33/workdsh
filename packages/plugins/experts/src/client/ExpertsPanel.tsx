@@ -1,4 +1,4 @@
-import { Button, Input } from 'workdsh-ui';
+import { Button, CardSkeleton, cardSkeletonCss, Input, QueryOverlay, queryOverlayCss } from 'workdsh-ui';
 import * as React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 // The `main` slot PropsRuntime is augmented by the official layout client module;
@@ -33,6 +33,9 @@ export type ExpertsPanelProps = PropsRuntime<'main'> & InjectFace<ExpertsPanelIn
 type View = 'center' | 'mine' | 'applications';
 type StateFilter = 'all' | 'draft' | 'published' | 'disabled' | 'archived';
 type Notice = { kind: 'info' | 'warn' | 'error'; text: string };
+
+/** 回到前台时 focus 与 visibilitychange 会连着触发：这个窗口内只重取一轮。 */
+const REVALIDATE_DEDUPE_MS = 1_000;
 
 function messageOf(cause: unknown): string { return cause instanceof Error ? cause.message : '专家操作失败，请重试。'; }
 function codeOf(cause: unknown): string { const code = (cause as unknown as { code?: unknown })?.code; return typeof code === 'string' ? code : ''; }
@@ -69,7 +72,6 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
   const [debounced, setDebounced] = useState('');
   const [stateFilter, setStateFilter] = useState<StateFilter>('all');
   const [items, setItems] = useState<readonly ExpertSummary[]>([]);
-  const [total, setTotal] = useState(0);
   const [nextCursor, setNextCursor] = useState<string | undefined>();
   const [busy, setBusy] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -120,14 +122,13 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
       const result = await management.list(cursor ? { ...base, cursor } : base);
       if (sequence !== loadSequence.current) return;
       setItems(prev => (appending ? [...prev, ...result.items] : result.items));
-      setTotal(result.total);
       setNextCursor(result.nextCursor);
     } catch (cause) {
       if (sequence !== loadSequence.current) return;
       if (codeOf(cause) === 'experts/cursor-stale') {
         setNotice({ kind: 'warn', text: '目录已变化，分页游标失效，已为你重新加载第一页。' });
         setItems([]); setNextCursor(undefined);
-        try { const fresh = await management.list(buildQuery()); setItems(fresh.items); setTotal(fresh.total); setNextCursor(fresh.nextCursor); } catch { /* surfaced below */ }
+        try { const fresh = await management.list(buildQuery()); setItems(fresh.items); setNextCursor(fresh.nextCursor); } catch { /* surfaced below */ }
       } else setError(messageOf(cause));
     } finally { if (sequence === loadSequence.current) { setBusy(false); setLoadingMore(false); } }
   }, [buildQuery, management]);
@@ -168,11 +169,22 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
     } catch { /* non-fatal: summaries still carry installedFromCatalog */ }
   }, [management]);
   useEffect(() => { void loadInstallations(); }, [loadInstallations]);
+  // 刷新按钮与窗口重新获得焦点都只重取当前视图的数据源；
+  // 中心页的列表由 RemoteExperts 自己监听 focus，面板不再重复触发。
+  const revalidateRef = useRef<() => void>(() => {});
+  /** 最近一次 focus/visibilitychange 重取的时间：同一次回到前台只触发一轮。 */
+  const lastRevalidateAtRef = useRef(0);
   useEffect(() => {
-    const revalidate = () => { if (document.visibilityState === 'visible') { void load(); void loadMineCount(); } };
+    const revalidate = () => {
+      if (document.visibilityState !== 'visible') return;
+      const now = Date.now();
+      if (now - lastRevalidateAtRef.current < REVALIDATE_DEDUPE_MS) return;
+      lastRevalidateAtRef.current = now;
+      revalidateRef.current();
+    };
     window.addEventListener('focus', revalidate); document.addEventListener('visibilitychange', revalidate);
     return () => { window.removeEventListener('focus', revalidate); document.removeEventListener('visibilitychange', revalidate); };
-  }, [load, loadMineCount]);
+  }, []);
   useEffect(() => {
     if (!actionMenu) return;
     const outside = (event: PointerEvent) => { if (!(event.target instanceof Element) || !event.target.closest('.card-actions')) setActionMenu(undefined); };
@@ -184,14 +196,27 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
     if (stateFilter === 'published') return items.filter(item => item.publishedRevisionRef !== undefined);
     return items;
   }, [items, stateFilter]);
+  /** 首屏骨架：只有「我的」列表还没有任何数据且正在加载时出现；已有数据刷新改用覆盖层。 */
+  const skeletonVisible = busy && !items.length;
+  const overlayVisible = busy && items.length > 0;
 
-  /** 刷新 reloads the active source only: backend catalog in the center, local list in 「我的」. */
+  /** 刷新按钮：只重取当前视图的数据源，避免一次点击同时打列表、计数与安装索引。 */
   const refresh = useCallback(() => {
+    if (view === 'mine') { void load(); return; }
+    // 中心页与「我的申请」都由 reloadKey 驱动。
     setRemoteReload(value => value + 1);
-    if (view === 'mine') void load();
+  }, [load, view]);
+  /** 操作后的整体同步：安装/删除/启停可能改变我的作品数量与安装索引，需一并重取。 */
+  const refreshAll = useCallback(() => {
+    refresh();
     void loadMineCount();
     void loadInstallations();
-  }, [load, loadMineCount, loadInstallations, view]);
+  }, [refresh, loadMineCount, loadInstallations]);
+  revalidateRef.current = () => {
+    if (view === 'mine') void load();
+    // 中心页由 RemoteExperts 自己监听 focus，面板不再重复触发，避免一次回前台打两路。
+    else if (view === 'applications') setRemoteReload(value => value + 1);
+  };
   const closeEditor = () => {
     setEditorId(undefined);
     const url = new URL(window.location.href);
@@ -215,7 +240,7 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
     try {
       await management.uninstallRemote(remote.remoteKey, management.newOperationId('uninstall'));
       setDetailId(undefined); setDetailRemote(undefined);
-      refresh();
+      refreshAll();
     } catch (cause) { setError(messageOf(cause)); }
     finally { setActing(false); }
   };
@@ -237,24 +262,24 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
       await management.deleteExpert(expertId, management.newOperationId('delete'));
       setDetailId(undefined); setDetailRemote(undefined);
       setNotice({ kind: 'info', text: '已删除该专家及其本地文件。' });
-      refresh();
+      refreshAll();
     } catch (cause) { setError(messageOf(cause)); }
     finally { setActing(false); }
   };
   const setPreference = async (summary: ExpertSummary, pinned: boolean) => {
     setActionMenu(undefined);
-    try { await management.setPreference(summary.id, pinned); refresh(); } catch (cause) { setError(messageOf(cause)); }
+    try { await management.setPreference(summary.id, pinned); refreshAll(); } catch (cause) { setError(messageOf(cause)); }
   };
   const copyToMine = async (summary: ExpertSummary) => {
     setActionMenu(undefined); setActing(true); setError('');
     try {
       const draft = await management.copy(summary.id, summary.publishedRevisionRef?.revisionId, management.newOperationId('copy'));
-      refresh(); setEditorId(draft.expertId);
+      refreshAll(); setEditorId(draft.expertId);
     } catch (cause) { setError(messageOf(cause)); } finally { setActing(false); }
   };
   const setAvailability = async (summary: ExpertSummary, availability: ExpertAvailability) => {
     setActionMenu(undefined); setActing(true); setError('');
-    try { await management.setAvailability(summary.id, availability, management.newOperationId('availability')); refresh(); if (detailId === summary.id) setDetailId(undefined); }
+    try { await management.setAvailability(summary.id, availability, management.newOperationId('availability')); refreshAll(); if (detailId === summary.id) setDetailId(undefined); }
     catch (cause) { setError(messageOf(cause)); } finally { setActing(false); }
   };
   const exportExpert = async (summary: ExpertSummary) => {
@@ -276,7 +301,7 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
   };
 
   return <section className="wd-experts" data-testid="workdsh-experts">
-    <style>{expertsCss}</style>
+    <style>{expertsCss + cardSkeletonCss + queryOverlayCss}</style>
     <header className="cap-header">
       <button className="nav-toggle" onClick={toggleNavigation} aria-label="切换导航">导航</button>
       {capabilityTabs.map(([key, label]) => {
@@ -291,6 +316,8 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
         placeholder={view === 'mine' ? `搜索我创建的${kind === 'team' ? '专家团' : '专家'}` : view === 'applications' ? '搜索我的上架申请' : `搜索${kindLabel}`}
         value={query}
         onChange={event => setQuery(event.currentTarget.value)} />
+      <Button className="refresh" onClick={refresh} disabled={busy}>刷新</Button>
+      {view !== 'applications' && <Button onClick={() => setImportOpen(true)}>导入</Button>}
       <Button variant="primary" className="mine-toggle" disabled={acting} onClick={() => void openListingAdmin()}>上架申请</Button>
       <Button className={`mine-toggle ${view === 'mine' ? 'active' : ''}`} aria-pressed={view === 'mine'}
         onClick={() => { setView('mine'); setQuery(''); }}>我的专家 {mineCount}</Button>
@@ -303,10 +330,6 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
     {view !== 'center' && <Button variant="ghost" size="sm" className="back-center" onClick={() => { setView('center'); setQuery(''); setStateFilter('all'); }}>‹ 全部专家</Button>}
     <div className="section-head">
       <nav className="work-types" aria-label={view === 'mine' ? '我的作品类型' : '专家中心类型'}>{([['agent', '专家'], ['team', '专家团']] as const).map(([type, label]) => <button key={type} className={kind === type ? 'active' : ''} aria-pressed={kind === type} onClick={() => { setKind(type); setQuery(''); }}>{label}{view === 'mine' && <span>{typeCounts[type]}</span>}</button>)}</nav>
-      <div className="section-actions">
-        {view !== 'applications' && <Button onClick={() => setImportOpen(true)}>导入</Button>}
-        <Button onClick={refresh} disabled={busy}>刷新</Button>
-      </div>
     </div>
 
     {/* 中心页不提供来源筛选：后台目录是唯一来源；状态筛选只属于「我的」。 */}
@@ -319,34 +342,36 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
     {notice && <div className={`notice ${notice.kind}`} role="status"><div className="notice-body"><span>{notice.text}</span></div><Button onClick={() => setNotice(undefined)} aria-label="关闭提示">×</Button></div>}
     {/* 中心页只渲染后台目录：本地列表仅在「我的」出现，不存在两个数据源切换。 */}
     {view === 'center'
-      ? <RemoteExperts management={management} kind={kind} keyword={debounced} onChanged={refresh} reloadKey={remoteReload}
+      ? <RemoteExperts management={management} kind={kind} keyword={debounced} onChanged={refreshAll} reloadKey={remoteReload}
         onOpenInstalled={(expertId, remote) => { setDetailId(expertId); setDetailRemote(remote); }} />
       : view === 'applications'
         ? <MyApplications management={management} kind={kind} keyword={debounced} reloadKey={remoteReload} />
         : <>
-    {busy
-      ? <div className="remote-status" role="status" aria-live="polite"><span className="muted">正在读取专家目录…</span></div>
-      : <div role="status" aria-live="polite" className={error ? 'error counts' : 'counts'}>
-        {error || `目录共 ${total} 个${kindLabel} · 当前显示 ${visible.length} 个${debounced ? `（搜索“${debounced}”）` : ''}`}
-      </div>}
+    <div className="expert-content">
+    <div role="status" aria-live="polite" className={error ? 'error counts' : 'counts'}>
+      {busy && !items.length
+        ? '正在读取专家目录…'
+        : error || `当前显示 ${visible.length} 个${kindLabel}${debounced ? `（搜索“${debounced}”）` : ''}`}
+    </div>
 
-    {busy
-      ? null
-      : !error && !visible.length
-        ? <div className="empty">
-          <strong>{debounced ? `没有匹配的${kindLabel}` : view === 'mine' ? `还没有自己的${kind === 'team' ? '专家团' : '专家'}` : `暂无可用${kindLabel}`}</strong>
-          <span className="muted">{debounced ? '保留搜索词，可清除后重试。' : view === 'mine' ? '从后台安装，或直接制作一个属于你的专家。' : '暂无可用条目。'}</span>
+    {!busy && !error && !visible.length
+      ? <div className="empty">
+          <strong>未查询到数据</strong>
           <div className="empty-actions">
             {debounced && <Button onClick={() => { setQuery(''); search.current?.focus(); }}>清除搜索</Button>}
             <Button variant="primary" className="create-expert" disabled={acting} onClick={() => void createExpert()}>创建{kindLabel}</Button>
             {view === 'mine' && <Button onClick={() => setView('center')}>浏览专家中心</Button>}
           </div>
         </div>
-        : <div className="grid">{visible.map(summary => {
+      : null}
+
+    {visible.length
+      ? <div className="grid">{visible.map(summary => {
           const readiness = READINESS[summary.readiness] ?? READINESS.unknown;
           const draft = isDraft(summary);
-          const usable = summary.canUse && !draft && summary.availability === 'enabled' && summary.readiness === 'ready';
-          return <article className={`card ${draft ? 'draft' : ''} ${summary.availability !== 'enabled' ? 'unavailable' : ''} ${actionMenu === summary.id ? 'menu-open' : ''}`} key={summary.id}>
+          const blocked = summary.authState !== undefined;
+          const usable = summary.canUse && !blocked && !draft && summary.availability === 'enabled' && summary.readiness === 'ready';
+          return <article className={`card ${draft ? 'draft' : ''} ${summary.availability !== 'enabled' || blocked ? 'unavailable' : ''} ${actionMenu === summary.id ? 'menu-open' : ''}`} key={summary.id}>
             <div className="card-top">
               <button className="card-open" aria-label={`查看专家 ${summary.name}`} onClick={() => setDetailId(summary.id)}>
                 <Avatar summary={summary} />
@@ -379,19 +404,25 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
               </div>}
             </div>
             <p className="desc">{summary.description || <span className="muted">（暂无简介）</span>}</p>
+            {summary.authState && summary.authReason ? <p className="auth-reason">{summary.authReason}</p> : null}
             <div className="domain-tags">{(summary.tags ?? []).slice(0, 3).map(tag => <span key={tag}>{tag}</span>)}</div>
             <div className="card-foot">
               <span className="badge">{summary.expertType === 'team' ? '专家团' : '专家'}</span>
               {!draft && <span className={`badge ${readiness.cls}`}>{readiness.label}</span>}
               {draft && <span className="badge">未发布</span>}
               {summary.executionBlocked === 'approval-required' && <span className="badge warn">需上架审核</span>}
+              {summary.authState && <span className="badge warn">{summary.authState === 'revoked' ? '已失效' : '未授权'}</span>}
               {summary.origin === 'default' && <span className="badge">默认</span>}
               <button className={`pin ${summary.pinned ? 'on' : ''}`} role="switch" aria-checked={summary.pinned}
                 aria-label={`${summary.pinned ? '取消置顶' : '置顶'}专家 ${summary.name}`}
                 onClick={() => void setPreference(summary, !summary.pinned)}>★</button>
             </div>
           </article>;
-        })}{view === 'mine' && <button className="card create-card" disabled={acting} onClick={() => void createExpert()}><span aria-hidden>＋</span>创建{kind === 'team' ? '专家团' : '专家'}</button>}</div>}
+        })}{view === 'mine' && <button className="card create-card" disabled={acting} onClick={() => void createExpert()}><span aria-hidden>＋</span>创建{kind === 'team' ? '专家团' : '专家'}</button>}</div>
+      : null}
+    {skeletonVisible ? <div className="grid" role="status" aria-label="正在读取专家目录…"><CardSkeleton variant="avatar" count={12} /></div> : null}
+    {overlayVisible ? <QueryOverlay /> : null}
+    </div>
 
     {nextCursor && !busy && <div className="empty-actions" style={{ justifyContent: 'center', marginTop: 18 }}>
       <Button disabled={loadingMore} onClick={() => void load(nextCursor)}>{loadingMore ? '正在加载…' : '加载更多'}</Button>
@@ -411,12 +442,12 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
         onEditDraft={id => { setDetailId(undefined); setEditorId(id); }}
         onCopy={async (expertId, revisionId) => {
           setActing(true);
-          try { const draft = await management.copy(expertId, revisionId, management.newOperationId('copy')); setDetailId(undefined); refresh(); setEditorId(draft.expertId); }
+          try { const draft = await management.copy(expertId, revisionId, management.newOperationId('copy')); setDetailId(undefined); refreshAll(); setEditorId(draft.expertId); }
           catch (cause) { setError(messageOf(cause)); } finally { setActing(false); }
         }}
         onAvailability={async (expertId, availability) => {
           setActing(true);
-          try { await management.setAvailability(expertId, availability, management.newOperationId('availability')); setDetailId(undefined); refresh(); }
+          try { await management.setAvailability(expertId, availability, management.newOperationId('availability')); setDetailId(undefined); refreshAll(); }
           catch (cause) { setError(messageOf(cause)); } finally { setActing(false); }
         }}
         onExport={async expertId => {
@@ -424,18 +455,18 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
           try { const result = await management.downloadExport(expertId, undefined); setNotice({ kind: 'info', text: `已导出「${result.fileName}」。` }); }
           catch (cause) { setError(messageOf(cause)); } finally { setActing(false); }
         }}
-        onChanged={refresh} />}
+        onChanged={refreshAll} />}
     </Modal>
 
     {editorId && <ExpertDraftEditor expertId={editorId} management={management}
       onClose={closeEditor}
-      onSaved={refresh}
-      onPublished={() => { closeEditor(); refresh(); }}
+      onSaved={refreshAll}
+      onPublished={() => { closeEditor(); refreshAll(); }}
       onSummon={(id, revisionId, text) => { closeEditor(); void runSummon(id, revisionId, text); }} />}
 
     <Modal open={importOpen} label="导入专家" className="import-dialog" onClose={() => setImportOpen(false)}>
       {importOpen && <ImportExpertModal management={management} onClose={() => setImportOpen(false)}
-        onImported={id => { setImportOpen(false); refresh(); setEditorId(id); }} />}
+        onImported={id => { setImportOpen(false); refreshAll(); setEditorId(id); }} />}
     </Modal>
 
     <Modal open={Boolean(ssoPromptUrl)} label="后台未接入提醒" className="sso-dialog" onClose={() => setSsoPromptUrl(undefined)}>

@@ -10,6 +10,7 @@ import { ensureNativeWorkbenchFrame, verifyNativeWorkbenchFrame } from '../../..
 import { isDerivedTarget, verifyRuntimeProvenance } from './official-runtime-provenance.mjs'
 import { prepareDerivedRuntime } from './derived-linux-runtime.mjs'
 import { packagedTarget } from './runtime-architecture.mjs'
+import { writeBundledSkillManifests } from '../../../scripts/write-bundled-skill-manifests.mjs'
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const target = packagedTarget()
@@ -46,6 +47,9 @@ function fingerprintPayload(root) {
       } else if (entry.isSymbolicLink()) {
         digest.update(`link ${relative} ${readlinkSync(absolute)}\n`)
       } else if (entry.isFile()) {
+        // 内置技能清单是装配层新增的文件，不参与「载荷是否变化」的比对，
+        // 否则每次准备运行时都会判定不一致并重新拷贝约 1 GB 的 office-skills。
+        if (entry.name === '.workdsh-install.json') continue
         digest.update(`file ${relative} ${statSync(absolute).size}\n`)
       }
     }
@@ -69,6 +73,18 @@ const manifestPath = join(output, 'primary-runtime', 'runtime.json')
 if (!existsSync(manifestPath) || !existsSync(join(output, 'office-skills'))) {
   throw new Error('Official primary runtime payload is incomplete')
 }
+// 官方 office-skills 的 7 个技能由装配层在产物副本里写内置清单；
+// 官方源码树与归档本身保持原样，运行时只读清单即可认出 builtin。
+// 验签模式过渡期默认 warn（签名导出尚未齐备）；`packages/plugins/skills/builtin-signatures`
+// 补齐后把默认值改成 strict，或用 WORKDSH_BUILTIN_SIGNATURE_MODE=strict 显式打开。
+const bundled = await writeBundledSkillManifests([join(output, 'office-skills')], {
+  mode: process.env.WORKDSH_BUILTIN_SIGNATURE_MODE ?? 'warn',
+})
+if (!bundled[0] || bundled[0].skills === 0) throw new Error('Official office-skills payload must expose skill directories')
+const missingManifest = readdirSync(join(output, 'office-skills'), { withFileTypes: true })
+  .filter(entry => entry.isDirectory() && existsSync(join(output, 'office-skills', entry.name, 'SKILL.md')))
+  .filter(entry => !existsSync(join(output, 'office-skills', entry.name, '.workdsh-install.json')))
+if (missingManifest.length) throw new Error(`Bundled office skills missing install manifest: ${missingManifest.map(entry => entry.name).join(', ')}`)
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
 verifyRuntimeProvenance(join(output,'primary-runtime'),target)
 const runtimePnpm = join(output, 'primary-runtime', 'dependencies', 'pnpm', 'bin', 'pnpm.cjs')

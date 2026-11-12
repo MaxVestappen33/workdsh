@@ -126,6 +126,20 @@ export interface ExpertTeamDefinition {
 
 // ── Stored / transported objects ────────────────────────────────────────────
 
+/**
+ * 安装清单：专家/专家团的来源与后台编号只认这份记录字段。
+ * `assetId` 是后台资产编号；台账键与 `remoteId` 仅保留既有数据，不参与闸门判定。
+ * 与连接器、模型同型，`digest` 记录发布修订的 `compositionDigest`，可复用于完整性比对。
+ */
+export interface ExpertInstallManifest {
+  readonly assetType: 'expert' | 'expert_group';
+  readonly assetId?: string;
+  readonly source: 'market' | 'builtin' | 'local';
+  readonly installedAt: string;
+  readonly version?: string;
+  readonly digest?: string;
+}
+
 /** The mutable expert record. `revision` is the CAS token; `draftRevision` tracks the editable draft. */
 export interface Expert {
   readonly id: string;
@@ -139,6 +153,8 @@ export interface Expert {
   readonly updatedAt: string;
   /** Internal member snapshot, managed only through its containing team. */
   readonly teamParentId?: string;
+  /** 安装清单；团队成员不单独持有，判定时解析到所属专家团记录。 */
+  readonly installManifest?: ExpertInstallManifest;
 }
 
 /** The editable draft. May hold an incomplete definition; publish requires a complete one. */
@@ -189,6 +205,9 @@ export interface ExpertSummary {
   readonly installedFromCatalog: boolean;
   /** Set when execution is refused although the expert is ready (e.g. not installed). */
   readonly executionBlocked?: 'approval-required';
+  /** 授权状态：`unauthorized` 未授权；`revoked` 授权失效后被闸门自动停用。 */
+  readonly authState?: 'unauthorized' | 'revoked';
+  readonly authReason?: string;
 }
 
 /** Full detail returned by `get`. */

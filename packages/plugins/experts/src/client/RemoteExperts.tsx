@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as React from 'react';
-import { Button, Modal } from 'workdsh-ui';
+import { Button, CardSkeleton, Modal, QueryOverlay } from 'workdsh-ui';
 import type { ExpertDefinition, RemoteExpertScene, RemoteExpertSummary } from '../shared.js';
 import type { ExpertManagementClient } from './management.js';
 import { ExpertWorkSummary } from './ExpertWorkSummary.js';
@@ -29,6 +29,9 @@ interface RemoteExpertsProps {
 function messageOf(cause: unknown): string {
   return cause instanceof Error ? cause.message : '操作失败，请重试。';
 }
+
+/** 回到前台时 focus 与 visibilitychange 会连着触发：这个窗口内只重取一轮。 */
+const REVALIDATE_DEDUPE_MS = 1_000;
 
 function codeOf(cause: unknown): string | undefined {
   return (cause as { code?: unknown } | undefined)?.code as string | undefined;
@@ -71,7 +74,6 @@ export function RemoteExperts({ management, kind, keyword, onChanged, reloadKey 
   const [detail, setDetail] = useState<RemoteExpertSummary>();
   const [available, setAvailable] = useState(true);
   const [reason, setReason] = useState<string>();
-  const [total, setTotal] = useState(0);
   const [busy, setBusy] = useState(true);
   const [acting, setActing] = useState<string>();
   const [error, setError] = useState('');
@@ -96,7 +98,6 @@ export function RemoteExperts({ management, kind, keyword, onChanged, reloadKey 
       setAvailable(result.available);
       setReason(result.reason);
       setItems(result.items);
-      setTotal(result.total);
       setSceneOptions(prev => {
         const merged = new Map(prev.map(scene => [scene.value, scene]));
         for (const item of result.items) {
@@ -109,7 +110,7 @@ export function RemoteExperts({ management, kind, keyword, onChanged, reloadKey 
       if (current !== sequence.current) return;
       setAvailable(false);
       setReason(messageOf(cause));
-      setItems([]); setTotal(0);
+      setItems([]);
       return undefined;
     } finally {
       if (current === sequence.current) setBusy(false);
@@ -117,6 +118,24 @@ export function RemoteExperts({ management, kind, keyword, onChanged, reloadKey 
   }, [management, kind, keyword, sceneKey]);
 
   useEffect(() => { void load(); }, [load, reloadKey]);
+
+  // 窗口重新获得焦点/切回前台时重取一次市场列表：宿主侧会先做一次授权快照校验，
+  // 后台刚上架或刚撤权的专家/专家团立即可见。focus 与 visibilitychange 会连着触发，
+  // 这里用时间窗去重，保证一次回到前台只发一轮请求。
+  const revalidateRef = useRef<() => void>(() => {});
+  revalidateRef.current = () => { void load(); };
+  const lastRevalidateAtRef = useRef(0);
+  useEffect(() => {
+    const revalidate = () => {
+      if (document.visibilityState !== 'visible') return;
+      const now = Date.now();
+      if (now - lastRevalidateAtRef.current < REVALIDATE_DEDUPE_MS) return;
+      lastRevalidateAtRef.current = now;
+      revalidateRef.current();
+    };
+    window.addEventListener('focus', revalidate); document.addEventListener('visibilitychange', revalidate);
+    return () => { window.removeEventListener('focus', revalidate); document.removeEventListener('visibilitychange', revalidate); };
+  }, []);
 
   const install = async (item: RemoteExpertSummary) => {
     setActing(item.remoteId); setError(''); setNotice(undefined);
@@ -162,7 +181,11 @@ export function RemoteExperts({ management, kind, keyword, onChanged, reloadKey 
     } finally { setActing(undefined); }
   };
 
-  const summary = useMemo(() => items.length === 0 ? '' : `目录共 ${total} 个${kindLabel} · 当前显示 ${items.length} 个`, [items.length, total, kindLabel]);
+  // 数量取授权二次过滤后的真实可见条数，后台 total 不参与展示。
+  const summary = useMemo(() => items.length === 0 ? '' : `当前显示 ${items.length} 个${kindLabel}`, [items.length, kindLabel]);
+  /** 首屏骨架只在还没有任何列表数据时出现；已有数据刷新交给覆盖层。 */
+  const skeletonVisible = busy && !items.length;
+  const overlayVisible = busy && items.length > 0;
   const toggleScene = (value: string) => setScenes(prev => prev.includes(value) ? prev.filter(item => item !== value) : [...prev, value]);
 
   if (!available) {
@@ -181,17 +204,13 @@ export function RemoteExperts({ management, kind, keyword, onChanged, reloadKey 
         className={scenes.includes(scene.value) ? 'active' : ''} aria-pressed={scenes.includes(scene.value)}
         onClick={() => toggleScene(scene.value)}>{scene.label}</button>)}
     </div>}
-    {busy
-      ? <div className="remote-status" role="status" aria-live="polite"><span className="muted">正在读取列表…</span></div>
-      : <>
-    <div role="status" aria-live="polite" className={error ? 'error counts' : 'counts'}>{error || summary}</div>
+    <div className="expert-content">
+    <div role="status" aria-live="polite" className={error ? 'error counts' : 'counts'}>{error || (busy && !items.length ? '正在读取列表…' : summary)}</div>
     {notice && <div className="notice info" role="status"><div className="notice-body"><span>{notice}</span></div><Button onClick={() => setNotice(undefined)} aria-label="关闭提示">×</Button></div>}
-    {items.length === 0
-      ? <div className="empty">
-        <strong>{keyword || scenes.length > 0 ? `没有匹配的${kindLabel}` : `后台暂无可用${kindLabel}`}</strong>
-        <span className="muted">{keyword || scenes.length > 0 ? '保留搜索词或应用场景，可清除后重试。' : '后台只返回已上架且已授权的条目。'}</span>
-      </div>
-      : <div className="grid">{items.map(item => {
+    {!busy && !items.length ? <div className="empty">
+      <strong>未查询到数据</strong>
+    </div> : null}
+    {items.length ? <div className="grid">{items.map(item => {
         const badge = stateBadge(item);
         const installed = item.installed;
         const working = acting === item.remoteId;
@@ -229,8 +248,10 @@ export function RemoteExperts({ management, kind, keyword, onChanged, reloadKey 
             {installed && <Button size="sm" tone="danger" disabled={working} onClick={() => void uninstall(item)}>卸载</Button>}
           </div>
         </article>;
-      })}</div>}
-      </>}
+      })}</div> : null}
+    {skeletonVisible ? <div className="grid" role="status" aria-label="正在读取列表…"><CardSkeleton variant="avatar" count={12} /></div> : null}
+    {overlayVisible ? <QueryOverlay /> : null}
+    </div>
 
     {detail && <Modal open label={`${detail.name} 详情`} className="expert-dialog" onClose={() => setDetail(undefined)}>
       <div className="dialog-scroll">

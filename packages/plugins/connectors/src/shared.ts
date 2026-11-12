@@ -60,6 +60,30 @@ export interface ConnectorTool {
   readonly parameters: readonly ConnectorToolParameter[];
 }
 
+export interface ConnectorInstallManifest {
+  readonly assetType: 'mcp';
+  /** 后台资产编号；内置与自建没有。 */
+  readonly assetId?: string;
+  readonly source: 'market' | 'builtin' | 'local';
+  readonly installedAt: string;
+  readonly version?: string;
+  /**
+   * 定义摘要：对 serverName/transport/command/args/url/title 求 sha256。
+   * 连接器没有文件清单，启用前只能校验定义本身；旧记录没有该字段时视为「无法校验」。
+   */
+  readonly digest?: string;
+}
+
+/**
+ * 按工具名反查连接器资产的结果。
+ *
+ * `found: false`（没有对应连接器记录）与 `found: true` 但没有清单必须区分：
+ * 前者是工具随连接器删除后的残留调用，由工具自身报未知工具；后者是用户自建，按未登记处理。
+ */
+export type ConnectorAssetLookup =
+  | { readonly found: false }
+  | { readonly found: true; readonly bundled: boolean; readonly manifest?: ConnectorInstallManifest };
+
 export interface ConnectorSummary {
   readonly id: string;
   readonly title: string;
@@ -69,6 +93,8 @@ export interface ConnectorSummary {
   readonly scope: 'shared';
   /** 来源市场条目 id；有值表示由市场安装，无值表示本机自建。 */
   readonly originId?: string;
+  /** 安装清单：启用判定只认它（来源 + 后台编号）；旧记录没有时由启动回填补写。 */
+  readonly installManifest?: ConnectorInstallManifest;
   /** 市场分类名称（安装时取市场 bizSceneList 文案，多值全部保留）；自建实例为空。 */
   readonly categories: readonly string[];
   /** 市场原始 serviceId：只有本地 serverName 被换算过时才有值，供卸载上报回传后台。 */
@@ -82,6 +108,14 @@ export interface ConnectorSummary {
   readonly resourceTemplateCount: number;
   readonly lastCheckedAt: string;
   readonly diagnostic?: string;
+  /**
+   * 授权状态（仅市场来源且闸门开启时有值）：
+   * - `unauthorized`：当前账号未获得授权；
+   * - `revoked`：授权已失效，已被闸门自动逻辑禁用（与用户手动停用区分）。
+   */
+  readonly authState?: 'unauthorized' | 'revoked';
+  /** 与 `authState` 配套的中文原因文案，来自闸门 reasons.ts。 */
+  readonly authReason?: string;
 }
 
 export interface ConnectorConfigView {
@@ -158,7 +192,22 @@ export interface ConnectorManagementService {
   update(id: string, input: ConnectorInput): Promise<ConnectorSummary>;
   remove(id: string): Promise<void>;
   setEnabled(id: string, enabled: boolean): Promise<ConnectorSummary>;
+  /** 一次性回填：为旧记录补写安装清单；幂等、可重复执行。 */
+  backfillInstallManifests(): Promise<{ readonly scanned: number; readonly written: number; readonly failed: number }>;
+  /**
+   * 按 MCP 工具名（`mcp__<serverName>__<tool>`）反查连接器记录的安装清单。
+   * 只读内存表，不建连、不探活，供资产闸门在工具调用前同步判定。
+   */
+  connectorAssetForTool(toolName: string): ConnectorAssetLookup;
   /** 未显式选择过的会话返回全部可用（已连接）连接器；显式保存过则按保存值。 */
   selection(sessionId: string): Promise<readonly string[]>;
   setSelection(sessionId: string, connectorIds: readonly string[]): Promise<readonly string[]>;
+  /** 撤权协调：已安装且来源为市场、带后台编号的连接器。 */
+  marketAssets?(): readonly { readonly localId: string; readonly assetId: string }[];
+  /** 账本变化后按当前账号重算运行态：停用被撤销的、恢复已重新授权的。 */
+  applyGateState?(): Promise<void>;
+  /**
+   * 启用前定义摘要校验：`modified` 表示与清单记录不一致，`unverifiable` 表示旧记录没有摘要。
+   */
+  verifyDefinitionIntegrity?(id: string): 'ok' | 'unverifiable' | 'modified';
 }

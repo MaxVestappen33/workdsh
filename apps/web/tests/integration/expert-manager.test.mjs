@@ -1032,6 +1032,39 @@ test('expert page routes reject expired, foreign or revoked live admission witho
   } finally { await h.cleanup(); }
 });
 
+test('闸门开启时本地自建草稿仍在列表可见，市场列表只保留已授权条目', async () => {
+  const h = await boot();
+  try {
+    const a = actor('owner-a');
+    const created = await h.experts.createDraft(a, fullDefinition('自建草稿', { tags: ['local'] }), { operationId: 'gate-local-draft' });
+    h.ctx.provide('workdshBackend', fakeBackend({
+      agent: [remoteRow({ id: 'approved-1', name: '已授权专家' }), remoteRow({ id: 'denied-1', name: '未授权专家' })],
+    }));
+    h.ctx.provide('workdshAssetGate', {
+      enabled(assetType) { return assetType === 'expert' || assetType === 'expert_group'; },
+      async decide(request) {
+        return { allow: request.assetId === 'approved-1', reason: 'gate/denied-not-entitled', message: '该资产未授权。' };
+      },
+    });
+    fixedMemberAdmission(h.ctx);
+    const routes = new Map();
+    h.ctx.provide('connection', { fetch: { register(route) { routes.set(route.path, route); return async () => routes.delete(route.path); } } });
+    registerExpertsConnection(h.ctx);
+    const call = async (endpoint, payload) => {
+      const response = await routes.get('/api/workdsh-experts').fetch(new Request('http://localhost/api/workdsh-experts', {
+        method: 'POST', body: JSON.stringify({ endpoint, payload }),
+      }));
+      return response.json();
+    };
+    const local = await call('list', {});
+    assert.equal(local.ok, true);
+    assert.ok(local.value.items.some(item => item.id === created.expertId), '闸门开启时自建草稿仍然可见，才能继续编辑与上架');
+    const market = await call('remote-list', { expertType: 'agent' });
+    assert.equal(market.ok, true);
+    assert.deepEqual(market.value.items.map(item => item.remoteId), ['approved-1']);
+  } finally { await h.cleanup(); }
+});
+
 test('expert execution guard admits ordinary unbound tasks only through live fixed-member identity', async () => {
   const h = await boot();
   try {

@@ -1,0 +1,78 @@
+{
+  "schema": 2,
+  "assetType": "skill",
+  "name": "workdsh-skill-creator",
+  "source": "builtin",
+  "assetId": "2120056615140507650",
+  "installedAt": "2026-11-06T08:15:26.289Z",
+  "files": [
+    {
+      "path": "LICENSE.workbuddy.txt",
+      "size": 11357,
+      "sha256": "58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd",
+      "mtimeMs": 1791079233113
+    },
+    {
+      "path": "NOTICE.md",
+      "size": 602,
+      "sha256": "b7dedfe421d529da2479ec707982fad3d25e7ab31b51c73e1051dda64285a0ed",
+      "mtimeMs": 1791079233113
+    },
+    {
+      "path": "SKILL.md",
+      "size": 12829,
+      "sha256": "ae3fd4aabe2a0171d2807bff6ec655b0cb8791da94a098eecd8401faf7743a91",
+      "mtimeMs": 1791079233114
+    },
+    {
+      "path": "references/bundle-production.md",
+      "size": 1684,
+      "sha256": "0896a89bbdb93d79e872263ecbd3d50287ff45a07603c8235d7527da84ce7d1c",
+      "mtimeMs": 1791079233114
+    },
+    {
+      "path": "references/creation-methods.md",
+      "size": 1782,
+      "sha256": "7486ebed9eb4a0ab6a2d38bd5fe6f83f3f797e7f264da39bffe6c4209b6647eb",
+      "mtimeMs": 1791079233114
+    },
+    {
+      "path": "references/dsh-authoring.md",
+      "size": 1720,
+      "sha256": "f8d0be56f66c89bf5196fa6cba1cef28a80adeb01c5632657b261c4d9c690ce4",
+      "mtimeMs": 1791079233114
+    },
+    {
+      "path": "references/editing-and-delivery.md",
+      "size": 1577,
+      "sha256": "db9d7cb4b2a7c1ca2fc29b07f1d082986fa22b4d7e20bac980a17c34faba2ca5",
+      "mtimeMs": 1791079233114
+    },
+    {
+      "path": "scripts/init_skill.py",
+      "size": 12188,
+      "sha256": "e99480c6f6201de53b254817c4e27a30b38f8c52964765436adc7ce9dead8704",
+      "mtimeMs": 1791079233114
+    },
+    {
+      "path": "scripts/package_skill.py",
+      "size": 3607,
+      "sha256": "fb79d9990b5582c05e5c712c84ad4470257b84a1ccf94e20ffad961fd8483a17",
+      "mtimeMs": 1791079233114
+    },
+    {
+      "path": "scripts/quick_validate.py",
+      "size": 3316,
+      "sha256": "89edbed09daf153eb0f9f33418293b10a8c7992891ee5d2b1bf92ad6c12bc799",
+      "mtimeMs": 1791079233114
+    }
+  ],
+  "digest": "67bcb4d0177756db860a079e6378c468d9d2cfd713459ef1a670201dfbe1f32d",
+  "signature": {
+    "payloadVersion": "workdsh-asset-signature-v1",
+    "algo": "Ed25519",
+    "keyId": "2026a",
+    "digest": "d34bb33c2ecd276123158393cccc10a48d818918b12d2c6194dee70261b9a144",
+    "signature": "c6MJVaqh9Fv2O38Y1KcPLdmELToQgfVVPZKXin5VnSPVJGeJz9ra5UWg6zaDKzensFWd/wNl+Vai7RRpiaM7CQ=="
+  }
+}

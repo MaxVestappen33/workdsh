@@ -34,18 +34,12 @@ export interface ServerConfig {
   mcpMarketListPath: string
   /** MCP 市场：分类字典接口路径。 */
   mcpMarketCategoriesPath: string
-  /** MCP 市场：安装上报接口路径。 */
-  mcpMarketInstallPath: string
-  /** MCP 市场：卸载上报接口路径。 */
-  mcpMarketUninstallPath: string
   /** 技能市场：已授权技能列表接口路径。 */
   skillMarketListPath: string
   /** 技能市场：业务场景字典接口路径。 */
   skillMarketCategoriesPath: string
-  /** 技能市场：安装接口路径（后台当前为预留实现，只记录安装行为）。 */
-  skillMarketInstallPath: string
-  /** 技能市场：卸载接口路径（后台当前为预留实现，只记录卸载行为）。 */
-  skillMarketUninstallPath: string
+  /** 资产操作记录：安装/卸载完成后实时上报一条事件（技能与 MCP 共用）。 */
+  assetOperationReportPath: string
   /** 技能上架申请：提交接口路径。 */
   skillListingSubmitPath: string
   /** 技能上架申请：我的申请列表接口路径。 */
@@ -60,10 +54,6 @@ export interface ServerConfig {
   skillUploadPath: string
   /** 模型市场：已授权模型列表接口路径。 */
   modelMarketListPath: string
-  /** 模型市场：使用模型上报接口路径（后台当前为预留实现）。 */
-  modelMarketUsePath: string
-  /** 模型市场：卸载模型上报接口路径（后台当前为预留实现）。 */
-  modelMarketUnusePath: string
   /** 专家市场：已授权专家（个人）列表接口路径。 */
   expertMarketAgentListPath: string
   /** 专家市场：已授权专家团列表接口路径。 */
@@ -90,6 +80,14 @@ export interface ServerConfig {
   adminSsoUrl: string
   /** 生成单点登录加密参数的接口路径（相对 baseUrl）。 */
   adminSsoParamsPath: string
+  /** 资产闸门：后台闸门策略接口路径。 */
+  assetGatePolicyPath: string
+  /** 资产闸门：授权快照接口路径（可带 revision 查询参数命中）。 */
+  assetGateSnapshotPath: string
+  /** 资产闸门：审计上报接口路径。 */
+  assetGateReportPath: string
+  /** 资产签名：查询资产签名（envelope）接口路径。 */
+  assetGateSignaturePath: string
   /** 发布记录中的应用标识，与服务端表 app_id 对应。 */
   appId: string
   /** 自动检查更新的间隔（分钟），默认 360。 */
@@ -147,16 +145,14 @@ export const APP_CONFIG_DEFAULTS: AppConfig = {
     logoutPath: '/sys/logout',
     /** 获取当前登录用户信息接口路径。 */
     mePath: '/sys/pcClientVerifyUser',
-    /** 四个市场接口都在 desktop-client 命名空间；安装不再从后台取连接配置（连接字段全部来自市场列表）。 */
+    /** 市场接口都在 desktop-client 命名空间；安装不再从后台取连接配置（连接字段全部来自市场列表）。 */
     mcpMarketListPath: '/desktop-client/mcptool/queryAuthorizedMcpToolList',
     mcpMarketCategoriesPath: '/desktop-client/mcptool/queryMcpToolBizSceneList',
-    mcpMarketInstallPath: '/desktop-client/mcptool/installMcpTool',
-    mcpMarketUninstallPath: '/desktop-client/mcptool/unInstallMcpTool',
-    /** 技能市场的查询与安装/卸载接口与 MCP 市场同属 desktop-client 命名空间。 */
+    /** 技能市场的查询接口与 MCP 市场同属 desktop-client 命名空间。 */
     skillMarketListPath: '/desktop-client/skill/queryAuthorizedSkillList',
     skillMarketCategoriesPath: '/desktop-client/skill/querySkillBizSceneList',
-    skillMarketInstallPath: '/desktop-client/skill/installSkill',
-    skillMarketUninstallPath: '/desktop-client/skill/unInstallSkill',
+    /** 资产操作记录：旧的安装/卸载上报接口已下线，技能与 MCP 统一实时上报到这一个接口。 */
+    assetOperationReportPath: '/desktop-client/asset/operation/report',
     /** 技能上架申请与表单字典：同属 desktop-client 命名空间，上传接口免签。 */
     skillListingSubmitPath: '/desktop-client/skill/listingRequest',
     skillListingListPath: '/desktop-client/skill/queryMyListingSkillList',
@@ -164,10 +160,8 @@ export const APP_CONFIG_DEFAULTS: AppConfig = {
     skillListingScenePath: '/desktop-client/queryAiBizSceneList',
     skillDictPath: '/desktop-client/getDictItems',
     skillUploadPath: '/desktop-client/upload',
-    /** 模型市场与技能/MCP 市场同属 desktop-client 命名空间；安装与卸载只做后台上报。 */
+    /** 模型市场与技能/MCP 市场同属 desktop-client 命名空间；安装/卸载统一走资产操作记录上报。 */
     modelMarketListPath: '/desktop-client/model/queryAuthorizedModelList',
-    modelMarketUsePath: '/desktop-client/model/useModel',
-    modelMarketUnusePath: '/desktop-client/model/unUseModel',
     /** 专家目录、上架申请与撤回都在 desktop-client 命名空间，个人专家与专家团各一套端点。 */
     expertMarketAgentListPath: '/desktop-client/expert/queryAuthorizedExpertList',
     expertMarketTeamListPath: '/desktop-client/expertgroup/queryAuthorizedExpertGroupList',
@@ -187,6 +181,12 @@ export const APP_CONFIG_DEFAULTS: AppConfig = {
     adminSsoUrl: 'http://localhost:3100/clientSSO',
     /** 生成单点登录加密参数：与 baseUrl 同源。 */
     adminSsoParamsPath: '/sys/generateCasLoginParams',
+    /** 资产闸门：策略与授权快照同属 desktop-client 命名空间。 */
+    assetGatePolicyPath: '/desktop-client/asset/queryGatePolicy',
+    assetGateSnapshotPath: '/desktop-client/asset/queryEntitlementSnapshot',
+    assetGateReportPath: '/desktop-client/asset/reportGateAudit',
+    /** 资产签名：按 assetType/assetId 取签名 envelope（本期只用于技能）。 */
+    assetGateSignaturePath: '/desktop-client/asset/queryAssetSignature',
   },
 }
 
@@ -203,11 +203,11 @@ type PartialAppConfig = {
 /** 所有相对接口路径字段：统一要求以单个 `/` 开头，避免协议相对地址或外站路径。 */
 export const SERVER_PATH_FIELDS = [
   'loginPath', 'logoutPath', 'mePath',
-  'mcpMarketListPath', 'mcpMarketCategoriesPath', 'mcpMarketInstallPath', 'mcpMarketUninstallPath',
-  'skillMarketListPath', 'skillMarketCategoriesPath', 'skillMarketInstallPath', 'skillMarketUninstallPath',
+  'mcpMarketListPath', 'mcpMarketCategoriesPath',
+  'skillMarketListPath', 'skillMarketCategoriesPath', 'assetOperationReportPath',
   'skillListingSubmitPath', 'skillListingListPath', 'skillListingNodePath', 'skillListingScenePath',
   'skillDictPath', 'skillUploadPath',
-  'modelMarketListPath', 'modelMarketUsePath', 'modelMarketUnusePath',
+  'modelMarketListPath',
   'expertMarketAgentListPath', 'expertMarketTeamListPath',
   'expertMyListingAgentPath', 'expertMyListingTeamPath',
   'expertListingSubmitAgentPath', 'expertListingSubmitTeamPath',
@@ -216,6 +216,7 @@ export const SERVER_PATH_FIELDS = [
   'promptListPath',
   'latestVersionPath',
   'adminSsoParamsPath',
+  'assetGatePolicyPath', 'assetGateSnapshotPath', 'assetGateReportPath', 'assetGateSignaturePath',
 ] as const
 
 /** server 段中非路径的标量字段，各自有独立校验。 */

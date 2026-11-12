@@ -1,0 +1,42 @@
+{
+  "schema": 2,
+  "assetType": "skill",
+  "name": "workdsh-web-design",
+  "source": "builtin",
+  "assetId": "2120056908460769282",
+  "installedAt": "2026-11-06T08:15:26.291Z",
+  "files": [
+    {
+      "path": "SKILL.md",
+      "size": 2154,
+      "sha256": "70869093ce6e648f2b170fa16a16e6f403377664e3499c4bc901385de6778ec2",
+      "mtimeMs": 1791079233114
+    },
+    {
+      "path": "references/brief-and-design.md",
+      "size": 1513,
+      "sha256": "1124854928d3b807bb3ff8ca209d9f5580e6d2b3a4a8a9d647497db43654a4aa",
+      "mtimeMs": 1791079233114
+    },
+    {
+      "path": "references/implementation-and-review.md",
+      "size": 4513,
+      "sha256": "a939289dc2c104a315b9415982c682c058842ea5e2c2100db0879dff42b73bb9",
+      "mtimeMs": 1791079233115
+    },
+    {
+      "path": "references/workflow-and-delivery.md",
+      "size": 6710,
+      "sha256": "a59c5c1d11138aeb2737dc3fe5502788ab86ab23d00bf7202d3112bcf9f4596c",
+      "mtimeMs": 1791079233115
+    }
+  ],
+  "digest": "05e0ecf219f065400d1b8e013f41a5a2e20ad1737f3d01748ac3c13ea852bd23",
+  "signature": {
+    "payloadVersion": "workdsh-asset-signature-v1",
+    "algo": "Ed25519",
+    "keyId": "2026a",
+    "digest": "39947b1a8ca8d6af5b305704d768ea8509e6a47449ff95eabeeb38f6bb27b0b5",
+    "signature": "I4chcojWihZ7B5WtF2e0tewEOfhGXjFdD6QdWuArLmuYDayFIGu6CcfVAVdl4ATBtxrv1vz9WUEL8eICxf9jAg=="
+  }
+}

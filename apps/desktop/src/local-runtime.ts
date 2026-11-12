@@ -194,16 +194,19 @@ export function desktopConnectorMarketPatch(home: string, server: ServerConfig, 
   const rows = ([
     ['list', server.mcpMarketListPath],
     ['categories', server.mcpMarketCategoriesPath],
-    ['install', server.mcpMarketInstallPath],
-    ['uninstall', server.mcpMarketUninstallPath],
+    // 安装/卸载完成后统一实时上报到资产操作记录接口（旧安装上报接口已下线）。
+    ['report', server.assetOperationReportPath],
   ] as const).flatMap(([name, value]) => (typeof value === 'string' && /^\//u.test(value) ? [[name, value] as const] : []))
+  // 资产操作记录的 clientId 取载体配置的 appId（与版本检查同源），不再使用设备 UUID。
+  const clientId = typeof server.appId === 'string' && server.appId.trim() ? server.appId.trim() : undefined
   const registry = server.mcpPackageRegistry
   const installable = typeof registry === 'string' && /^https?:\/\//u.test(registry)
-  if (rows.length === 0 && !installable) return undefined
+  if (rows.length === 0 && !installable && clientId === undefined) return undefined
   const paths = rows.length === 0 ? '' : `    paths:\n${rows.map(([name, value]) => `      ${name}: ${JSON.stringify(value)}\n`).join('')}`
+  const client = clientId === undefined ? '' : `    clientId: ${JSON.stringify(clientId)}\n`
   const install = installable ? `    install:\n      registry: ${JSON.stringify(registry)}\n      node: ${JSON.stringify(runtime.node)}\n      pnpm: ${JSON.stringify(runtime.pnpm)}\n      root: ${JSON.stringify(join(home, 'mcp'))}\n` : ''
   const patch = join(home, '.connector-market.patch.yml')
-  writeFileSync(patch, `- id: workdsh-connectors\n  config:\n${paths}${install}`, { mode: 0o600 })
+  writeFileSync(patch, `- id: workdsh-connectors\n  config:\n${client}${paths}${install}`, { mode: 0o600 })
   return patch
 }
 
@@ -216,8 +219,10 @@ export function desktopSkillMarketPatch(home: string, server: ServerConfig): str
   const marketRows = ([
     ['list', server.skillMarketListPath],
     ['categories', server.skillMarketCategoriesPath],
-    ['install', server.skillMarketInstallPath],
-    ['uninstall', server.skillMarketUninstallPath],
+    // 安装/卸载完成后统一实时上报到资产操作记录接口（旧安装上报接口已下线）。
+    ['report', server.assetOperationReportPath],
+    // 技能安装必须先取签名并验签；签名接口与闸门策略同属 desktop-client/asset 命名空间。
+    ['signature', server.assetGateSignaturePath],
   ] as const).flatMap(([name, value]) => (typeof value === 'string' && /^\//u.test(value) ? [[name, value] as const] : []))
   const listingRows = ([
     ['submit', server.skillListingSubmitPath],
@@ -229,9 +234,13 @@ export function desktopSkillMarketPatch(home: string, server: ServerConfig): str
     ['ssoParams', server.adminSsoParamsPath],
   ] as const).flatMap(([name, value]) => (typeof value === 'string' && /^\//u.test(value) ? [[name, value] as const] : []))
   const ssoUrl = typeof server.adminSsoUrl === 'string' && /^https?:\/\//u.test(server.adminSsoUrl) ? server.adminSsoUrl : undefined
-  if (marketRows.length === 0 && listingRows.length === 0 && ssoUrl === undefined) return undefined
-  const market = marketRows.length === 0 ? ''
-    : `    market:\n      paths:\n${marketRows.map(([key, value]) => `        ${key}: ${JSON.stringify(value)}\n`).join('')}`
+  // 资产操作记录的 clientId 取载体配置的 appId（与版本检查同源），不再使用设备 UUID。
+  const clientId = typeof server.appId === 'string' && server.appId.trim() ? server.appId.trim() : undefined
+  if (marketRows.length === 0 && listingRows.length === 0 && ssoUrl === undefined && clientId === undefined) return undefined
+  const marketPaths = marketRows.length === 0 ? ''
+    : `      paths:\n${marketRows.map(([key, value]) => `        ${key}: ${JSON.stringify(value)}\n`).join('')}`
+  const client = clientId === undefined ? '' : `      clientId: ${JSON.stringify(clientId)}\n`
+  const market = marketPaths === '' && client === '' ? '' : `    market:\n${client}${marketPaths}`
   // 上架申请段同时承载接口路径与单点登录地址：地址缺失时只写路径，插件回退内置默认值。
   const listing = listingRows.length === 0 && ssoUrl === undefined ? ''
     : `    listing:\n${listingRows.length === 0 ? '' : `      paths:\n${listingRows.map(([key, value]) => `        ${key}: ${JSON.stringify(value)}\n`).join('')}`}${ssoUrl === undefined ? '' : `      ssoUrl: ${JSON.stringify(ssoUrl)}\n`}`
@@ -261,14 +270,17 @@ export function desktopPromptPatch(home: string, server: ServerConfig): string |
 export function desktopModelMarketPatch(home: string, server: ServerConfig, stateDir?: string): string | undefined {
   const rows = ([
     ['list', server.modelMarketListPath],
-    ['use', server.modelMarketUsePath],
-    ['unuse', server.modelMarketUnusePath],
+    // 安装/卸载完成后统一实时上报到资产操作记录接口（旧 useModel/unUseModel 已下线）。
+    ['report', server.assetOperationReportPath],
   ] as const).flatMap(([name, value]) => (typeof value === 'string' && /^\//u.test(value) ? [[name, value] as const] : []))
-  if (rows.length === 0 && stateDir === undefined) return undefined
+  // 资产操作记录的 clientId 取载体配置的 appId（与版本检查同源），不再使用设备 UUID。
+  const clientId = typeof server.appId === 'string' && server.appId.trim() ? server.appId.trim() : undefined
+  if (rows.length === 0 && stateDir === undefined && clientId === undefined) return undefined
   const paths = rows.length === 0 ? '' : `    paths:\n${rows.map(([name, value]) => `      ${name}: ${JSON.stringify(value)}\n`).join('')}`
+  const client = clientId === undefined ? '' : `    clientId: ${JSON.stringify(clientId)}\n`
   const state = stateDir === undefined ? '' : `    stateDir: ${JSON.stringify(stateDir)}\n`
   const patch = join(home, '.model-market.patch.yml')
-  writeFileSync(patch, `- id: workdsh-model-market\n  config:\n${paths}${state}`, { mode: 0o600 })
+  writeFileSync(patch, `- id: workdsh-model-market\n  config:\n${client}${paths}${state}`, { mode: 0o600 })
   return patch
 }
 
@@ -279,6 +291,41 @@ export function desktopModelMarketPatch(home: string, server: ServerConfig, stat
 export function accountModelStateDirectory(home: string, principalId: string): string {
   if (!/^[\w-]{1,160}$/u.test(principalId)) throw new Error('账号用户标识无效')
   return join(home, '.workdsh-state', 'models', 'accounts', principalId)
+}
+
+/**
+ * 资产闸门按账号隔离的快照目录。快照文件本身由插件加密，这里的目录只负责分隔账号。
+ */
+export function accountAssetGateStateDirectory(home: string, principalId: string): string {
+  if (!/^[\w-]{1,160}$/u.test(principalId)) throw new Error('账号用户标识无效')
+  return join(home, '.workdsh-state', 'asset-gate', 'accounts', principalId)
+}
+
+/**
+ * 资产闸门策略目录。策略不含账号信息，因此不按账号隔离；同一个工作区共用一份，
+ * 换账号沿用上次成功拉取的结果，拉取失败时才按 fail-closed 处理。
+ */
+export function assetGatePolicyDirectory(home: string): string {
+  return join(home, '.workdsh-state', 'asset-gate', 'policy')
+}
+
+/**
+ * 资产闸门的接口路径、快照目录与策略目录注入层。插件是 Desktop/Web 共用的 Profile 包，
+ * 不能自己读载体配置，因此由这里把 server 段的两个端点注入。
+ */
+export function desktopAssetGatePatch(home: string, server: ServerConfig, stateDir?: string, policyDir?: string): string | undefined {
+  const rows = ([
+    ['policy', server.assetGatePolicyPath],
+    ['snapshot', server.assetGateSnapshotPath],
+    ['report', server.assetGateReportPath],
+  ] as const).flatMap(([name, value]) => (typeof value === 'string' && /^\//u.test(value) ? [[name, value] as const] : []))
+  if (rows.length === 0 && stateDir === undefined && policyDir === undefined) return undefined
+  const paths = rows.length === 0 ? '' : `    paths:\n${rows.map(([name, value]) => `      ${name}: ${JSON.stringify(value)}\n`).join('')}`
+  const state = stateDir === undefined ? '' : `    stateDir: ${JSON.stringify(stateDir)}\n`
+  const policy = policyDir === undefined ? '' : `    policyDir: ${JSON.stringify(policyDir)}\n`
+  const patch = join(home, '.asset-gate.patch.yml')
+  writeFileSync(patch, `- id: workdsh-asset-gate\n  config:\n${paths}${state}${policy}`, { mode: 0o600 })
+  return patch
 }
 
 /**

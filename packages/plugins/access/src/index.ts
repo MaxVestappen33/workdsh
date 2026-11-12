@@ -454,38 +454,39 @@ export class SessionAccessBridge extends Service {
   /** Private enterprise Session reads never inherit admin or material-sharing grants. */
   async inspect(sessionId: SessionId, signal?: AbortSignal): Promise<Awaited<ReturnType<Context['sessionController']['inspect']>>> {
     signal?.throwIfAborted();
-    const actor = await this.ctx.workdshIdentity.resolve({ sessionId: String(sessionId) }, signal);
-    const personal = this.ctx.workdshIdentity.profile().organization.kind === 'personal';
+    const profile = this.ctx.workdshIdentity.profile();
+    const personal = profile.organization.kind === 'personal';
     const unbound = !this.ctx.workdshAccess.sessionOwner(String(sessionId));
-    if (!personal && !(unbound && this.canBindFixedMemberSession(actor))) {
-      this.assertPrivateSessionOwner(actor, String(sessionId));
-    }
     const result = await this.ctx.sessionController.inspect(sessionId, signal);
     signal?.throwIfAborted();
     if (!personal) {
+      // 只在读后向 Main 复验一次身份：与启动时缓存的身份快照比对即可发现请求期间的账号切换，
+      // 避免读前、读后各 resolve 一次造成的重复 /auth/me。
       const current = await this.ctx.workdshIdentity.resolve({ sessionId: String(sessionId) }, signal);
-      if (current.principalId !== actor.principalId || current.organizationId !== actor.organizationId) throw new ApiSessionNotFound('Session not found');
+      if (current.principalId !== profile.principalId || current.organizationId !== profile.organization.id) throw new ApiSessionNotFound('Session not found');
       if (unbound) {
         if (!this.canBindFixedMemberSession(current)) throw new ApiSessionNotFound('Session not found');
         await this.ctx.workdshAccess.bindSession(current, { sessionId: String(sessionId) }, signal);
+      } else {
+        this.assertPrivateSessionOwner(current, String(sessionId));
       }
-      this.assertPrivateSessionOwner(current, String(sessionId));
     }
     return result;
   }
 
   async list(request: Parameters<Context['sessionController']['list']>[0], signal: AbortSignal): Promise<Awaited<ReturnType<Context['sessionController']['list']>>> {
     signal.throwIfAborted();
-    const actor = await this.ctx.workdshIdentity.resolve(undefined, signal);
-    const personal = this.ctx.workdshIdentity.profile().organization.kind === 'personal';
+    const profile = this.ctx.workdshIdentity.profile();
+    const personal = profile.organization.kind === 'personal';
     const result = await this.ctx.sessionController.list(request, signal);
     signal.throwIfAborted();
     if (personal) return result;
+    // 同上：读后只复验一次身份，保留一致性校验但去掉读前那次 resolve。
     const current = await this.ctx.workdshIdentity.resolve(undefined, signal);
-    if (current.principalId !== actor.principalId || current.organizationId !== actor.organizationId) throw new ApiSessionNotFound('Session not found');
+    if (current.principalId !== profile.principalId || current.organizationId !== profile.organization.id) throw new ApiSessionNotFound('Session not found');
     return { items: result.items.filter(item => {
       const owner = this.ctx.workdshAccess.sessionOwner(String(item.sessionId));
-      return owner?.organizationId === actor.organizationId && owner.ownerPrincipalId === actor.principalId;
+      return owner?.organizationId === current.organizationId && owner.ownerPrincipalId === current.principalId;
     }) };
   }
 

@@ -42,6 +42,10 @@
     "./composer": {
       "types": "./dist/composer.d.ts",
       "default": "./dist/composer.js"
+    },
+    "./asset-operation": {
+      "types": "./dist/asset-operation.d.ts",
+      "default": "./dist/asset-operation.js"
     }
   },
   "files": [

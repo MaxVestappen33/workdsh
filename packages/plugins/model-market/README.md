@@ -18,7 +18,7 @@
 
 ## 安装规则
 
-- 安装状态以本机配置为准；`useModel` / `unUseModel` 只做后台上报，失败不阻断本机结果。
+- 安装状态以本机配置为准；安装/卸载结果统一实时上报到资产操作记录接口（`assetType=model`），上报失败不阻断本机结果。
 - 分组键为 `provider + apiProtocol + apiUrl + apiKey`，同组模型聚合到一条 `workdsh-*` provider。
 - 安装写官方 `llm-pi-ai` 配置与官方凭据存储；接口返回的 `apiKey` 只在 Host 内使用，不下发渲染层。
 - 自定义模型由用户填写完整配置，Host 校验后同样写入 `llm-pi-ai` 与凭据；卸载时删除整条自定义路由，不上报后台。

@@ -2,7 +2,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type { ConnectionRpcResult, HostConnectionHandle } from '@deepseek-ai/dsh-client-connection';
 import { ModelMarketError } from './market.js';
-import type { ModelMarketServiceApi } from './service.js';
+import { AssetGateDenied, type ModelMarketServiceApi } from './service.js';
 
 export const modelMarketConnectionPath = '/api/workdsh-model-market';
 
@@ -87,6 +87,8 @@ export function registerModelMarketConnection(ctx: Context): void {
         }
         return invalidRequest();
       } catch (cause) {
+        // 未授权保留 gate/denied-* 原因码，UI 可据此与后台故障区分。
+        if (cause instanceof AssetGateDenied) return Response.json(fail(cause.code, cause.message), noStore);
         if (cause instanceof ModelMarketError) return Response.json(fail(cause.code, cause.message), noStore);
         const detail = cause instanceof Error && cause.message ? cause.message : '模型市场操作失败，请重试。';
         ctx.logger.warn(`模型市场端点 ${endpoint === undefined ? '(未知)' : String(endpoint)} 失败：${detail}`);

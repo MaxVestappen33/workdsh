@@ -135,6 +135,11 @@ export interface IdentityProvider<Evidence = IdentityResolutionContext | undefin
 export interface IdentityService<Evidence = IdentityResolutionContext | undefined> extends IdentityProvider<Evidence> {
   /** Trusted profile loaded by the Host. It never accepts client-selected identity. */
   profile(): IdentityProfile;
+  /**
+   * 设备实例标识：桌面账号/企业身份从 Desktop 生成的设备文件读取，用于资产操作记录等后台上报。
+   * 个人模式与测试环境没有设备标识，因此是可选方法。
+   */
+  deviceId?(): string | undefined;
   /** Resolve active or suspended membership without exposing provider storage. */
   membership(organizationId: string, principalId: string): Membership | undefined;
 }

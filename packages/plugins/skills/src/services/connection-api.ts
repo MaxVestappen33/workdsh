@@ -1,10 +1,12 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type { ConnectionRpcResult, HostConnectionHandle } from '@deepseek-ai/dsh-client-connection';
+import { ASSET_SIGNATURE_REASONS, assetSignatureMessage } from 'workdsh-asset-signature';
 import { SkillMarketRequestError } from '../market.js';
-import type { SkillMarket, SkillMarketUninstall } from './market-entry.js';
+import type { SkillMarket } from './market-entry.js';
 import { SkillListingRequestError, type SkillListing } from './listing-entry.js';
-import type { SkillInstallScope, SkillManagementEndpoint, SkillManagementService } from '../shared.js';
+import type { SkillBatchItemResult, SkillInstallScope, SkillManagementEndpoint, SkillManagementService } from '../shared.js';
 import { skillCatalogIconPath } from './catalog.js';
+import { SIGNATURE_REINSTALL_MESSAGE } from './asset-signatures.js';
 
 export const skillManagementPath = '/api/workdsh-skills';
 export const skillImportPath = '/api/workdsh-skills/import';
@@ -19,8 +21,210 @@ const fail = (code: string, message: string): ConnectionRpcResult<never> => ({ o
 const record = (value: unknown): Record<string, unknown> | undefined => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 const nameFrom = (payload: unknown): string | undefined => typeof record(payload)?.name === 'string' ? record(payload)?.name as string : undefined;
 
+/**
+ * 资产闸门是可选宿主能力：插件未安装、闸门关闭或该类型未开启时，下面三个函数完全透明，
+ * 不解析身份、不读快照、也不改变任何返回结果。判定本身由 asset-gate 的纯函数完成。
+ */
+type GateAssetType = 'skill' | 'mcp' | 'expert' | 'expert_group' | 'model' | 'prompt';
+/** 审计动作：数据层只上报这五种关键写操作。 */
+type GateAuditAction = 'install' | 'enable' | 'restore' | 'uninstall' | 'delete';
+interface GateAuditWriteInput {
+  readonly action: GateAuditAction;
+  readonly assetType?: string;
+  readonly assetId?: string;
+  readonly assetName?: string;
+  readonly succeeded: boolean;
+  readonly reasonCode?: string;
+  readonly failReason?: string;
+}
+interface AssetGateLike {
+  enabled(assetType: GateAssetType): boolean;
+  /** 主闸门与验签开关是否同时开启；旧版闸门没有该方法时按关闭处理。 */
+  signatureEnabled?(): boolean;
+  /** 触发式校验：进市场页/刷新/写操作完成后做一次 revision 比对；旧版闸门没有该方法时跳过。 */
+  refreshNow?(): Promise<void>;
+  decide(request: { assetType: GateAssetType; assetId: string; usage: 'read' | 'use' | 'write' }): Promise<{ allow: boolean; reason: string; message: string }>;
+  /** 拿不到后台编号时的拒绝结果：原因码与文案由闸门统一维护。 */
+  unlisted(): { reason: string; message: string };
+  /** 摘要校验不通过时的原因码与文案，同样由闸门统一维护。 */
+  integrityMismatch(): { reason: string; message: string };
+  /** 拒绝审计只入队；闸门关闭或上报异常都由实现自行吞掉。 */
+  auditDenied?(input: {
+    readonly layer: 'data_layer' | 'install_verify';
+    readonly reasonCode: string;
+    readonly action?: GateAuditAction;
+    readonly assetType?: string;
+    readonly assetId?: string;
+    readonly assetName?: string;
+  }): void;
+  /** 关键写操作审计；同样只入队、不阻断业务。 */
+  auditWrite?(input: GateAuditWriteInput): void;
+}
+const assetGate = (ctx: Context): AssetGateLike | undefined => ctx.reflect.get('workdshAssetGate') as AssetGateLike | undefined;
+
+/** 拒绝时保留稳定原因码（gate/denied-*）与集中维护的文案，UI 据此区分「未授权」与「后台失败」。 */
+class AssetGateDenied extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    /** 签名校验失败记 install_verify，其余数据层拒绝维持 data_layer。 */
+    readonly layer: 'data_layer' | 'install_verify' = 'data_layer',
+  ) {
+    super(message);
+    this.name = 'AssetGateDenied';
+  }
+}
+
+/** 写操作（安装、启用）前判授权；闸门关闭时直接放行。 */
+async function requireAsset(ctx: Context, assetType: GateAssetType, assetId: string): Promise<void> {
+  const gate = assetGate(ctx);
+  if (!gate?.enabled(assetType)) return;
+  const decision = await gate.decide({ assetType, assetId, usage: 'write' });
+  if (!decision.allow) throw new AssetGateDenied(decision.reason, decision.message);
+}
+
+/** 列表二次过滤：只保留授权命中的条目；闸门关闭时原样返回同一个数组。 */
+async function visibleAssets<T>(ctx: Context, assetType: GateAssetType, rows: readonly T[], idOf: (row: T) => string | undefined): Promise<readonly T[]> {
+  const gate = assetGate(ctx);
+  if (!gate?.enabled(assetType)) return rows;
+  // 进入市场页签/刷新/写操作后都会走到这里：先做一次 revision 校验（单飞 + 节流），
+  // 保证后台刚授权或刚撤权的条目立刻反映到列表上，而不是等下一个周期。
+  await gate.refreshNow?.();
+  const visible: T[] = [];
+  for (const row of rows) {
+    const id = idOf(row);
+    if (id === undefined) continue;
+    if ((await gate.decide({ assetType, assetId: id, usage: 'read' })).allow) visible.push(row);
+  }
+  return visible;
+}
+
+/**
+ * 启用前判定：只看技能目录内的安装清单。
+ * 清单来源 market + 后台编号 → 先做完整性校验（验签开关开启时先验签、再比文件集合，mtime 不参与），
+ * 通过后再判授权；builtin → 只做完整性校验（带签名块必验签、无签名块比内容），不参与授权过滤；
+ * 没有清单或来源 local（用户自建/导入）→ 按「未上架/未登记」拒绝。
+ * 验签开关只决定「市场来源缺签名」是否放行；清单里已有签名块时，开关关闭也必须验。
+ */
+async function requireSkillEnable(ctx: Context, manager: SkillManagementService, name: string): Promise<void> {
+  const gate = assetGate(ctx);
+  const manifest = await manager.installManifest?.(name);
+  if (manifest?.source === 'market') {
+    const signature = gate?.signatureEnabled?.() === true;
+    const integrity = await manager.verifyInstalledIntegrity?.(name, { signature });
+    if (integrity && !integrity.ok && integrity.reason !== 'missing') {
+      const code = signatureIntegrityCode(integrity.reason);
+      if (code) {
+        // 缺少签名（装于关闭期间/缓存丢失）不是篡改，提示用户重新安装即可。
+        const message = integrity.reason === 'signature-missing' ? SIGNATURE_REINSTALL_MESSAGE : assetSignatureMessage(code);
+        throw new AssetGateDenied(code, message, 'install_verify');
+      }
+    }
+    if (gate?.enabled('skill') !== true) return;
+    if (manifest.assetId) return requireAsset(ctx, 'skill', manifest.assetId);
+    const denial = gate.unlisted();
+    throw new AssetGateDenied(denial.reason, denial.message);
+  }
+  if (manifest?.source === 'builtin') {
+    // 内置技能不参与授权过滤，但完整性必须校验：不再因为 source=builtin 直接放行。
+    const integrity = await manager.verifyInstalledIntegrity?.(name, { signature: true });
+    if (integrity && !integrity.ok && integrity.reason !== 'missing') {
+      const code = signatureIntegrityCode(integrity.reason);
+      if (code) throw new AssetGateDenied(code, assetSignatureMessage(code), 'install_verify');
+    }
+    return;
+  }
+  if (gate?.enabled('skill') !== true) return;
+  const denial = gate.unlisted();
+  throw new AssetGateDenied(denial.reason, denial.message);
+}
+
+/** 完整性校验结果 → 签名契约原因码。 */
+export function signatureIntegrityCode(reason: string): string | undefined {
+  switch (reason) {
+    case 'signature-missing': return ASSET_SIGNATURE_REASONS.missing;
+    case 'signature-invalid': return ASSET_SIGNATURE_REASONS.invalid;
+    case 'signature-asset-mismatch': return ASSET_SIGNATURE_REASONS.assetMismatch;
+    case 'manifest-mismatch': return ASSET_SIGNATURE_REASONS.manifestMismatch;
+    case 'manifest-extra-file': return ASSET_SIGNATURE_REASONS.manifestExtraFile;
+    // 签名资产的文件集合就是判决依据：文件缺失/摘要不符都归到「文件与签名记录不一致」。
+    case 'file-missing':
+    case 'digest-mismatch':
+    case 'quick-mismatch': return ASSET_SIGNATURE_REASONS.manifestMismatch;
+    default: return undefined;
+  }
+}
+
+/** 写操作审计的共同元数据。 */
+interface WriteAuditMeta {
+  readonly action: GateAuditAction;
+  readonly assetType?: string;
+  readonly assetId?: string;
+  readonly assetName?: string;
+}
+
+/** 审计异常一律吞掉，绝不影响技能管理业务。 */
+function auditWrite(ctx: Context, meta: WriteAuditMeta, succeeded: boolean, failure?: unknown): void {
+  try {
+    assetGate(ctx)?.auditWrite?.({
+      ...meta,
+      succeeded,
+      ...(succeeded ? {} : { failReason: failure instanceof Error ? failure.message : String(failure ?? '') }),
+    });
+  } catch {
+    // 审计是实现侧可选的旁路，失败不向调用方抛出。
+  }
+}
+
+function auditDenied(ctx: Context, meta: WriteAuditMeta, reasonCode: string, layer: 'data_layer' | 'install_verify' = 'data_layer'): void {
+  try {
+    assetGate(ctx)?.auditDenied?.({ layer, reasonCode, ...meta });
+  } catch {
+    // 同上。
+  }
+}
+
+/**
+ * 包住一次关键写操作：成功记 `write/success`，失败记 `write/failed`，
+ * 被闸门拒绝时记 `denied`（带 action 与原因码）。
+ */
+async function auditedWrite<T>(ctx: Context, meta: WriteAuditMeta, run: () => Promise<T>): Promise<T> {
+  try {
+    const value = await run();
+    auditWrite(ctx, meta, true);
+    return value;
+  } catch (error) {
+    if (error instanceof AssetGateDenied) auditDenied(ctx, meta, error.code, error.layer);
+    else auditWrite(ctx, meta, false, error);
+    throw error;
+  }
+}
+
+/**
+ * 本机卸载后的资产操作记录：只上报从市场安装过的技能（按安装记录反查市场条目 id），
+ * 非市场技能与上报失败都只返回 false，不影响本机卸载结果。
+ */
+async function reportUninstall(ctx: Context, name: string, failure?: unknown): Promise<boolean> {
+  try {
+    const market = ctx.workdshSkillMarket as SkillMarket | undefined;
+    if (!market) return false;
+    const outcome = await market.uninstall({
+      name,
+      ...(failure === undefined ? { result: 'success' as const } : {
+        result: 'failed' as const,
+        failReason: 'other' as const,
+        detail: failure instanceof Error ? failure.message : String(failure),
+      }),
+    });
+    return outcome.reported;
+  } catch {
+    return false;
+  }
+}
+
 function publicFailure(error: unknown): ConnectionRpcResult<never> {
   if (error instanceof DOMException && error.name === 'AbortError') return fail('skill/request-cancelled', '操作已取消。');
+  if (error instanceof AssetGateDenied) return fail(error.code, error.message);
   if (error instanceof SkillMarketRequestError) return fail(error.code, error.message);
   // 上架申请服务的错误码与文案在服务内已经归一，直接透传，避免再维护一份映射表。
   if (error instanceof SkillListingRequestError) return fail(error.code, error.message);
@@ -80,7 +284,7 @@ const optionalCount = (value: unknown): number | undefined | null =>
 /** 市场文本参数：缺省表示不过滤，出现非字符串则拒绝请求。 */
 const optionalText = (value: unknown): string | undefined | null => value === undefined ? undefined : typeof value === 'string' ? value : null;
 
-async function dispatch(manager: SkillManagementService, marketService: () => SkillMarket | undefined, listingService: () => SkillListing | undefined, rawEndpoint: unknown, payload: unknown, signal: AbortSignal): Promise<ConnectionRpcResult<unknown>> {
+async function dispatch(ctx: Context, manager: SkillManagementService, marketService: () => SkillMarket | undefined, listingService: () => SkillListing | undefined, rawEndpoint: unknown, payload: unknown, signal: AbortSignal): Promise<ConnectionRpcResult<unknown>> {
   if (typeof rawEndpoint !== 'string') return fail('skill/invalid-request', '技能管理操作无效。');
   const endpoint = rawEndpoint as SkillManagementEndpoint;
   const market = (): SkillMarket => {
@@ -100,12 +304,12 @@ async function dispatch(manager: SkillManagementService, marketService: () => Sk
     if (endpoint === 'restore') {
       const id = record(payload)?.id;
       if (typeof id !== 'string') return fail('skill/invalid-request', '回收记录无效。');
-      return ok(await manager.restore(id));
+      return ok(await auditedWrite(ctx, { action: 'restore', assetType: 'skill', assetId: id }, () => manager.restore(id)));
     }
     if (endpoint === 'commit-import') {
       const input = record(payload); const id = input?.id; const scope = input?.scope;
       if (typeof id !== 'string' || (scope !== undefined && scope !== 'shared-agents' && scope !== 'profile')) return fail('skill/invalid-request', '导入范围或凭据无效。');
-      return ok(await manager.imports.commit(id, scope as SkillInstallScope | undefined, signal));
+      return ok(await auditedWrite(ctx, { action: 'install', assetType: 'skill' }, () => manager.imports.commit(id, scope as SkillInstallScope | undefined, signal)));
     }
     if (endpoint === 'discard-import') {
       const id = record(payload)?.id;
@@ -115,6 +319,39 @@ async function dispatch(manager: SkillManagementService, marketService: () => Sk
     if (endpoint === 'batch') {
       const input = record(payload); const names = input?.names; const action = input?.action;
       if (!Array.isArray(names) || !names.every(name => typeof name === 'string') || (action !== 'enable' && action !== 'disable' && action !== 'uninstall')) return fail('skill/invalid-request', '批量技能操作无效。');
+      // 启用需要判授权；禁用与卸载始终放行。
+      // 逐条判定：被拒的条目单条失败，其余条目仍按原批量结果返回。
+      if (action === 'enable') {
+        const denied: SkillBatchItemResult[] = [];
+        const allowed: string[] = [];
+        for (const name of names) {
+          try {
+            await requireSkillEnable(ctx, manager, name);
+            allowed.push(name);
+          } catch (error) {
+            if (!(error instanceof AssetGateDenied)) throw error;
+            // 被拒的条目记 denied（带 action 与原因码），不产生 write 事件。
+            auditDenied(ctx, { action: 'enable', assetType: 'skill', assetName: name }, error.code, error.layer);
+            denied.push({ name, ok: false, error: error.code });
+          }
+        }
+        // 批量结果逐条记 write：成功 success、失败 failed 并带原因。
+        const runBatch = async (batchNames: readonly string[]): Promise<{ results: readonly SkillBatchItemResult[] }> => {
+          try {
+            const result = await manager.batch({ names: batchNames, action });
+            for (const item of result.results) {
+              auditWrite(ctx, { action: 'enable', assetType: 'skill', assetName: item.name }, item.ok, item.ok ? undefined : item.error);
+            }
+            return result;
+          } catch (error) {
+            for (const name of batchNames) auditWrite(ctx, { action: 'enable', assetType: 'skill', assetName: name }, false, error);
+            throw error;
+          }
+        };
+        if (!denied.length) return ok(await runBatch(names));
+        const rest = allowed.length ? await runBatch(allowed) : { results: [] as readonly SkillBatchItemResult[] };
+        return ok({ action, results: [...denied, ...rest.results] });
+      }
       return ok(await manager.batch({ names, action }));
     }
     // 技能上架申请：表单字典一次取回；列表与提交的参数在宿主侧校验后再转后台。
@@ -173,25 +410,23 @@ async function dispatch(manager: SkillManagementService, marketService: () => Sk
       const scene = optionalText(record(payload)?.scene); const keyword = optionalText(record(payload)?.keyword);
       const builtin = record(payload)?.builtin;
       if (page === null || pageSize === null || scene === null || keyword === null || (builtin !== undefined && typeof builtin !== 'boolean')) return fail('skill/invalid-request', '技能市场查询参数无效。');
-      return ok(await market().list({ page, pageSize, scene, keyword, ...(typeof builtin === 'boolean' ? { builtin } : {}) }, signal));
+      const result = await market().list({ page, pageSize, scene, keyword, ...(typeof builtin === 'boolean' ? { builtin } : {}) }, signal);
+      return ok({ ...result, items: await visibleAssets(ctx, 'skill', result.items, item => item.id) });
     }
     if (endpoint === 'market-categories') return ok(await market().categories(signal));
     if (endpoint === 'market-index') {
       const refresh = record(payload)?.refresh;
       if (refresh !== undefined && typeof refresh !== 'boolean') return fail('skill/invalid-request', '技能市场索引请求参数无效。');
-      return ok(await market().index(signal, refresh === true));
+      const rows = await market().index(signal, refresh === true);
+      return ok(await visibleAssets(ctx, 'skill', rows, row => row.id));
     }
     if (endpoint === 'market-install' && typeof record(payload)?.id === 'string' && (record(payload)?.id as string).trim()) {
-      return ok(await market().install(record(payload)?.id as string, signal));
-    }
-    if (endpoint === 'market-uninstall') {
-      const input = record(payload);
-      if (typeof input?.id !== 'string' && typeof input?.slug !== 'string') return fail('skill/invalid-request', '技能市场卸载请求无效。');
-      const target: SkillMarketUninstall = {
-        ...(typeof input.id === 'string' ? { id: input.id } : {}),
-        ...(typeof input.slug === 'string' ? { slug: input.slug } : {}),
-      };
-      return ok(await market().uninstall(target, signal));
+      const id = record(payload)?.id as string;
+      const meta = { action: 'install', assetType: 'skill', assetId: id.trim() } as const;
+      return ok(await auditedWrite(ctx, meta, async () => {
+        await requireAsset(ctx, 'skill', id.trim());
+        return market().install(id, signal);
+      }));
     }
     // 详情页说明：宿主下载附件并取出 SKILL.md 正文（md 直读，zip 解包）。
     if (endpoint === 'market-document' && typeof record(payload)?.id === 'string' && (record(payload)?.id as string).trim()) {
@@ -225,18 +460,32 @@ async function dispatch(manager: SkillManagementService, marketService: () => Sk
     if (endpoint === 'set-enabled') {
       const enabled = record(payload)?.enabled;
       if (typeof enabled !== 'boolean') return fail('skill/invalid-request', '启用状态无效。');
-      return ok(await manager.setEnabled(name, enabled));
+      // 启用判授权并记关键写操作；禁用不属于审计动作，直接放行。
+      if (!enabled) return ok(await manager.setEnabled(name, false));
+      const meta = { action: 'enable', assetType: 'skill', assetName: name } as const;
+      return ok(await auditedWrite(ctx, meta, async () => {
+        await requireSkillEnable(ctx, manager, name);
+        return manager.setEnabled(name, true);
+      }));
     }
     if (endpoint === 'install-catalog') {
       const scope = record(payload)?.scope;
       if (scope !== undefined && scope !== 'shared-agents' && scope !== 'profile') return fail('skill/invalid-request', '安装范围无效。');
-      return ok(await manager.installFromCatalog(name, scope as SkillInstallScope | undefined, signal));
+      return ok(await auditedWrite(ctx, { action: 'install', assetType: 'skill', assetName: name }, () => manager.installFromCatalog(name, scope as SkillInstallScope | undefined, signal)));
     }
     if (endpoint === 'dependency-impact') return ok(await manager.dependencyImpact(name));
     if (endpoint === 'uninstall') {
       const expectedImpactRevision = record(payload)?.expectedImpactRevision;
       if (typeof expectedImpactRevision !== 'string') return fail('skill/invalid-request', '卸载前必须确认最新依赖影响。');
-      return ok(await manager.uninstall(name, expectedImpactRevision));
+      try {
+        const receipt = await auditedWrite(ctx, { action: 'uninstall', assetType: 'skill', assetName: name }, () => manager.uninstall(name, expectedImpactRevision));
+        // 本机卸载成功后再补一条资产操作记录；市场来源由安装记录反查，非市场技能自动跳过。
+        return ok({ ...receipt, reported: await reportUninstall(ctx, name) });
+      } catch (error) {
+        // 本机卸载失败也如实上报，但上报失败不影响把本地错误抛给界面。
+        await reportUninstall(ctx, name, error);
+        throw error;
+      }
     }
     return fail('skill/unknown-endpoint', '未知的技能管理操作。');
   } catch (error) {
@@ -308,7 +557,7 @@ export function registerSkillManagementConnection(ctx: Context): void {
         if (text.length > maximumBodyBytes) return json(fail('skill/request-too-large', '技能管理请求过大。'), 413);
         const body = record(JSON.parse(text));
         if (!body) return json(fail('skill/invalid-request', '技能管理请求格式无效。'), 400);
-        return json(await dispatch(manager, marketService, listingService, body.endpoint, body.payload, request.signal));
+        return json(await dispatch(ctx, manager, marketService, listingService, body.endpoint, body.payload, request.signal));
       } catch (error) {
         if (error instanceof SyntaxError) return json(fail('skill/invalid-request', '技能管理请求格式无效。'), 400);
         return json(publicFailure(error));

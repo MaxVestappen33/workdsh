@@ -142,15 +142,6 @@ export class ModelMarketBackend {
     throw new ModelMarketError('model-market/not-found', '未找到该模型。');
   }
 
-  /** 使用/卸载上报：后台当前为预留实现，失败由调用方按「尽力而为」处理。 */
-  async use(id: string, signal?: AbortSignal): Promise<void> {
-    await this.request(channel => channel.post(this.paths.use, { id }, undefined, signal));
-  }
-
-  async unuse(id: string, signal?: AbortSignal): Promise<void> {
-    await this.request(channel => channel.post(this.paths.unuse, { id }, undefined, signal));
-  }
-
   private async request<T>(request: (channel: BackendChannelLike) => Promise<T>): Promise<T> {
     const channel = this.channel();
     if (!channel) throw new ModelMarketError('model-market/unavailable', '当前环境未接入模型市场。');

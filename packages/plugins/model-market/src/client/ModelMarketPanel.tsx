@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { CardSkeleton, cardSkeletonCss, QueryOverlay, queryOverlayCss } from 'workdsh-ui';
 import {
   MODEL_TYPES, installActionLabel, installability,
   type CustomModelDraft, type CustomModelEntry, type ModelMarketDetail, type ModelMarketModel, type ModelMarketPage,
@@ -54,6 +55,7 @@ export function ModelMarketPanel() {
   const [pageNo, setPageNo] = useState(1);
   const [reloadKey, setReloadKey] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [customLoading, setCustomLoading] = useState(false);
   const [busyId, setBusyId] = useState<string>();
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -67,6 +69,7 @@ export function ModelMarketPanel() {
   const [customBusyKey, setCustomBusyKey] = useState<string>();
   const [confirmCustomKey, setConfirmCustomKey] = useState<string>();
 
+  // 可用性只在进入页面时探测一次；未接入时由页面上的「重新检测」手动重试，不做定时轮询。
   useEffect(() => {
     let active = true;
     client.available()
@@ -75,13 +78,6 @@ export function ModelMarketPanel() {
     return () => { active = false; };
   }, [client, availabilityKey]);
 
-  // 登录绑定由身份提供方异步建立：首次检测失败时持续重试，避免设置页先打开就永久停在「未接入」。
-  useEffect(() => {
-    if (available !== false) return;
-    const timer = window.setTimeout(() => setAvailabilityKey(value => value + 1), 5_000);
-    return () => window.clearTimeout(timer);
-  }, [available]);
-
   // 成功提示 3 秒后自动消失；错误提示保留到下一次操作。
   useEffect(() => {
     if (!notice) return;
@@ -89,6 +85,8 @@ export function ModelMarketPanel() {
     return () => window.clearTimeout(timer);
   }, [notice]);
 
+  // 市场列表只在用户主动操作时取数：进入页面、翻页、改筛选/检索、点刷新、添加或移除之后。
+  // 窗口焦点、visibilitychange 等隐式信号不触发任何查询。
   useEffect(() => {
     // 只看本地模型时不需要请求市场接口，避免多余的远程查询。
     if (!available || source === 'custom') return;
@@ -119,14 +117,23 @@ export function ModelMarketPanel() {
   useEffect(() => {
     if (!available) return;
     let active = true;
+    setCustomLoading(true);
     client.customList()
       .then(rows => { if (active) setCustomEntries(rows); })
-      .catch(() => { if (active) setCustomEntries([]); });
-    return () => { active = false; };
+      .catch(() => { if (active) setCustomEntries([]); })
+      .finally(() => { if (active) setCustomLoading(false); });
+    return () => { active = false; setCustomLoading(false); };
   }, [available, client, reloadKey]);
 
   const installed = useMemo(() => new Set(page?.installedIds ?? []), [page]);
-  const refresh = () => setReloadKey(value => value + 1);
+  /**
+   * 刷新：一轮只重取当前展示的数据，单飞——同一轮未结束时再点直接忽略，
+   * 不会因为连点叠出多轮请求。市场模型页签下是一次列表请求 + 一次本地模型请求。
+   */
+  const refresh = () => {
+    if (loading || customLoading) return;
+    setReloadKey(value => value + 1);
+  };
   const changeFilter = (apply: () => void) => {
     setPageNo(1);
     apply();
@@ -398,19 +405,29 @@ export function ModelMarketPanel() {
 
   return (
     <section className="wd-model-market" data-testid="workdsh-model-market">
-      <style>{modelMarketCss}</style>
+      <style>{modelMarketCss + cardSkeletonCss + queryOverlayCss}</style>
       <div className="mm-head">
         <h1 className="mm-title">模型管理</h1>
         <span className="mm-count">
-          市场模型 {page?.total ?? 0} 个{customEntries.length ? ` · 本地模型 ${customEntries.length} 个` : ''}
+          市场模型 {page?.records.length ?? 0} 个{customEntries.length ? ` · 本地模型 ${customEntries.length} 个` : ''}
         </span>
-        <button
-          type="button"
-          className="mm-action install mm-head-add"
-          onClick={() => { setCreating(true); setError(''); }}
-        >
-          ＋ 添加本地模型
-        </button>
+        <div className="mm-head-actions">
+          <button
+            type="button"
+            className="mm-action mm-refresh"
+            disabled={loading || customLoading}
+            onClick={refresh}
+          >
+            刷新
+          </button>
+          <button
+            type="button"
+            className="mm-action install"
+            onClick={() => { setCreating(true); setError(''); }}
+          >
+            添加本地模型
+          </button>
+        </div>
       </div>
       <div className="mm-tools">
         <input
@@ -498,13 +515,21 @@ export function ModelMarketPanel() {
             })}
           </div>
           )}
+          {/* 只看本地模型时市场区不渲染，刷新反馈落在本地列表这一块。 */}
+          {source === 'custom' && customLoading ? <QueryOverlay /> : null}
         </div>
       ) : null}
-      {source !== 'custom' && loading && !page ? <div className="mm-loading" role="status">正在加载模型市场…</div> : null}
+      {source === 'custom' && customLoading && !customEntries.length ? (
+        <div className="mm-loading" role="status">正在读取本地模型…</div>
+      ) : null}
+      <div className="mm-content">
+      {source !== 'custom' && loading && !page ? (
+        <div className="mm-grid" role="status" aria-label="正在加载模型市场…"><CardSkeleton variant="model" count={PAGE_SIZE} /></div>
+      ) : null}
       {source !== 'custom' && page ? (
         <GroupHead
           title="模型市场"
-          count={page.total}
+          count={page.records.length}
           expanded={!marketCollapsed}
           onToggle={() => setMarketCollapsed(value => !value)}
         />
@@ -600,14 +625,14 @@ export function ModelMarketPanel() {
       ) : null}
       {source !== 'custom' && !loading && page && page.records.length === 0 ? (
         <div className="mm-empty">
-          <strong>{page.total ? '没有匹配的模型' : '暂无已授权的模型'}</strong>
-          <span>{page.total ? '换个关键词或清空筛选条件后重试。' : '请联系管理员在后台授权模型后再刷新。'}</span>
+          <strong>未查询到数据</strong>
         </div>
       ) : null}
-      {source === 'custom' && !customEntries.length ? (
+      {source !== 'custom' && loading && page ? <QueryOverlay /> : null}
+      </div>
+      {source === 'custom' && !customEntries.length && !customLoading ? (
         <div className="mm-empty">
-          <strong>还没有本地模型</strong>
-          <span>点击右上角「＋ 添加本地模型」创建。</span>
+          <strong>未查询到数据</strong>
         </div>
       ) : null}
     </section>

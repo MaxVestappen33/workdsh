@@ -4,6 +4,12 @@
  * 请求头、地址拼接、信封解开与错误透传都由通用后台通道（workdshBackend）负责。
  */
 import { unzipSync } from 'fflate';
+import {
+  ASSET_SIGNATURE_REASONS,
+  AssetSignatureError,
+  parseAssetSignatureEnvelope,
+  type AssetSignatureEnvelope,
+} from 'workdsh-asset-signature';
 
 /** 业务场景字典项：字段名沿用后台字典对象（DictModel）。 */
 export interface SkillScene {
@@ -114,10 +120,16 @@ export interface SkillMarketAuthorized {
 export interface SkillMarketPaths {
   readonly list: string;
   readonly categories: string;
-  /** 安装接口：安装时调用。后台当前是预留实现（只记录安装行为，本机安装待下一轮接入）。 */
-  readonly install: string;
-  /** 卸载接口：卸载时调用。后台当前是预留实现（只记录卸载行为，本机卸载待下一轮接入）。 */
-  readonly uninstall: string;
+  /**
+   * 资产操作记录接口：安装/卸载完成后实时上报一条事件。
+   * 未配置时用内置默认路径（见 DEFAULT_MARKET_PATHS）。
+   */
+  readonly report?: string;
+  /**
+   * 资产签名接口：安装技能时取签名 envelope。
+   * 未配置时安装直接拒绝（fail closed），不会当成「无签名可放行」。
+   */
+  readonly signature?: string;
 }
 
 /**
@@ -232,19 +244,9 @@ const pathOf = (value: unknown, label: string): string => {
 const pathsOf = (value: SkillMarketPaths): SkillMarketPaths => ({
   list: pathOf(value?.list, '列表'),
   categories: pathOf(value?.categories, '业务场景'),
-  install: pathOf(value?.install, '安装'),
-  uninstall: pathOf(value?.uninstall, '卸载'),
+  ...(value?.report ? { report: pathOf(value.report, '资产操作记录') } : {}),
+  ...(value?.signature ? { signature: pathOf(value.signature, '资产签名') } : {}),
 });
-
-/**
- * 安装/卸载的请求体。后台接口是 `@RequestBody JSONObject`（参数在请求体，不是 query），
- * 同时给出市场条目 id 与技能标识（skillNameEn），让后台少做一次关联。
- * 字段名为待对齐项，后台实现后可调整；clientType 与 MCP 市场保持同一口径。
- */
-const reportBody = (id?: string, slug?: string): Record<string, string> => {
-  const key = text(id); const name = text(slug);
-  return { ...(key ? { id: key } : {}), ...(name ? { skillNameEn: name } : {}), clientType: 'workdsh-desktop' };
-};
 
 /**
  * 通用通道错误按 name + code 判定，而不是 instanceof：通道与市场可能在
@@ -440,23 +442,31 @@ export class SkillMarketClient {
   }
 
   /**
-   * 安装上报：调用后台的安装接口（`/skill/installSkill`）。后台当前是预留实现——
-   * 只记录安装行为、不回传业务字段，因此这里不解析响应体，也不因为返回体缺少字段而判失败。
+   * 资产签名：按后台编号取签名 envelope（assetType 本期固定 skill）。
+   * 未配置签名接口、响应结构不符或后台报错都抛错——安装流程据此 fail closed。
    */
-  async reportInstall(id: string, slug?: string, signal?: AbortSignal): Promise<void> {
-    const key = text(id);
-    if (!key) throw new SkillMarketRequestError('skill/market-rejected', '缺少技能标识，无法安装。');
-    await this.request('POST', this.paths.install, undefined, reportBody(key, slug), signal);
-  }
-
-  /**
-   * 卸载上报：调用后台的卸载接口（`/skill/unInstallSkill`），参数形态与安装上报一致。
-   * 市场条目 id 与技能标识至少要有一个；调用方负责决定上报失败时的取舍。
-   */
-  async reportUninstall(target: { readonly id?: string; readonly slug?: string }, signal?: AbortSignal): Promise<void> {
-    const id = text(target.id); const slug = text(target.slug);
-    if (!id && !slug) throw new SkillMarketRequestError('skill/market-rejected', '缺少技能标识，无法卸载。');
-    await this.request('POST', this.paths.uninstall, undefined, reportBody(id, slug), signal);
+  async signature(assetId: string, signal?: AbortSignal): Promise<AssetSignatureEnvelope> {
+    const id = text(assetId);
+    if (!id) throw new SkillMarketRequestError(ASSET_SIGNATURE_REASONS.missing, '缺少技能标识，无法获取资产签名。');
+    if (!this.paths.signature)
+      throw new SkillMarketRequestError(ASSET_SIGNATURE_REASONS.missing, '当前环境未配置资产签名接口，已拒绝安装。');
+    const query = new URLSearchParams({ assetType: 'skill', assetId: id });
+    const value = await this.request('GET', this.paths.signature, query, undefined, signal);
+    try {
+      const envelope = parseAssetSignatureEnvelope(value);
+      if (envelope.assetType !== 'skill') {
+        throw new SkillMarketRequestError(
+          ASSET_SIGNATURE_REASONS.assetMismatch,
+          `签名返回的资产类型是 ${envelope.assetType}，当前请求的是技能。`,
+        );
+      }
+      return envelope;
+    } catch (error) {
+      if (error instanceof SkillMarketRequestError) throw error;
+      if (error instanceof AssetSignatureError)
+        throw new SkillMarketRequestError(error.code, error.message);
+      throw new SkillMarketRequestError(ASSET_SIGNATURE_REASONS.invalid, '资产签名返回的数据无法识别，已拒绝安装。');
+    }
   }
 
   /** 只做协议转发：市场不实现请求头、地址拼接与信封解开。 */

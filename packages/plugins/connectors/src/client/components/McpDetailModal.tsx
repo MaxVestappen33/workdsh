@@ -21,7 +21,10 @@ type LocalDetailProps = {
 
 /** 本地实例详情：真实状态、来源、分类、工具数、资源与 URI 模板，以及启停与移除入口。 */
 export function LocalMcpDetailModal({ row, category, market, busy, toggling, onClose, onToggle, onRemove, onUninstall }: LocalDetailProps) {
-  const state = row ? (row.enabled ? connectorStateLabels[row.state] : '已停用') : '';
+  const blocked = row?.authState !== undefined;
+  const state = row ? (blocked
+    ? (row.authState === 'revoked' ? '已失效' : '未授权')
+    : row.enabled ? connectorStateLabels[row.state] : '已停用') : '';
   const actionText = row?.enabled ? '停用' : '启用';
   const togglingText = `正在${actionText}…`;
   /** 已连接的实例只剩「资源未统计」这类说明，不是故障；只有真连不上时才用错误样式。 */
@@ -39,10 +42,11 @@ export function LocalMcpDetailModal({ row, category, market, busy, toggling, onC
             <div className="detail-actions">
               {/* 按钮统一叫「卸载」：市场安装的实例先向后台上报再移除本机，内置实例只做本机移除。 */}
               <Button tone="danger" className="danger" disabled={busy || toggling} onClick={() => (row.originId ? onUninstall(row) : onRemove(row))}>卸载</Button>
-              <button type="button" className="switch" role="switch" aria-checked={row.enabled} aria-label={`${actionText} ${row.title}`} disabled={busy || toggling} onClick={() => onToggle(row, !row.enabled)} />
+              <button type="button" className="switch" role="switch" aria-checked={row.enabled && !blocked} aria-label={`${actionText} ${row.title}`} disabled={busy || toggling || blocked} onClick={() => onToggle(row, !row.enabled)} />
             </div>
           </div>
           <p className="detail-summary">{row.description || 'MCP 服务'}</p>
+          {row.authState && row.authReason ? <p className="auth-reason">{row.authReason}</p> : null}
           {toggling ? (
             <div className="install-bar" role="progressbar" aria-label={`正在${actionText} ${row.title}`}>
               <i className="install-bar-fill" />

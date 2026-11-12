@@ -5,6 +5,7 @@
     {"name":"workdsh-plugin-skills","directory":"packages/plugins/skills"},
     {"name":"workdsh-plugin-experts","directory":"packages/plugins/experts"},
     {"name":"workdsh-plugin-connectors","directory":"packages/plugins/connectors"},
+    {"name":"workdsh-plugin-asset-gate","directory":"packages/plugins/asset-gate"},
     {"name":"workdsh-plugin-model-market","directory":"packages/plugins/model-market"},
     {"name":"workdsh-plugin-prompts","directory":"packages/plugins/prompts"},
     {"name":"workdsh-plugin-office","directory":"packages/plugins/office"},

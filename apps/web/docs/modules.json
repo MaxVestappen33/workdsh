@@ -13,6 +13,32 @@
     ]
   },
   {
+    "path": "../../packages/asset-manifest",
+    "title": "资产安装清单",
+    "status": "in_progress",
+    "directories": [
+      "src",
+      "tests"
+    ],
+    "moduleVersion": "0.1",
+    "requirements": [
+      "R03"
+    ]
+  },
+  {
+    "path": "../../packages/asset-signature",
+    "title": "资产签名验签",
+    "status": "in_progress",
+    "directories": [
+      "src",
+      "tests"
+    ],
+    "moduleVersion": "0.1",
+    "requirements": [
+      "R03"
+    ]
+  },
+  {
     "path": "../../packages/ui",
     "title": "共享展示组件",
     "status": "implemented",
@@ -134,6 +160,19 @@
     "moduleVersion": "0.1",
     "requirements": [
       "R06"
+    ]
+  },
+  {
+    "path": "../../packages/plugins/asset-gate",
+    "title": "资产闸门",
+    "status": "in_progress",
+    "directories": [
+      "src",
+      "tests"
+    ],
+    "moduleVersion": "0.1",
+    "requirements": [
+      "R03"
     ]
   },
   {

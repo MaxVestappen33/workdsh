@@ -14,14 +14,15 @@ export const modelMarketCss = `
 .wd-model-market .mm-head{display:flex;align-items:baseline;gap:10px;margin:0 0 14px}
 .wd-model-market .mm-title{margin:0;font-family:var(--dsw-font-family);font-size:18px;line-height:25px;font-weight:600}
 .wd-model-market .mm-count{color:var(--dsw-alias-label-tertiary);font-size:12px}
-.wd-model-market .mm-head-add{margin-left:auto}
-.wd-model-market .mm-local{margin-bottom:18px}
+/* 右上角操作组：刷新与添加本地模型并排。 */
+.wd-model-market .mm-head-actions{display:flex;align-items:center;align-self:center;gap:8px;margin-left:auto}
+.wd-model-market .mm-local{position:relative;margin-bottom:18px}
 .wd-model-market .mm-local-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
 .wd-model-market .mm-group-head{display:inline-flex;align-items:center;gap:6px;padding:2px 0;border:0;background:transparent;color:var(--dsw-alias-label-primary)}
 .wd-model-market .mm-group-head svg{flex:none;color:var(--dsw-alias-label-tertiary)}
-.wd-model-market .mm-group-head .mm-section-title{margin:0}
+.wd-model-market .mm-group-head .mm-section-title{margin:0;font-weight:400}
 .wd-model-market .mm-group-head:hover svg{color:var(--dsw-alias-label-secondary)}
-.wd-model-market .mm-count-pill{display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:28px;padding:0 8px;border-radius:8px;background:color-mix(in srgb,var(--dsw-alias-label-primary) 8%,transparent);color:var(--dsw-alias-label-primary);font-size:14px;font-weight:600;line-height:1}
+.wd-model-market .mm-count-pill{display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:28px;padding:0 8px;border-radius:8px;background:color-mix(in srgb,var(--dsw-alias-label-primary) 8%,transparent);color:var(--dsw-alias-label-primary);font-size:14px;font-weight:400;line-height:1}
 .wd-model-market .mm-card-static{cursor:default}
 
 .wd-model-market .mm-tools{display:flex;align-items:center;gap:8px;margin-bottom:16px}
@@ -33,6 +34,8 @@ export const modelMarketCss = `
 @media (max-width:560px){.wd-model-market .mm-tools{flex-wrap:wrap}}
 .wd-model-market .mm-select{height:32px;padding:0 10px;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary)}
 .wd-model-market .mm-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+/* 模型市场区：覆盖层只罩这一块，标题、搜索与筛选保持可点。 */
+.wd-model-market .mm-content{position:relative;min-height:120px}
 @media (max-width:560px){.wd-model-market .mm-grid{grid-template-columns:minmax(0,1fr)}}
 .wd-model-market .mm-card{display:flex;flex-direction:column;gap:7px;min-width:0;padding:12px;border:1px solid var(--dsw-alias-border-l2);border-radius:14px;background:var(--dsw-alias-bg-layer-2);text-align:left;cursor:pointer;transition:border-color .12s ease,background .12s ease}
 .wd-model-market .mm-card:hover{border-color:var(--dsw-alias-border-l2);background:var(--dsw-alias-interactive-bg-hover)}
@@ -57,15 +60,19 @@ export const modelMarketCss = `
 .wd-model-market .mm-state.on{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 14%,transparent);color:var(--dsw-alias-state-success-primary);font-weight:600}
 .wd-model-market .mm-badge{display:inline-flex;align-items:center;padding:0 6px;border-radius:999px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-secondary);font-size:11px;line-height:18px;white-space:nowrap}
 .wd-model-market .mm-badge.default{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 16%,transparent);color:var(--dsw-alias-brand-primary);font-weight:600}
-.wd-model-market .mm-action{display:inline-flex;align-items:center;justify-content:center;gap:4px;flex:none;min-width:58px;height:28px;padding:0 10px;border:1px solid var(--dsw-alias-brand-primary);border-radius:999px;background:transparent;color:var(--dsw-alias-brand-primary);font-size:12px;font-weight:600;white-space:nowrap}
+.wd-model-market .mm-action{display:inline-flex;align-items:center;justify-content:center;gap:4px;flex:none;min-width:58px;height:28px;padding:0 10px;border:1px solid var(--dsw-alias-brand-primary);border-radius:999px;background:transparent;color:var(--dsw-alias-brand-primary);font-size:12px;font-weight:400;white-space:nowrap}
 .wd-model-market .mm-action.install{background:var(--dsw-alias-brand-primary);color:#fff}
 .wd-model-market .mm-action.uninstall{border-color:color-mix(in srgb,var(--dsw-alias-state-error-primary) 55%,transparent);color:var(--dsw-alias-state-error-primary)}
 .wd-model-market .mm-action.uninstall:hover:not(:disabled){background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent)}
+/* 刷新复用 .mm-action 的盒模型（高度/内边距/圆角/字号/边框全部同源），只把配色换成白底黑字。 */
+.wd-model-market .mm-refresh{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-border-l2)}
+.wd-model-market .mm-refresh:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
+.wd-model-market .mm-refresh:disabled{color:var(--dsw-alias-label-dimmed)}
 .wd-model-market .mm-spinner{flex:none;width:12px;height:12px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:wd-mm-spin .7s linear infinite}
 @keyframes wd-mm-spin{to{transform:rotate(360deg)}}
 .wd-model-market .mm-card-confirm{display:flex;align-items:center;gap:6px;padding:8px;border:1px solid color-mix(in srgb,var(--dsw-alias-state-error-primary) 45%,transparent);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-state-error-primary);font-size:12px}
 .wd-model-market .mm-card-confirm span{min-width:0;margin-right:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.wd-model-market .mm-card-confirm button{flex:none;white-space:nowrap;height:26px;padding:0 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-size:12px}
+.wd-model-market .mm-card-confirm button{flex:none;white-space:nowrap;height:26px;padding:0 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-size:12px;font-weight:400}
 .wd-model-market .mm-card-confirm button.danger{border-color:var(--dsw-alias-state-error-primary);background:var(--dsw-alias-state-error-primary);color:#fff}
 
 /* 页面级提示吸顶：长页面滚动到任何位置操作时，错误/成功信息都保持可见。 */
@@ -77,7 +84,7 @@ export const modelMarketCss = `
 .wd-model-market .mm-loading,.wd-model-market .mm-empty{padding:36px 12px;text-align:center;color:var(--dsw-alias-label-tertiary)}
 .wd-model-market .mm-empty strong{display:block;margin-bottom:6px;color:var(--dsw-alias-label-secondary);font-weight:500}
 .wd-model-market .mm-pager{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:18px;color:var(--dsw-alias-label-tertiary);font-size:12px}
-.wd-model-market .mm-pager button{height:28px;padding:0 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);font-size:12px}
+.wd-model-market .mm-pager button{height:28px;padding:0 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);font-size:12px;font-weight:400}
 
 .wd-model-market .mm-back{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;padding:0;border:0;background:transparent;color:var(--dsw-alias-label-secondary);font-size:14px;line-height:22px;font-weight:400}
 .wd-model-market .mm-back:hover{color:var(--dsw-alias-label-primary)}
@@ -100,7 +107,7 @@ export const modelMarketCss = `
 .wd-model-market .mm-block dt{color:var(--dsw-alias-label-tertiary)}
 .wd-model-market .mm-block dd{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0;color:var(--dsw-alias-label-primary)}
 .wd-model-market .mm-confirm{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 12px;border:1px solid #ff746c;border-radius:10px;color:#ff746c;font-size:12px}
-.wd-model-market .mm-confirm button{height:28px;padding:0 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-size:12px}
+.wd-model-market .mm-confirm button{height:28px;padding:0 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-size:12px;font-weight:400}
 .wd-model-market .mm-confirm button.danger{border-color:#ff746c;background:#ff746c;color:#fff}
 .wd-model-market .mm-hint{color:var(--dsw-alias-label-tertiary);font-size:12px}
 
@@ -122,13 +129,13 @@ export const modelMarketCss = `
 .wd-model-market .mm-model-toggle:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .wd-model-market .mm-remove-model{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:0;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-tertiary)}
 .wd-model-market .mm-remove-model:hover{background:var(--dsw-alias-interactive-bg-hover-danger);color:var(--dsw-alias-state-error-primary)}
-.wd-model-market .mm-add-model{align-self:flex-start;display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 10px;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font-size:12px;line-height:18px}
+.wd-model-market .mm-add-model{align-self:flex-start;display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 10px;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font-size:12px;line-height:18px;font-weight:400}
 .wd-model-market .mm-add-model:hover{background:var(--dsw-alias-interactive-bg-hover)}
-.wd-model-market .mm-discover-trigger{display:inline-flex;align-items:center;gap:4px;padding:0;border:0;background:transparent;color:var(--dsw-alias-brand-primary);font-size:12px;font-weight:500;white-space:nowrap}
+.wd-model-market .mm-discover-trigger{display:inline-flex;align-items:center;gap:4px;padding:0;border:0;background:transparent;color:var(--dsw-alias-brand-primary);font-size:12px;font-weight:400;white-space:nowrap}
 .wd-model-market .mm-discover{display:flex;flex-direction:column;gap:8px;padding:10px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-1)}
 .wd-model-market .mm-discover-tools{display:flex;align-items:center;gap:8px}
 .wd-model-market .mm-discover-tools .mm-search{flex:1;min-width:0;height:30px}
-.wd-model-market .mm-discover-link{padding:0;border:0;background:transparent;color:var(--dsw-alias-brand-primary);font-size:12px;font-weight:500;white-space:nowrap}
+.wd-model-market .mm-discover-link{padding:0;border:0;background:transparent;color:var(--dsw-alias-brand-primary);font-size:12px;font-weight:400;white-space:nowrap}
 .wd-model-market .mm-discover-list{display:flex;flex-direction:column;max-height:220px;overflow:auto}
 .wd-model-market .mm-discover-item{display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid var(--dsw-alias-border-l2);font-size:12px;color:var(--dsw-alias-label-primary);cursor:pointer}
 .wd-model-market .mm-discover-item:last-child{border-bottom:0}

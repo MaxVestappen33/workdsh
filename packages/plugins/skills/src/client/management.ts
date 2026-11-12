@@ -75,7 +75,8 @@ export function createSkillManagementClient(ctx: Context, lifetime?: AbortSignal
     writeResource: (request: SkillResourceWriteRequest) => invoke<ManagedSkillResource>('write-resource', request),
     setEnabled: (name: string, enabled: boolean) => invoke<SkillMutationReceipt>('set-enabled', { name, enabled }),
     dependencyImpact: (name: string) => invoke<SkillDependencyImpact>('dependency-impact', { name }),
-    uninstall: (name: string, expectedImpactRevision: string) => invoke<SkillMutationReceipt>('uninstall', { name, expectedImpactRevision }),
+    /** 卸载：本机移除成功后宿主同步上报市场卸载记录，reported 表示后台是否已记账。 */
+    uninstall: (name: string, expectedImpactRevision: string) => invoke<SkillMutationReceipt & { reported?: boolean }>('uninstall', { name, expectedImpactRevision }),
     batch: (names: readonly string[], action: SkillBatchAction) => invoke<SkillBatchResult>('batch', { names, action }),
     listTrash: () => invoke<readonly TrashedSkillSummary[]>('trash-list', {}),
     restore: (id: string) => invoke<SkillMutationReceipt>('restore', { id }),
@@ -95,8 +96,6 @@ export function createSkillManagementClient(ctx: Context, lifetime?: AbortSignal
     marketIndex: (refresh?: boolean) => invoke<readonly SkillMarketAuthorized[]>('market-index', refresh === undefined ? {} : { refresh }),
     /** 安装到本机：宿主下载市场附件后走官方导入链路（共享范围），返回技能名与落地状态。 */
     marketInstall: (id: string) => invoke<SkillMarketInstallResult>('market-install', { id }),
-    /** 卸载上报：后台记账失败不阻断本机卸载，reported 表示上报是否成功。 */
-    marketUninstall: (target: { id?: string; slug?: string }) => invoke<{ reported: boolean }>('market-uninstall', target),
     /** 详情页说明：附件信息与 SKILL.md 正文（zip 附件由宿主解包）。 */
     marketDocument: (id: string) => invoke<SkillMarketDocument>('market-document', { id }),
     /** 上架申请表单字典：技能类型、审批状态、来源节点、业务场景树一次取回。 */

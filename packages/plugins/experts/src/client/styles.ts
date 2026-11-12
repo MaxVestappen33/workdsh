@@ -31,7 +31,6 @@ export const expertsCss = `${modalCss}
 .wd-experts .section-head{padding-bottom:16px}
 .wd-experts .section-head h1{margin:0}
 .wd-experts .section-head h1{font-size:25px;line-height:34px;font-weight:600}
-.wd-experts .section-actions{display:flex;gap:8px;align-items:center}
 .wd-experts .back-center{margin:0 0 20px}
 .wd-experts .back-center{border:0;background:transparent;color:var(--dsw-alias-label-tertiary);padding-left:0}
 .wd-experts .work-types{display:flex;gap:24px}
@@ -77,6 +76,8 @@ export const expertsCss = `${modalCss}
 .wd-experts .counts.error{color:var(--dsw-alias-state-error-primary)}
 /* Loading line only: centered like the skill market footer, so no placeholder cards. */
 .wd-experts .remote-status{display:flex;justify-content:center;padding:22px 0 6px;color:var(--dsw-alias-label-tertiary);font-size:12px}
+/* 列表/卡片区：覆盖层只罩这一块，顶部页签、搜索与筛选保持可点。 */
+.wd-experts .expert-content{position:relative;min-height:120px}
 .wd-experts .grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}
 .wd-experts .card{position:relative;min-width:0;display:flex;flex-direction:column;gap:12px}
 .wd-experts .card{border-radius:17px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);min-height:150px;padding:24px}
@@ -103,6 +104,7 @@ export const expertsCss = `${modalCss}
 .wd-experts .badge{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary)}
 .wd-experts .badge.ready{color:var(--dsw-alias-state-success-primary);border-color:var(--dsw-alias-state-success-primary)}
 .wd-experts .badge.warn{color:var(--dsw-alias-state-warn-primary);border-color:var(--dsw-alias-state-warn-primary)}
+.wd-experts .card p.auth-reason{margin:6px 0 0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
 .wd-experts .badge.bad{color:var(--dsw-alias-state-error-primary);border-color:var(--dsw-alias-state-warn-primary)}
 .wd-experts .pin{margin-left:auto}
 .wd-experts .pin{background:transparent;border:0;min-height:28px;padding:2px 6px;font-size:15px;color:var(--dsw-alias-label-dimmed)}

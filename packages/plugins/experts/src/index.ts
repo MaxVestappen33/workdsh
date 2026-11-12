@@ -73,6 +73,15 @@ export async function applyExpertsHost(ctx: Context, options: ExpertsManagerOpti
 
 /** The consumer declares the services provided by the manager child Fibers. */
 function applyIntegration(ctx: Context, options: ExpertsManagerOptions = {}): void {
+  // 一次性回填：为旧专家/专家团记录补写安装清单。幂等、失败不阻断启动，只记日志与条数。
+  // 服务由本 Fiber 的 inject 提供，不能在父 Fiber 里直接读 ctx.workdshExperts。
+  void ctx.workdshExperts.backfillInstallManifests().then(result => {
+    if (result.written || result.failed) {
+      ctx.logger.info(`专家：安装清单回填完成（扫描 ${result.scanned}，写入 ${result.written}，失败 ${result.failed}）。`);
+    }
+  }).catch(error => {
+    ctx.logger.warn(`专家：安装清单回填中断：${error instanceof Error ? error.message : String(error)}。`);
+  });
   registerExpertExecutionGuard(ctx, options);
   registerExpertsConnection(ctx);
   registerExpertManagementTools(ctx);

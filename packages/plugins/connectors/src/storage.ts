@@ -14,8 +14,22 @@ export const connectorDefinitionSchema = z.object({
   authorizationCredentialRef: z.string().regex(/^[A-Z_][A-Z0-9_]*$/).max(128).optional(),
   /** 市场分类名称（安装时取市场 bizSceneList 文案，多值全部保留），落盘供「我的本地 MCP」展示与按分类筛选。自建实例为 undefined。 */
   categories: z.array(z.string().min(1).max(64)).max(8).optional(),
-  /** 来源市场条目 id。存在即表示该实例由市场安装而来，用于「已安装」判定与卸载。 */
+  /** 来源市场条目 id。保留用于「已安装」判定与卸载上报，但**不再作为闸门判定依据**。 */
   originId: z.string().max(128).optional(),
+  /**
+   * 安装清单（连接器没有资产目录，清单写在记录值里）。
+   * `assetId` 是后台资产编号，显式写在记录值中，不再只依赖 `originId` 或表的键。
+   */
+  installManifest: z.object({
+    assetType: z.literal('mcp'),
+    assetId: z.string().max(128).optional(),
+    source: z.enum(['market', 'builtin', 'local']),
+    installedAt: z.string().min(1),
+    version: z.string().max(64).optional(),
+    // 定义摘要（serverName/transport/command/args/url/title 的稳定 sha256）。
+    // 连接器没有文件清单；旧记录没有该字段时视为「无法校验」，不假装校验过。
+    digest: z.string().max(128).optional(),
+  }).optional(),
   /**
    * 市场原始 serviceId。仅当市场值超出本地 serverName 约束（[A-Za-z0-9_-]{1,32}）时落盘，
    * 卸载上报仍回传原始值；两者一致时不写。

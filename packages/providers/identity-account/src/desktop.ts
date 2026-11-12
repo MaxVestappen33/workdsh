@@ -47,6 +47,8 @@ export default class AccountDesktopIdentity extends Service implements IdentityS
   membership(organizationId: string, principalId: string) {
     return this.identity?.membership(organizationId, principalId);
   }
+  /** 设备实例标识：Desktop 生成的设备文件里的稳定 id，资产操作记录上报按它区分设备。 */
+  deviceId() { return this.authority.config.deviceId; }
   async resolve(evidence?: IdentityResolutionContext, signal?: AbortSignal) {
     if (!this.identity) throw new Error('Account Desktop authentication required');
     return this.identity.resolve(evidence, signal);

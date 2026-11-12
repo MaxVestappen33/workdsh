@@ -30,7 +30,15 @@ export interface SkillPluginOptions extends SkillManagerOptions {
 }
 
 export function applySkillsHost(ctx: Context, options: SkillPluginOptions = {}): void {
-  new SkillManager(ctx, options);
+  const manager = new SkillManager(ctx, options);
+  // 一次性回填：为已安装但没有清单的技能补写清单。幂等、失败不阻断启动，只记日志与条数。
+  void manager.backfillInstallManifests().then(result => {
+    if (result.written || result.failed) {
+      ctx.logger.info(`技能：安装清单回填完成（扫描 ${result.scanned}，写入 ${result.written}，失败 ${result.failed}）。`);
+    }
+  }).catch(error => {
+    ctx.logger.warn(`技能：安装清单回填中断：${error instanceof Error ? error.message : String(error)}。`);
+  });
   // 技能市场依赖宿主提供的通用后台通道（workdshBackend）：通道或绑定缺失时市场整体不可用，
   // 不影响插件加载；接口路径由宿主经插件选项注入。
   new SkillMarketService(ctx, options.market ?? {});

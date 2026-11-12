@@ -1,0 +1,18 @@
+{
+  "assetType": "skill",
+  "assetId": "2120058437695619074",
+  "payloadVersion": "workdsh-asset-signature-v1",
+  "algo": "Ed25519",
+  "keyId": "2026a",
+  "digest": "754c9f8bf84a07d6ad2dfa4b05305b27f310ceb43203b26510079dbf5567ec94",
+  "signature": "fNy+2s915PwgFCNW4rm1wRqFZFo/yT8gaUDqK2Or3bxUg7FSxz9jYH0Ysi00oqBprbhsmc92xLQ0PBbFMZ6dAA==",
+  "fileCount": 1,
+  "files": [
+    {
+      "path": "SKILL.md",
+      "size": 1761,
+      "sha256": "f474f6e2daa61875f4a1e346a83bf566e934ef9469de7b04ca2d137b66630723"
+    }
+  ],
+  "signedAt": "2026-11-10 15:38:15.918"
+}

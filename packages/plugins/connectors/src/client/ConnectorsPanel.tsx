@@ -1,4 +1,4 @@
-import { Button, Icon, Input, Modal } from 'workdsh-ui';
+import { Button, CardSkeleton, cardSkeletonCss, Icon, Input, Modal, QueryOverlay, queryOverlayCss } from 'workdsh-ui';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots';
 import type { MarketCategory, MarketItem } from '../market.js';
@@ -29,6 +29,8 @@ const MARKET_SCROLL_THRESHOLD = 160;
 const NOTICE_DURATION_MS = 3_000;
 /** 市场关键词防抖：关键词由服务端筛选，等输入停顿这么久再发请求，避免每敲一键打一次后台。 */
 const MARKET_QUERY_DEBOUNCE_MS = 250;
+/** 回到前台时 focus 与 visibilitychange 会连着触发：这个窗口内只重取一轮。 */
+const REVALIDATE_DEDUPE_MS = 1_000;
 /**
  * 本机安装任务的轮询间隔。依赖下载在 Host 侧后台执行，装多久由内网仓库和包体积决定，
  * 这里只负责定期取状态：装完刷新列表，失败把原因留在卡片上，不做时间上的失败判定。
@@ -130,13 +132,14 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
     // 重置会作废进行中的「加载更多」（它的 finally 因代号不匹配不会再清标志）。
     setMarketMore(false);
     try {
-      const [dictionary, listed] = await Promise.all([
-        management.marketCategories(),
-        management.marketList(marketListQuery(next, 1, dictionaryRef.current)),
-      ]);
+      // 分类字典是静态参考数据：首次取到后常驻，后续刷新与筛选不再重复请求。
+      const dictionary = dictionaryRef.current.length ? dictionaryRef.current : await management.marketCategories();
+      const listed = await management.marketList(marketListQuery(next, 1, dictionary));
       if (generationRef.current !== generation) return;
-      dictionaryRef.current = dictionary;
-      setMarketDict(dictionary);
+      if (!dictionaryRef.current.length) {
+        dictionaryRef.current = dictionary;
+        setMarketDict(dictionary);
+      }
       setMarket(startMarketList(listed));
     } catch (cause) {
       if (generationRef.current !== generation) return;
@@ -166,6 +169,27 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
   useEffect(() => {
     if (!marketOn && tab === 'market') setTab('local');
   }, [marketOn, tab]);
+
+  // 窗口重新获得焦点/切回前台：只重取当前页签的数据。
+  // 市场请求会先走宿主侧触发式快照校验，后台刚授权/撤权的 MCP 立即可见。
+  const revalidateRef = useRef<() => void>(() => {});
+  revalidateRef.current = () => {
+    if (tab === 'market' && marketOn) void loadMarket(filter);
+    else void refresh();
+  };
+  /** 最近一次 focus/visibilitychange 重取的时间：同一次回到前台只触发一轮。 */
+  const lastRevalidateAtRef = useRef(0);
+  useEffect(() => {
+    const revalidate = () => {
+      if (document.visibilityState !== 'visible') return;
+      const now = Date.now();
+      if (now - lastRevalidateAtRef.current < REVALIDATE_DEDUPE_MS) return;
+      lastRevalidateAtRef.current = now;
+      revalidateRef.current();
+    };
+    window.addEventListener('focus', revalidate); document.addEventListener('visibilitychange', revalidate);
+    return () => { window.removeEventListener('focus', revalidate); document.removeEventListener('visibilitychange', revalidate); };
+  }, []);
 
   // 轮询器读 ref 里的最新任务快照：安装态自身的变化不该重置计时器。
   useEffect(() => {
@@ -435,7 +459,7 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
     matchText(searchTextOf(row))
     && (!activeCategories.length || (row.categories ?? []).some(label => activeCategories.includes(label))));
   // 市场不做任何本地过滤：分类与关键词都由服务端筛选，界面只负责拼接分页结果。
-  const total = tab === 'local' ? rows.length : market.total;
+  // 展示数量一律取授权二次过滤后的真实条数，后台 total 只用于分页判断，不参与展示。
   // 已安装判定：本机实例的 originId（市场条目 id）或 serverName（市场 serviceId）。
   const localOrigins = new Set(rows.flatMap(row => [row.originId, row.serverName]).filter((value): value is string => Boolean(value)));
   const isInstalled = (entry: MarketItem) => localOrigins.has(entry.originId) || localOrigins.has(entry.serverName);
@@ -445,7 +469,15 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
   const selectedTitles = rows.filter(row => selected.includes(row.id)).map(row => row.title);
   const searchPlaceholder = '请输入MCP名称搜索...';
   const empty = tab === 'local' ? !busy && !visibleLocal.length : !marketBusy && !marketError && !market.items.length;
-  const marketReady = tab !== 'market' || (!marketError && !marketBusy);
+  /**
+   * 首屏骨架：只有当前页签还没有任何数据且正在加载时才用；
+   * 已有数据刷新时保留卡片，改用覆盖层，避免把正在看的内容换成占位卡。
+   */
+  const localSkeleton = tab === 'local' && busy && !rows.length;
+  const marketSkeleton = tab === 'market' && marketBusy && !market.items.length;
+  const skeletonVisible = localSkeleton || marketSkeleton;
+  /** 覆盖层只统计当前页签的列表请求；骨架已表达加载态时不叠加。 */
+  const overlayVisible = (tab === 'local' ? busy : marketBusy) && !skeletonVisible;
 
   return (
     <section
@@ -457,7 +489,7 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
         if (node.scrollHeight - node.scrollTop - node.clientHeight < MARKET_SCROLL_THRESHOLD) void loadMoreMarket();
       }}
     >
-      <style>{connectorCss}</style>
+      <style>{connectorCss + cardSkeletonCss + queryOverlayCss}</style>
       <header className="cap-header">
         <button type="button" className="nav-toggle" onClick={toggleNavigation} aria-label="切换导航">导航</button>
         {capabilityTabs.map(([key, label]) => {
@@ -515,8 +547,8 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
         </button>
         {marketOn ? (
           <button type="button" className={tab === 'market' ? 'active' : ''} aria-current={tab === 'market' ? 'page' : undefined} onClick={() => switchTab('market')}>
-            MCP市场{/* 数量恒取市场总数，不随当前页签变化；首次加载完成前不显示 0，避免与「正在加载市场…」冲突 */}
-            {marketBusy && !market.total ? null : <i className="count" title="市场上架 MCP 数量">{market.total}</i>}
+            MCP市场{/* 数量取授权过滤后的条数；首次加载完成前不显示 0，避免与「正在加载市场…」冲突 */}
+            {marketBusy && !market.items.length ? null : <i className="count" title="当前可见的市场 MCP 数量">{market.items.length}</i>}
           </button>
         ) : null}
       </nav>
@@ -541,66 +573,65 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
         </p>
       ) : null}
 
-      {tab === 'local' && visibleLocal.length ? (
-        <div className="grid">
-          {visibleLocal.map(row => (
-            <LocalMcpCard
-              key={row.id}
-              row={row}
-              category={categoryOf(row)}
-              market={market.items}
-              busy={busy}
-              toggling={togglingId === row.id}
-              batchMode={batch}
-              selected={selected.includes(row.id)}
-              onOpen={setDetailId}
-              onToggle={(target, enabled) => void toggle(target, enabled)}
-              onRemove={target => setConfirm({ row: target, mode: 'remove' })}
-              onSelect={toggleSelected}
-            />
-          ))}
-        </div>
-      ) : null}
-      {tab === 'market' && marketBusy ? (
-        <div className="market-foot" role="status"><span className="muted">正在加载市场…</span></div>
-      ) : null}
-      {tab === 'market' && marketReady && market.items.length ? (
-        <div className="grid">
-          {market.items.map(entry => (
-            <MarketMcpCard
-              key={entry.originId}
-              entry={entry}
-              category={marketCategoryText(entry, marketDict)}
-              installed={isInstalled(entry)}
-              {...installStateOf(entry.originId)}
-              busy={busy}
-              onOpen={setMarketDetailId}
-              onInstall={entry => void installMarket(entry)}
-            />
-          ))}
-        </div>
-      ) : null}
-      {tab === 'market' && marketReady && market.items.length ? (
-        <div className="market-foot" role="status">
-          {marketMore
-            ? <span className="muted">正在加载更多…</span>
-            : market.hasMore
-              ? <span className="muted">继续向下滚动加载更多</span>
-              : <span className="muted">已加载全部 {total} 个 MCP</span>}
-        </div>
-      ) : null}
-      {empty ? (
-        <div className="empty">
-          <strong>{total ? '没有匹配的 MCP' : tab === 'local' ? '还没有本地 MCP' : '市场暂无可用的 MCP'}</strong>
-          <span className="muted">
-            {total
-              ? '换个关键词，或点「全部」清空筛选。'
-              : tab === 'local'
-                ? '点「＋ 添加 MCP」创建本机实例，或到「MCP 市场」订阅后安装到本机。'
-                : '可以稍后重试，或联系管理员确认市场上架情况。'}
-          </span>
-        </div>
-      ) : null}
+      <div className="panel-content">
+        {tab === 'local' && visibleLocal.length ? (
+          <div className="grid">
+            {visibleLocal.map(row => (
+              <LocalMcpCard
+                key={row.id}
+                row={row}
+                category={categoryOf(row)}
+                market={market.items}
+                busy={busy}
+                toggling={togglingId === row.id}
+                batchMode={batch}
+                selected={selected.includes(row.id)}
+                onOpen={setDetailId}
+                onToggle={(target, enabled) => void toggle(target, enabled)}
+                onRemove={target => setConfirm({ row: target, mode: 'remove' })}
+                onSelect={toggleSelected}
+              />
+            ))}
+          </div>
+        ) : null}
+        {localSkeleton ? (
+          <div className="grid" role="status" aria-label="正在读取本地 MCP…"><CardSkeleton variant="tile" count={12} /></div>
+        ) : null}
+        {tab === 'market' && !marketError && market.items.length ? (
+          <div className="grid">
+            {market.items.map(entry => (
+              <MarketMcpCard
+                key={entry.originId}
+                entry={entry}
+                category={marketCategoryText(entry, marketDict)}
+                installed={isInstalled(entry)}
+                {...installStateOf(entry.originId)}
+                busy={busy}
+                onOpen={setMarketDetailId}
+                onInstall={entry => void installMarket(entry)}
+              />
+            ))}
+          </div>
+        ) : null}
+        {marketSkeleton ? (
+          <div className="grid" role="status" aria-label="正在加载 MCP 市场…"><CardSkeleton variant="tile" count={12} /></div>
+        ) : null}
+        {tab === 'market' && !marketError && market.items.length ? (
+          <div className="market-foot" role="status">
+            {marketMore
+              ? <span className="muted">正在加载更多…</span>
+              : market.hasMore
+                ? <span className="muted">继续向下滚动加载更多</span>
+                : <span className="muted">已加载全部 {market.items.length} 个 MCP</span>}
+          </div>
+        ) : null}
+        {empty ? (
+          <div className="empty">
+            <strong>未查询到数据</strong>
+          </div>
+        ) : null}
+        {overlayVisible ? <QueryOverlay /> : null}
+      </div>
 
       <LocalMcpDetailModal
         row={detail}

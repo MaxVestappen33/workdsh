@@ -13,6 +13,7 @@ import type {
 import { ExpertsError } from '../domain/values.js';
 import type { ExpertsManager } from './experts-manager.js';
 import { EXPERT_IMPORT_LIMITS, buildExport } from './portability.js';
+import { filterVisible } from './visibility.js';
 
 /**
  * Exact Fetch transport for the expert Host service (D04 / P1-02).
@@ -53,9 +54,100 @@ const oneOf = <T extends string>(value: unknown, allowed: readonly T[]): T | und
 
 function publicFailure(error: unknown): ConnectionRpcResult<never> {
   if (error instanceof DOMException && error.name === 'AbortError') return fail('experts/request-cancelled', '操作已取消。');
+  if (error instanceof AssetGateDenied) return fail(error.code, error.message);
   if (error instanceof ExpertsError) return { ok: false, error: { code: error.code, message: error.message, details: error.details ?? {} } };
   const code = error instanceof Error && error.message.startsWith('experts/') ? error.message : 'experts/internal';
   return fail(code, '专家操作失败，请重试。');
+}
+
+/**
+ * 资产闸门是可选宿主能力：缺失、关闭或该类型未开启时完全透明。
+ * 拒绝时保留稳定原因码（gate/denied-*）与集中维护的文案，UI 据此区分「未授权」与「后台失败」。
+ */
+type GateAssetType = 'skill' | 'mcp' | 'expert' | 'expert_group' | 'model' | 'prompt';
+/** 审计动作：数据层只上报这五种关键写操作。 */
+type GateAuditAction = 'install' | 'enable' | 'restore' | 'uninstall' | 'delete';
+interface AssetGateLike {
+  enabled(assetType: GateAssetType): boolean;
+  decide(request: { assetType: GateAssetType; assetId: string; usage: 'read' | 'use' | 'write' }): Promise<{ allow: boolean; reason: string; message: string }>;
+  /** 拿不到后台编号时的拒绝结果：原因码与文案由闸门统一维护。 */
+  unlisted(): { reason: string; message: string };
+  /** 拒绝审计只入队；闸门关闭或上报异常都由实现自行吞掉。 */
+  auditDenied?(input: {
+    readonly layer: 'data_layer';
+    readonly reasonCode: string;
+    readonly action?: GateAuditAction;
+    readonly assetType?: string;
+    readonly assetId?: string;
+    readonly assetName?: string;
+  }): void;
+  /** 关键写操作审计；同样只入队、不阻断业务。 */
+  auditWrite?(input: {
+    readonly action: GateAuditAction;
+    readonly assetType?: string;
+    readonly assetId?: string;
+    readonly assetName?: string;
+    readonly succeeded: boolean;
+    readonly reasonCode?: string;
+    readonly failReason?: string;
+  }): void;
+}
+const assetGate = (ctx: Context): AssetGateLike | undefined => ctx.reflect.get('workdshAssetGate') as AssetGateLike | undefined;
+
+class AssetGateDenied extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message);
+    this.name = 'AssetGateDenied';
+  }
+}
+
+/** 写操作审计的共同元数据。 */
+interface WriteAuditMeta {
+  readonly action: GateAuditAction;
+  readonly assetType?: string;
+  readonly assetId?: string;
+  readonly assetName?: string;
+}
+
+/** 审计异常一律吞掉，绝不影响专家管理业务。 */
+function auditWrite(ctx: Context, meta: WriteAuditMeta, succeeded: boolean, failure?: unknown): void {
+  try {
+    assetGate(ctx)?.auditWrite?.({
+      ...meta,
+      succeeded,
+      ...(succeeded ? {} : { failReason: failure instanceof Error ? failure.message : String(failure ?? '') }),
+    });
+  } catch {
+    // 审计是可选旁路，失败不向调用方抛出。
+  }
+}
+
+function auditDenied(ctx: Context, meta: WriteAuditMeta, reasonCode: string): void {
+  try {
+    assetGate(ctx)?.auditDenied?.({ layer: 'data_layer', reasonCode, ...meta });
+  } catch {
+    // 同上。
+  }
+}
+
+/** 成功记 write/success，失败记 write/failed，被闸门拒绝时记 denied（带 action 与原因码）。 */
+async function auditedWrite<T>(ctx: Context, meta: WriteAuditMeta, run: () => Promise<T>): Promise<T> {
+  try {
+    const value = await run();
+    auditWrite(ctx, meta, true);
+    return value;
+  } catch (error) {
+    if (error instanceof AssetGateDenied) auditDenied(ctx, meta, error.code);
+    else auditWrite(ctx, meta, false, error);
+    throw error;
+  }
+}
+
+async function requireAsset(ctx: Context, assetType: GateAssetType, assetId: string): Promise<void> {
+  const gate = assetGate(ctx);
+  if (!gate?.enabled(assetType)) return;
+  const decision = await gate.decide({ assetType, assetId, usage: 'write' });
+  if (!decision.allow) throw new AssetGateDenied(decision.reason, decision.message);
 }
 
 /** Boundary sanitizer: keep only well-typed definition fields so the domain layer validates instead of crashing. */
@@ -153,7 +245,7 @@ function listQuery(payload: unknown): ExpertListQuery {
   };
 }
 
-async function dispatch(manager: ExpertsManager, actor: ActorContext, rawEndpoint: unknown, payload: unknown, signal: AbortSignal): Promise<ConnectionRpcResult<unknown>> {
+async function dispatch(ctx: Context, manager: ExpertsManager, actor: ActorContext, rawEndpoint: unknown, payload: unknown, signal: AbortSignal): Promise<ConnectionRpcResult<unknown>> {
   if (typeof rawEndpoint !== 'string') return fail('experts/invalid-request', '专家管理操作无效。');
   const endpoint = rawEndpoint as Endpoint;
   const input = record(payload);
@@ -164,6 +256,8 @@ async function dispatch(manager: ExpertsManager, actor: ActorContext, rawEndpoin
         if (!expertId || (input?.scope !== 'available' && input?.scope !== 'equipped')) return fail('experts/invalid-request', '技能目录请求无效。');
         return ok(await manager.listSkills(actor, expertId, input.scope, signal));
       }
+      // 本地列表不做授权过滤：自建草稿要照常可见，用户才能编辑并提交上架申请。
+      // 授权只在启用/可用性切换与市场列表二次过滤处判定。
       case 'list':
         return ok(await manager.list(actor, listQuery(payload), signal));
       case 'get': {
@@ -221,8 +315,26 @@ async function dispatch(manager: ExpertsManager, actor: ActorContext, rawEndpoin
         const availability = oneOf(input?.availability, ['enabled', 'disabled', 'archived'] as const);
         const context = mutationContext(payload);
         if (!expertId || !availability || !context) return fail('experts/invalid-request', '可用性变更请求无效。');
+        // 启用只读安装清单：market + 后台编号 → 判授权；builtin → 放行；
+        // 无清单或 local → 按「未上架/未登记」拒绝。禁用与归档始终放行。
         const token = str(record(input?.proof)?.token);
-        return ok(await manager.setAvailability(actor, expertId, availability, context, token ? { token } : undefined, signal));
+        if (availability !== 'enabled') {
+          return ok(await manager.setAvailability(actor, expertId, availability, context, token ? { token } : undefined, signal));
+        }
+        const meta = { action: 'enable', assetType: 'expert', assetId: expertId } as const;
+        return ok(await auditedWrite(ctx, meta, async () => {
+          const gate = assetGate(ctx);
+          if (gate && (gate.enabled('expert') || gate.enabled('expert_group'))) {
+            const manifest = manager.installManifestOf(expertId);
+            if (manifest?.source === 'market' && manifest.assetId) {
+              if (gate.enabled(manifest.assetType)) await requireAsset(ctx, manifest.assetType, manifest.assetId);
+            } else if (manifest?.source !== 'builtin') {
+              const denial = gate.unlisted();
+              throw new AssetGateDenied(denial.reason, denial.message);
+            }
+          }
+          return manager.setAvailability(actor, expertId, 'enabled', context, token ? { token } : undefined, signal);
+        }));
       }
       case 'set-preference': {
         const expertId = str(input?.expertId);
@@ -293,13 +405,21 @@ async function dispatch(manager: ExpertsManager, actor: ActorContext, rawEndpoin
         const bizScene = str(input?.bizScene);
         const pageNo = typeof input?.pageNo === 'number' && Number.isFinite(input.pageNo) ? input.pageNo : undefined;
         const pageSize = typeof input?.pageSize === 'number' && Number.isFinite(input.pageSize) ? input.pageSize : undefined;
-        return ok(await manager.remoteList(actor, {
+        const result = await manager.remoteList(actor, {
           ...(expertType === undefined ? {} : { expertType }),
           ...(keyword === undefined ? {} : { keyword }),
           ...(bizScene === undefined ? {} : { bizScene }),
           ...(pageNo === undefined ? {} : { pageNo }),
           ...(pageSize === undefined ? {} : { pageSize }),
-        }, signal));
+        }, signal);
+        // 二次过滤：未授权的条目不下发给 UI；市场行本身就是后台资产，编号直接取后台字段。
+        return ok({
+          ...result,
+          items: await filterVisible(ctx.reflect.get('workdshAssetGate') as AssetGateLike | undefined, result.items, item => ({
+            assetType: item.expertType === 'agent' ? 'expert' : 'expert_group',
+            manifest: () => ({ source: 'market' as const, assetId: item.remoteId }),
+          })),
+        });
       }
       case 'install': {
         const expertType = oneOf(input?.expertType, ['agent', 'team'] as const);
@@ -307,13 +427,17 @@ async function dispatch(manager: ExpertsManager, actor: ActorContext, rawEndpoin
         const context = mutationContext(payload);
         if (!expertType || !remoteId || !context) return fail('experts/invalid-request', '安装请求缺少专家类型、后台标识或幂等操作标识。');
         const version = str(input?.version);
-        return ok(await manager.installRemote(actor, { expertType, remoteId, ...(version === undefined ? {} : { version }) }, context, signal));
+        const assetType = expertType === 'agent' ? 'expert' : 'expert_group';
+        return ok(await auditedWrite(ctx, { action: 'install', assetType, assetId: remoteId }, async () => {
+          await requireAsset(ctx, assetType, remoteId);
+          return manager.installRemote(actor, { expertType, remoteId, ...(version === undefined ? {} : { version }) }, context, signal);
+        }));
       }
       case 'uninstall': {
         const remoteKey = str(input?.remoteKey);
         const context = mutationContext(payload);
         if (!remoteKey || !context) return fail('experts/invalid-request', '卸载请求缺少安装标识或幂等操作标识。');
-        return ok(await manager.uninstallRemote(actor, remoteKey, context, signal));
+        return ok(await auditedWrite(ctx, { action: 'uninstall', assetId: remoteKey }, () => manager.uninstallRemote(actor, remoteKey, context, signal)));
       }
       case 'installations':
         return ok(await manager.listInstallations(actor, signal));
@@ -343,7 +467,7 @@ async function dispatch(manager: ExpertsManager, actor: ActorContext, rawEndpoin
         const expertId = str(input?.expertId);
         const context = mutationContext(payload);
         if (!expertId || !context) return fail('experts/invalid-request', '删除请求缺少专家标识或幂等操作标识。');
-        return ok(await manager.deleteExpert(actor, expertId, context, signal));
+        return ok(await auditedWrite(ctx, { action: 'delete', assetId: expertId }, () => manager.deleteExpert(actor, expertId, context, signal)));
       }
       case 'my-listings': {
         const expertType = oneOf(input?.expertType, ['agent', 'team'] as const);
@@ -428,7 +552,7 @@ export function registerExpertsConnection(ctx: Context): void {
         const body = record(JSON.parse(text));
         if (!body) return json(fail('experts/invalid-request', '专家管理请求格式无效。'), 400);
         const actor = await ctx.workdshIdentity.resolve(undefined, request.signal);
-        return json(await dispatch(manager, actor, body.endpoint, body.payload, request.signal));
+        return json(await dispatch(ctx, manager, actor, body.endpoint, body.payload, request.signal));
       } catch (error) {
         if (error instanceof SyntaxError) return json(fail('experts/invalid-request', '专家管理请求格式无效。'), 400);
         return json(publicFailure(error));

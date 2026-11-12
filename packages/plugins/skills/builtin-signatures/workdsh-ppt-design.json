@@ -1,0 +1,63 @@
+{
+  "assetType": "skill",
+  "assetId": "2120056368439934977",
+  "payloadVersion": "workdsh-asset-signature-v1",
+  "algo": "Ed25519",
+  "keyId": "2026a",
+  "digest": "c30319dc108a90c14fdec3ec19a22470bd01a7de0c4f261d7bc346251b8d1125",
+  "signature": "6qGKcPBbqcZRsgqpt7qPsxOvgeNnxgKrocVdeq0cBtHElkoDz37aGZzCVJb75AT3+BFFs5zirkFaO6oCZzaRCQ==",
+  "fileCount": 10,
+  "files": [
+    {
+      "path": "SKILL.md",
+      "size": 4836,
+      "sha256": "2a31a97da9bbb23d8e744793d7e348b7bdf6fcceea94b8970ea3f967628d047e"
+    },
+    {
+      "path": "references/charts-and-delivery.md",
+      "size": 1919,
+      "sha256": "0d6db7f144243d1af012cb0d4685f4df5779ff6178461e31b33a5914a11b2fff"
+    },
+    {
+      "path": "references/design-principle.md",
+      "size": 1026,
+      "sha256": "d140986c14ba66cbe85bc7dd8c713732bd54e456625dd8f0df5d055a66b935a0"
+    },
+    {
+      "path": "references/designs/design-principle.academic.md",
+      "size": 356,
+      "sha256": "464fc6a077bd225a666a329a8fe56195a99362bca478d3fb5f636c1cab4db3b1"
+    },
+    {
+      "path": "references/designs/design-principle.consulting.md",
+      "size": 386,
+      "sha256": "e6a3fc22f707dc9ddacd5ec3b383abf369831c85d924e7964717cd8ec010da3a"
+    },
+    {
+      "path": "references/designs/design-principle.redgold.md",
+      "size": 640,
+      "sha256": "ccf77026cc457e1daa22fed04c121c1befd34d19c2e104345681d7eacdd1e7dd"
+    },
+    {
+      "path": "references/human-alignment.md",
+      "size": 3070,
+      "sha256": "de82e33f647037a9dcee454848024dcc2e8db657bd04e3c29305a95065fc0ca0"
+    },
+    {
+      "path": "references/story-and-design.md",
+      "size": 2700,
+      "sha256": "5ca6f65207ab06246416192cc22a04e70befaad26a73c968f989c4dc6f17de90"
+    },
+    {
+      "path": "references/story-principle.md",
+      "size": 876,
+      "sha256": "bc450f47203e9a15cccc161f2572b231d2d3372a6206c43e82cc2031a7596d23"
+    },
+    {
+      "path": "references/workdsh-execution.md",
+      "size": 1113,
+      "sha256": "45665522ec01960026e429a5d14420a36715c77fa523b9782a7702dbe6fed8d4"
+    }
+  ],
+  "signedAt": "2026-11-10 15:30:02.593"
+}

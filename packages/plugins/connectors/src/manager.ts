@@ -1,11 +1,11 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { Context, Service } from '@deepseek-ai/cordis';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import { credentialRef } from '@deepseek-ai/dsh-credentials';
 import * as McpClient from '@deepseek-ai/dsh-mcp-client';
 import type { KvTable } from '@deepseek-ai/dsh-storage-domain';
-import type { ConnectorConfigView, ConnectorInput, ConnectorManagementService, ConnectorState, ConnectorSummary, ConnectorTool } from './shared.js';
+import type { ConnectorAssetLookup, ConnectorConfigView, ConnectorInput, ConnectorManagementService, ConnectorState, ConnectorSummary, ConnectorTool } from './shared.js';
 import { requestHeadersOf } from './shared.js';
 import { installEmptyCursorCompat } from './mcp-compat.js';
 import { connectorDefinitionSchema, connectorSelectionsDomainSpec, connectorsDomainSpec, type ConnectorDefinition, type ConnectorSelection } from './storage.js';
@@ -13,17 +13,48 @@ import { connectorDefinitionSchema, connectorSelectionsDomainSpec, connectorsDom
 declare module '@deepseek-ai/cordis' { interface Context { workdshConnectors: ConnectorManagementService; } }
 
 const serverPath = fileURLToPath(new URL('./example-server.mjs', import.meta.url));
-/** The bundled example belongs to the running package, not its installation path. */
-export function connectorProcess(definition: Pick<ConnectorDefinition, 'id' | 'serverName' | 'transport' | 'command' | 'args' | 'authorizationCredentialRef'>) {
-  const bundledExample = definition.id === 'workdsh-example' && definition.serverName === 'workdsh-example'
+/**
+ * 随包内置的示例连接器：它由运行中的包提供，不是用户自建，也没有后台编号。
+ * 闸门据此区分内置与自建，避免把内置连接器当成「未登记」拒绝。
+ */
+export function isBundledConnector(definition: Pick<ConnectorDefinition, 'id' | 'serverName' | 'transport' | 'command' | 'args' | 'authorizationCredentialRef'>): boolean {
+  return definition.id === 'workdsh-example' && definition.serverName === 'workdsh-example'
     && definition.transport === 'stdio' && !definition.authorizationCredentialRef
     && definition.args?.length === 1 && /(?:^|[\\/])example-server\.mjs$/.test(definition.args[0]!)
     && /(?:^|[\\/])node(?:\.exe)?$/.test(definition.command ?? '');
-  return bundledExample ? { command: process.execPath, args: [serverPath] }
+}
+/** The bundled example belongs to the running package, not its installation path. */
+export function connectorProcess(definition: Pick<ConnectorDefinition, 'id' | 'serverName' | 'transport' | 'command' | 'args' | 'authorizationCredentialRef'>) {
+  return isBundledConnector(definition) ? { command: process.execPath, args: [serverPath] }
     : { command: definition.command!, args: [...(definition.args ?? [])] };
 }
 type ChildFiber = { dispose(): Promise<void> };
 type Runtime = { child?: ChildFiber; state: ConnectorState; diagnostic?: string };
+
+/** 闸门服务的最小结构面：插件未接入时全部退回「无闸门」行为。 */
+interface AssetGateProbe {
+  enabled(assetType: string): boolean;
+  revoked(assetType: string, assetId: string): boolean;
+  clearRevoked(assetType: string, assetId: string): void;
+  revocationReason(): { readonly reason: string; readonly message: string };
+  decide(request: { readonly assetType: string; readonly assetId: string; readonly usage: string }):
+    Promise<{ readonly allow: boolean; readonly message: string }>;
+}
+
+/**
+ * 连接器没有资产目录，只能校验「定义摘要」：对来源定义的可执行字段求稳定 sha256。
+ * 用 JSON 数组而非对象序列化，避免字段顺序变化引起误报。
+ */
+function definitionDigest(definition: Pick<ConnectorDefinition, 'serverName' | 'transport' | 'command' | 'args' | 'url' | 'title'>): string {
+  return createHash('sha256').update(JSON.stringify([
+    definition.serverName,
+    definition.transport,
+    definition.command ?? null,
+    definition.args ?? [],
+    definition.url ?? null,
+    definition.title,
+  ])).digest('hex');
+}
 type JsonRecord = Record<string, unknown>;
 const record = (value: unknown): JsonRecord | undefined => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as JsonRecord : undefined;
 /** 把官方工具 schema 投影为界面展示用的工具信息（含入参的必填标记与说明）。 */
@@ -110,9 +141,11 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
     // 出厂不预置任何 MCP 定义：本地列表只由用户添加或市场安装产生，随包示例必须显式开启种子。
     if (this.options.seedExample === true && !domain.global.get().seededExample) {
       const now = new Date().toISOString();
+      // 随包示例属于内置资产：没有后台编号也要留下清单，否则闸门开启后会被当成自建拒绝。
       await this.definitions.put('workdsh-example', {
         id: 'workdsh-example', title: 'WorkDSH MCP 示例', description: '可查询业务目录，并通过 MCP 资源与 URI 模板读取示例资料。',
         serverName: 'workdsh-example', transport: 'stdio', command: process.execPath, args: [serverPath], enabled: true,
+        installManifest: { assetType: 'mcp', source: 'builtin', installedAt: now },
         createdAt: now, updatedAt: now,
       });
       await domain.global.set({ seededExample: true });
@@ -151,7 +184,18 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
       const headers = inputHeaders(input);
       const authorizationCredentialRef = headers ? this.credentialName(normalized.serverName) : undefined;
       if (headers && authorizationCredentialRef) await this.ctx.credentials.set(refFor(authorizationCredentialRef), JSON.stringify(headers));
-      const definition: ConnectorDefinition = { id, ...normalized, ...(authorizationCredentialRef ? { authorizationCredentialRef } : {}), enabled: true, createdAt: now, updatedAt: now };
+      const definition: ConnectorDefinition = {
+        id, ...normalized,
+        // 连接器没有资产目录：清单写进记录值，市场装下来的把后台编号显式记在 assetId。
+        installManifest: {
+          assetType: 'mcp',
+          ...(normalized.originId ? { assetId: normalized.originId } : {}),
+          source: normalized.originId ? 'market' : 'local',
+          installedAt: now,
+          digest: definitionDigest(normalized),
+        },
+        ...(authorizationCredentialRef ? { authorizationCredentialRef } : {}), enabled: true, createdAt: now, updatedAt: now,
+      };
       await this.table().put(id, definition); this.runtimes.set(id, { state: 'discovering' });
       await this.start(definition).catch(() => undefined);
       this.reapplyRestrictions();
@@ -167,7 +211,9 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
       const authorizationCredentialRef = current.authorizationCredentialRef ?? (headers ? this.credentialName(normalized.serverName) : undefined);
       if (authorizationCredentialRef && headers) await this.ctx.credentials.set(refFor(authorizationCredentialRef), JSON.stringify(headers));
       const next: ConnectorDefinition = { ...current, ...normalized, command: normalized.command, args: normalized.args, url: normalized.url,
-        authorizationCredentialRef, updatedAt: new Date().toISOString() };
+        authorizationCredentialRef, updatedAt: new Date().toISOString(),
+        // 定义变更后同步刷新摘要，否则下一次启用会把正常修改误判为「被篡改」。
+        ...(current.installManifest ? { installManifest: { ...current.installManifest, digest: definitionDigest({ ...current, ...normalized }) } } : {}) };
       await this.table().put(id, next); this.runtimes.set(id, { state: next.enabled ? 'discovering' : 'disabled' });
       if (next.enabled) await this.start(next).catch(() => undefined);
       this.reapplyRestrictions();
@@ -177,21 +223,127 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
 
   async remove(id: string): Promise<void> {
     await this.enqueue(async () => {
-      this.definition(id); await this.stop(id, false); await this.table().delete(id); this.runtimes.delete(id);
+      const current = this.definition(id); await this.stop(id, false); await this.table().delete(id); this.runtimes.delete(id);
+      this.clearGateMark('mcp', current.installManifest?.assetId);
       await this.removeFromSelections(id); this.reapplyRestrictions();
     });
   }
 
   async setEnabled(id: string, enabled: boolean): Promise<ConnectorSummary> {
     return this.enqueue(async () => {
-      const current = this.definition(id); if (enabled === current.enabled) return this.summary(current);
+      const current = this.definition(id); if (enabled === current.enabled) {
+        // 用户手动启用即视为覆盖闸门的自动禁用；同值时也要清掉历史撤权标记。
+        if (enabled) this.clearGateMark('mcp', current.installManifest?.assetId);
+        return this.summary(current);
+      }
       if (!enabled) { await this.stop(id, false); await this.removeFromSelections(id); }
       const next = { ...current, enabled, updatedAt: new Date().toISOString() };
       await this.table().put(id, next); this.runtimes.set(id, { state: enabled ? 'discovering' : 'disabled' });
-      if (enabled) await this.start(next).catch(() => undefined);
+      if (enabled) {
+        this.clearGateMark('mcp', next.installManifest?.assetId);
+        await this.start(next).catch(() => undefined);
+      }
       this.reapplyRestrictions();
       return this.summary(next);
     });
+  }
+
+  /** 撤权协调：已安装且来源为市场、带后台编号的连接器。只读安装清单，不猜来源。 */
+  marketAssets(): readonly { readonly localId: string; readonly assetId: string }[] {
+    const rows: { localId: string; assetId: string }[] = [];
+    for (const [, definition] of this.table().entries()) {
+      const manifest = definition.installManifest;
+      if (manifest?.source === 'market' && manifest.assetId) rows.push({ localId: definition.id, assetId: manifest.assetId });
+    }
+    return rows;
+  }
+
+  /**
+   * 账本变化后重算运行态：被撤销的连接器停进程并移出会话选择，恢复的按用户设置重新启动。
+   * 只在目标状态与当前运行态不同时动作，避免每次快照同步都重启连接。
+   */
+  async applyGateState(): Promise<void> {
+    return this.enqueue(async () => {
+      let touched = false;
+      for (const [, definition] of this.table().entries()) {
+        const gated = this.gated(definition);
+        const desired = definition.enabled && !gated;
+        const runtime = this.runtime(definition.id);
+        const running = runtime.state === 'ready' || runtime.state === 'discovering' || runtime.state === 'offline';
+        if (!desired && running) {
+          await this.stop(definition.id, false);
+          await this.removeFromSelections(definition.id);
+          touched = true;
+        } else if (desired && runtime.state === 'disabled') {
+          runtime.state = 'discovering';
+          await this.start(definition).catch(() => undefined);
+          touched = true;
+        }
+      }
+      if (touched) this.reapplyRestrictions();
+    });
+  }
+
+  /**
+   * 启用前定义摘要校验：
+   * - `ok`：有摘要且与当前定义一致；
+   * - `unverifiable`：旧记录没有摘要（如实告知，不假装校验过）；
+   * - `modified`：摘要不一致，按「被修改」拒绝。
+   */
+  verifyDefinitionIntegrity(id: string): 'ok' | 'unverifiable' | 'modified' {
+    const definition = this.definition(id);
+    const expected = definition.installManifest?.digest;
+    if (!expected) return 'unverifiable';
+    return definitionDigest(definition) === expected ? 'ok' : 'modified';
+  }
+
+  /**
+   * 一次性回填：为没有安装清单的连接器补写清单（幂等、失败不阻断启动）。
+   * 来源按既有记录推定：`originId` → market（后台编号写进 assetId）；随包内置示例 → builtin；其余 → local。
+   */
+  async backfillInstallManifests(): Promise<{ scanned: number; written: number; failed: number }> {
+    let scanned = 0; let written = 0; let failed = 0;
+    for (const [id, definition] of this.table().entries()) {
+      scanned += 1;
+      if (definition.installManifest) continue;
+      try {
+        const manifest = definition.originId
+          ? { assetType: 'mcp' as const, assetId: definition.originId, source: 'market' as const, installedAt: definition.createdAt }
+          : { assetType: 'mcp' as const, source: isBundledConnector(definition) ? 'builtin' as const : 'local' as const, installedAt: definition.createdAt };
+        await this.table().put(id, { ...definition, installManifest: manifest });
+        written += 1;
+      } catch (error) {
+        failed += 1;
+        this.ctx.logger.warn(`连接器：回填安装清单失败（${definition.title}）：${error instanceof Error ? error.message : String(error)}。`);
+      }
+    }
+    return { scanned, written, failed };
+  }
+
+  /**
+   * 按 MCP 工具名反查连接器记录的安装清单。
+   *
+   * 工具名由本模块生成，形如 `mcp__<serverName>__<tool>`；这里只做内存表精确匹配，
+   * 不建连、不探活、不解析凭据。存在多个前缀命中的记录时取 serverName 最长的一个，
+   * 避免 `a` 与 `a__b` 这类命名互相遮蔽。
+   */
+  connectorAssetForTool(toolName: string): ConnectorAssetLookup {
+    try {
+      let matched: ConnectorDefinition | undefined;
+      for (const [, definition] of this.table().entries()) {
+        if (!toolName.startsWith(`mcp__${definition.serverName}__`)) continue;
+        if (!matched || definition.serverName.length > matched.serverName.length) matched = definition;
+      }
+      if (!matched) return { found: false };
+      return {
+        found: true,
+        bundled: isBundledConnector(matched),
+        ...(matched.installManifest ? { manifest: matched.installManifest } : {}),
+      };
+    } catch {
+      // 存储域尚未打开（初始化中）：当作没有该记录，放行后由工具自身报未知工具。
+      return { found: false };
+    }
   }
 
   /** 未显式选择过的会话默认带上全部可用连接器；显式保存过就按保存值（含显式清空的空数组）。 */
@@ -251,12 +403,45 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
 
   private async summary(definition: ConnectorDefinition, signal?: AbortSignal): Promise<ConnectorSummary> {
     const health = await this.health(definition, signal);
+    const gate = this.gateProbe();
+    let authState: 'unauthorized' | 'revoked' | undefined;
+    let authReason: string | undefined;
+    if (gate?.enabled('mcp') && definition.installManifest?.source === 'market' && definition.installManifest.assetId) {
+      const assetId = definition.installManifest.assetId;
+      if (gate.revoked('mcp', assetId)) {
+        authState = 'revoked'; authReason = gate.revocationReason().message;
+      } else {
+        const decision = await gate.decide({ assetType: 'mcp', assetId, usage: 'use' });
+        if (!decision.allow) { authState = 'unauthorized'; authReason = decision.message; }
+      }
+    }
+    // 被撤权的连接器对外表现为停用（运行时已在 applyGateState 中停掉），
+    // 但不改写记录里的用户启用位，恢复授权后可自动还原。
+    const gated = authState === 'revoked';
     return { id: definition.id, title: definition.title, description: definition.description, serverName: definition.serverName,
-      transport: definition.transport, scope: 'shared', enabled: definition.enabled, state: health.state, toolNames: health.toolNames,
+      transport: definition.transport, scope: 'shared', enabled: definition.enabled && !gated, state: gated ? 'disabled' : health.state, toolNames: health.toolNames,
       tools: health.tools, resourceCount: health.resourceCount, resourceTemplateCount: health.resourceTemplateCount, lastCheckedAt: new Date().toISOString(),
       ...(definition.originId ? { originId: definition.originId } : {}), categories: definition.categories ?? [],
+      ...(definition.installManifest ? { installManifest: definition.installManifest } : {}),
       ...(definition.marketServiceId ? { marketServiceId: definition.marketServiceId } : {}),
+      ...(authState ? { authState, ...(authReason ? { authReason } : {}) } : {}),
       ...(health.diagnostic ? { diagnostic: health.diagnostic } : {}) };
+  }
+
+  private gateProbe(): AssetGateProbe | undefined {
+    try { return this.ctx.reflect.get('workdshAssetGate') as AssetGateProbe | undefined; } catch { return undefined; }
+  }
+
+  /** 是否因授权失效被闸门自动禁用；只对 market 来源且带编号的资产生效。 */
+  private gated(definition: ConnectorDefinition): boolean {
+    const manifest = definition.installManifest;
+    if (manifest?.source !== 'market' || !manifest.assetId) return false;
+    try { return this.gateProbe()?.revoked('mcp', manifest.assetId) === true; } catch { return false; }
+  }
+
+  private clearGateMark(assetType: string, assetId: string | undefined): void {
+    if (!assetId) return;
+    try { this.gateProbe()?.clearRevoked(assetType, assetId); } catch { /* 闸门不可用不影响主流程 */ }
   }
 
   private async health(definition: ConnectorDefinition, signal?: AbortSignal): Promise<{ state: ConnectorState; toolNames: string[]; tools: ConnectorTool[]; resourceCount: number; resourceTemplateCount: number; diagnostic?: string }> {

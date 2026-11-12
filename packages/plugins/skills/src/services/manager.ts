@@ -4,10 +4,18 @@ import { homedir } from 'node:os';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { Context, Service } from '@deepseek-ai/cordis';
 import { isSkillName, type SkillDefinition, type SkillSummary } from '@deepseek-ai/dsh-skill';
+import {
+  ASSET_MANIFEST_FILE, ASSET_SIGNATURE_CACHE_FILE, assetFileManifestPath, assetFileSignatureCachePath, assetManifestDigest,
+  assetSignatureCachePath, compareAssetPaths, readAssetFileManifest, readAssetManifest, snapshotAssetFiles, verifyAssetFileManifest,
+  verifyAssetManifest,
+  writeAssetFileManifest, writeAssetManifest, type AssetManifest, type AssetManifestSource,
+} from 'workdsh-asset-manifest';
+import { ASSET_SIGNATURE_FRESHNESS_MS, verifyAssetSignature, type AssetSignatureEnvelope } from 'workdsh-asset-signature';
 import { parse } from 'yaml';
-import type { ManagedSkillDetail, ManagedSkillResource, ManagedSkillSummary, SkillBatchRequest, SkillBatchResult, SkillCatalogIcon, SkillCatalogSummary, SkillDependency, SkillDependencyImpact, SkillDiagnostic, SkillDraft, SkillDraftWriteRequest, SkillImportInspection, SkillImportRequest, SkillInstallScope, SkillMutationReceipt, SkillResourceWriteRequest, SkillValidationResult, SkillWriteRequest, TrashedSkillSummary } from '../shared.js';
+import type { ManagedSkillDetail, ManagedSkillResource, ManagedSkillSummary, SkillBatchRequest, SkillBatchResult, SkillCatalogIcon, SkillCatalogSummary, SkillDependency, SkillDependencyImpact, SkillDiagnostic, SkillDraft, SkillDraftWriteRequest, SkillDigestVerdict, SkillImportInspection, SkillImportRequest, SkillInstallScope, SkillMutationReceipt, SkillResourceWriteRequest, SkillValidationResult, SkillWriteRequest, TrashedSkillSummary } from '../shared.js';
 import { SkillImportStaging } from './import-staging.js';
 import { SkillCatalogStore } from './catalog.js';
+import { readSignatureCache, SIGNATURE_REINSTALL_MESSAGE, snapshotAssetFile } from './asset-signatures.js';
 import { marketInstallFile, readMarketInstalls } from './market-installs.js';
 import type { SkillManagementService, SkillDependencyInspector, SkillDisplayMetadata } from '../shared.js';
 import type { RetainedSkillRevision, SkillConsumerRef, SkillRevisionCheck, SkillRevisionRef, SkillRevisionStatus } from 'workdsh-contracts';
@@ -17,6 +25,7 @@ declare module '@deepseek-ai/cordis' {
 }
 
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
+const describe = (error: unknown): string => error instanceof Error ? error.message : String(error);
 const skillNamePattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const trashIdPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*-\d{4}-\d{2}-\d{2}T[0-9-]+Z$/;
 const maximumDocumentBytes = 1024 * 1024;
@@ -25,6 +34,23 @@ const draftIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-
 interface DisabledOrigin { readonly name: string; readonly originalEntry: string; readonly directoryBundle: boolean; }
 interface TrashReceipt extends TrashedSkillSummary { readonly originalEntry: string; readonly trashedEntry: string; readonly directoryBundle: boolean; }
 export type { SkillDependencyInspector } from '../shared.js';
+
+/**
+ * 闸门服务的最小结构面。技能插件不直接依赖 asset-gate 包，避免循环依赖；
+ * 服务未安装（个人模式/测试）时所有调用都安全退回「无闸门」行为。
+ */
+interface AssetGateProbe {
+  enabled(assetType: string): boolean;
+  /** 主闸门与验签开关是否同时开启；旧版闸门没有该方法时按关闭处理。 */
+  signatureEnabled?(): boolean;
+  revoked(assetType: string, assetId: string): boolean;
+  clearRevoked(assetType: string, assetId: string): void;
+  revocationReason(): { readonly reason: string; readonly message: string };
+  /** 判定过程抛异常时的原因码与文案：列表标记复用同一份。 */
+  evaluationError(): { readonly reason: string; readonly message: string };
+  decide(request: { readonly assetType: string; readonly assetId: string; readonly usage: string }):
+    Promise<{ readonly allow: boolean; readonly message: string }>;
+}
 
 interface RetentionManifest {
   readonly ref: SkillRevisionRef;
@@ -59,6 +85,40 @@ function inside(root: string, target: string): boolean {
   return part === '' || (!part.startsWith(`..${sep}`) && part !== '..' && !part.startsWith(sep));
 }
 
+/**
+ * 调用期摘要缓存的失效指纹：只 stat、不读内容。
+ *
+ * 目录形态递归列出 `path\0size\0mtimeMs`（跳过清单自身、签名缓存与符号链接，
+ * 与 snapshotAssetFiles 同口径），排序后求 sha256；单文件形态只取该文件。
+ * 指纹只用于决定「是否要重算摘要」，不参与安全结论。
+ */
+async function digestFingerprint(target: string, directoryBundle: boolean): Promise<string> {
+  const hash = createHash('sha256');
+  if (!directoryBundle) {
+    const info = await stat(target);
+    hash.update(`${basename(target)}\0${info.size}\0${Math.round(info.mtimeMs)}\0`);
+    return hash.digest('hex');
+  }
+  const visit = async (directory: string, prefix: string, depth: number): Promise<void> => {
+    if (depth > 8) throw new Error('asset-manifest/too-deep');
+    const entries = (await readdir(directory, { withFileTypes: true }))
+      .filter(entry => entry.name !== ASSET_MANIFEST_FILE && entry.name !== ASSET_SIGNATURE_CACHE_FILE);
+    const relativePath = (name: string): string => (prefix ? `${prefix}/${name}` : name);
+    entries.sort((left, right) => compareAssetPaths(relativePath(left.name), relativePath(right.name)));
+    for (const entry of entries) {
+      if (entry.isSymbolicLink()) continue;
+      const path = join(directory, entry.name);
+      const rel = relativePath(entry.name);
+      if (entry.isDirectory()) { await visit(path, rel, depth + 1); continue; }
+      if (!entry.isFile()) continue;
+      const info = await stat(path);
+      hash.update(`${rel}\0${info.size}\0${Math.round(info.mtimeMs)}\0`);
+    }
+  };
+  await visit(target, '', 0);
+  return hash.digest('hex');
+}
+
 function frontmatter(document: string): Record<string, unknown> {
   const match = document.match(/^---\s*\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   if (!match) throw new Error('skill/invalid-frontmatter');
@@ -85,7 +145,7 @@ async function resourceFiles(directory: string, root = directory, depth = 0): Pr
     if (row.isSymbolicLink()) continue;
     const path = join(directory, row.name);
     if (row.isDirectory()) files.push(...await resourceFiles(path, root, depth + 1));
-    else if (row.isFile() && row.name !== 'SKILL.md') files.push(relative(root, path));
+    else if (row.isFile() && row.name !== 'SKILL.md' && row.name !== ASSET_MANIFEST_FILE && row.name !== ASSET_SIGNATURE_CACHE_FILE) files.push(relative(root, path));
     if (files.length >= 200) break;
   }
   return files.slice(0, 200).sort();
@@ -169,6 +229,8 @@ export class SkillManager extends Service implements SkillManagementService {
   private readonly importRoot?: string;
   private readonly dependencyInspectors = new Set<SkillDependencyInspector>();
   private readonly displayContributions = new Map<string, ReadonlyMap<string, SkillDisplayMetadata>>();
+  /** 调用期摘要缓存：技能名 → 指纹 + 结论；只影响性能，不改变安全口径。 */
+  private readonly digestCache = new Map<string, { readonly key: string; readonly verdict: SkillDigestVerdict }>();
   readonly imports: SkillImportStaging;
 
   constructor(ctx: Context, options: SkillManagerOptions = {}) {
@@ -256,14 +318,20 @@ export class SkillManager extends Service implements SkillManagementService {
     const installs = await readMarketInstalls(marketInstallFile(this.stateRoot), message => this.ctx.logger.warn(message));
     const builtinNames = new Set([...installs.values()]
       .flatMap(record => (record.builtin ? [record.name.trim().toLowerCase()] : [])));
-    return rows.map(row => {
+    const merged = rows.map(row => {
       const entry = metadata.get(row.name); const contribution = this.contributedDisplay(row.name);
       return {
         ...row, ...contribution, ...entry,
         ...(builtinNames.has(row.name.trim().toLowerCase()) ? { builtin: true } : {}),
         ...(entry?.title === row.name && contribution ? { title: contribution.title } : {}),
       };
-    }).sort((a, b) => a.name.localeCompare(b.name));
+    });
+    // 闸门开启或验签开关开启时才为市场来源的技能补授权/重装标记；都关闭时不读清单、不做判定。
+    const gate = this.gateProbe();
+    const described = gate && (gate.enabled('skill') || gate.signatureEnabled?.() === true)
+      ? await Promise.all(merged.map(async row => ({ ...row, ...(await this.authStateOf(row.name, gate)) })))
+      : merged;
+    return described.sort((a, b) => a.name.localeCompare(b.name));
   }
 
   registerDisplayMetadata(namespace: string, entries: readonly SkillDisplayMetadata[]): () => void {
@@ -505,6 +573,8 @@ export class SkillManager extends Service implements SkillManagementService {
         if (frontmatterValue(copied.document, 'name') !== name || copied.fingerprint !== inspected.fingerprint) throw new Error('skill/import-verification-failed');
         signal?.throwIfAborted();
         await rename(temporary, target);
+        // 导入落盘即写「自建」来源清单；市场与内置目录安装会在之后覆盖成各自来源。
+        await this.recordManifest(target, { assetType: 'skill', name, source: 'local' });
         return { name, state: 'enabled', path: target };
       } catch (error) {
         await rm(temporary, { recursive: true, force: true });
@@ -520,11 +590,15 @@ export class SkillManager extends Service implements SkillManagementService {
         const disabled = await this.disabledEntry(name);
         if (!disabled) throw new Error('skill/not-disabled');
         if (await this.activeEntry(name)) throw new Error('skill/target-exists');
+        // 用户手动启用即视为覆盖闸门的自动禁用：先取后台编号，启用成功后清除撤权标记。
+        const gateManifest = await this.installManifest(name);
         const origin = await this.disabledOrigin(name);
         const target = origin?.originalEntry ?? join(this.activeRoots[0], disabled.directoryBundle ? name : `${name}.md`);
         if (!this.rootFor(target)) throw new Error('skill/path-outside-managed-roots');
         await this.assertAbsent(target); await mkdir(dirname(target), { recursive: true }); await rename(disabled.entry, target);
+        await this.moveSidecar(disabled.entry, target, disabled.directoryBundle);
         await this.removeJson(this.originPath(name));
+        this.clearGateMark('skill', gateManifest?.assetId);
         return { name, state: 'enabled', path: target };
       }
       const current = await this.detail(name);
@@ -536,6 +610,7 @@ export class SkillManager extends Service implements SkillManagementService {
       await this.writeJson(this.originPath(name), { name, originalEntry: active.entry, directoryBundle: active.directoryBundle } satisfies DisabledOrigin);
       try { await rename(active.entry, target); }
       catch (error) { await this.removeJson(this.originPath(name)); throw error; }
+      await this.moveSidecar(active.entry, target, active.directoryBundle);
       return { name, state: 'disabled', path: target };
     });
   }
@@ -568,6 +643,8 @@ export class SkillManager extends Service implements SkillManagementService {
       const entry = disabled?.entry ?? active?.entry;
       if (!entry) throw new Error('skill/not-manageable');
       const origin = current.state === 'disabled' ? await this.disabledOrigin(name) : undefined;
+      // 卸载后清单随资产一起进回收站，撤权标记必须在此刻用原编号清除。
+      const gateManifest = await this.installManifest(name);
       const originalEntry = origin?.originalEntry ?? active?.entry ?? join(this.activeRoots[0], disabled?.directoryBundle ? name : `${name}.md`);
       const removedAt = new Date().toISOString();
       const id = `${name}-${removedAt.replace(/[:.]/g, '-')}`;
@@ -577,7 +654,9 @@ export class SkillManager extends Service implements SkillManagementService {
       await this.writeJson(this.receiptPath(id), receipt);
       try { await rename(entry, target); }
       catch (error) { await this.removeJson(this.receiptPath(id)); throw error; }
+      await this.moveSidecar(entry, target, receipt.directoryBundle);
       await this.removeJson(this.originPath(name));
+      this.clearGateMark('skill', gateManifest?.assetId);
       return { name, state: 'uninstalled', path: target };
     });
   }
@@ -600,6 +679,340 @@ export class SkillManager extends Service implements SkillManagementService {
       }
     }
     return { action: request.action, results };
+  }
+
+  /**
+   * 闸门用途：读取技能的安装清单。
+   *
+   * 目录形态读目录内的隐藏清单；单文件形态读同目录旁挂清单，并要求清单里记的文件摘要
+   * 与磁盘现状一致（不一致视为清单失效）。只认清单文件本身：启用类动作据此判定来源，
+   * 不再按名字、目录成员身份、形态或前缀猜测。没有清单返回 undefined，由调用方按「用户自建」处理。
+   */
+  async installManifest(name: string): Promise<(AssetManifest & { readonly assetType: 'skill' }) | undefined> {
+    this.assertName(name);
+    const entry = (await this.activeEntry(name)) ?? (await this.disabledEntry(name));
+    if (!entry) return undefined;
+    if (entry.directoryBundle) {
+      const manifest = await readAssetManifest(dirname(entry.file));
+      // 类型不符的清单按「没有清单」处理：宁可当作自建，也不误认成别的资产。
+      return manifest && manifest.assetType === 'skill' ? { ...manifest, assetType: 'skill' } : undefined;
+    }
+    // 单文件技能：旁挂清单必须与磁盘上的文件摘要一致，否则按「清单失效」处理（等同没有清单）。
+    if (!(await verifyAssetFileManifest(entry.file)).ok) return undefined;
+    const manifest = await readAssetFileManifest(entry.file);
+    return manifest && manifest.assetType === 'skill' ? { ...manifest, assetType: 'skill' } : undefined;
+  }
+
+  /**
+   * 启用前完整性校验：目录形态比对整目录文件清单，单文件形态比对旁挂清单。
+   *
+   * `options.signature` 为 true（默认）时，市场来源先验签再比文件集合，mtime 不参与结论：
+   * 缓存 envelope 超过 24 小时、公钥缺失、验签失败或文件集合不符都按对应原因拒绝。
+   * 为 false 时（验签开关关闭）完全跳过验签，但清单内容比对照常执行。
+   * 未签名资产沿用「先比存在性/大小/mtime，再算 sha256」的本地快速路径。
+   */
+  async verifyInstalledIntegrity(
+    name: string,
+    options: { readonly signature?: boolean } = {},
+  ): Promise<
+    { readonly ok: true } | {
+      readonly ok: false;
+      readonly reason:
+        | 'missing' | 'file-missing' | 'quick-mismatch' | 'digest-mismatch'
+        | 'signature-missing' | 'signature-invalid' | 'signature-asset-mismatch'
+        | 'manifest-mismatch' | 'manifest-extra-file';
+    }
+  > {
+    this.assertName(name);
+    const entry = (await this.activeEntry(name)) ?? (await this.disabledEntry(name));
+    if (!entry) return { ok: false, reason: 'missing' };
+    const manifest = entry.directoryBundle
+      ? await readAssetManifest(dirname(entry.file))
+      : await readAssetFileManifest(entry.file);
+    const enforceSignature = options.signature !== false;
+    // 清单里带签名块就必须验签：与 source、与验签开关都无关，防止把 source 改成内置绕过。
+    if (manifest?.assetType === 'skill' && manifest.signature) {
+      return this.verifySignedSkill(entry, manifest);
+    }
+    // 开关开启时市场来源必须带签名：schema 1 旧清单与关闭期间安装的清单都按「签名缺失」拒绝。
+    if (enforceSignature && manifest?.source === 'market') return { ok: false, reason: 'signature-missing' };
+    const verdict = entry.directoryBundle
+      ? await verifyAssetManifest(dirname(entry.file))
+      : await verifyAssetFileManifest(entry.file);
+    return verdict.ok ? { ok: true } : { ok: false, reason: verdict.reason };
+  }
+
+  /**
+   * 闸门调用期校验：只看「磁盘内容是否仍与安装清单一致」，**不做 Ed25519 验签**。
+   *
+   * 与 `verifyInstalledIntegrity` 的分工：验签只在安装/启用那道门做（缓存 envelope
+   * 与 24 小时新鲜期都只属于那一步）；这里只比文件集合与 sha256 摘要，mtime 不参与结论。
+   *
+   * 来源口径：
+   * - `builtin` 放行：随包发布，开发/打包环境会直接改文件，调用期不该误伤；
+   * - `local` 放行：没有授权基准，闸门在调用前已按「未登记」拒绝；
+   * - `market` 必须带签名块，否则返回 `signature-missing`（装在验签关闭期，需重装）；
+   * - 清单读不到/损坏返回 `unreadable`，由调用方 fail-closed。
+   *
+   * 结果按「清单摘要 + 磁盘指纹」缓存：同一轮对话反复调用同一技能不再重算 sha256。
+   * 缓存失效条件：任一文件的内容/大小/mtime 变化、文件增删、重装改写清单摘要，
+   * 都会让 key 变化从而重算。原地篡改且同时保留 size 与 mtime 不会触发重算——
+   * 这一层定位是「防误改 + 常规改动」，防篡改基准仍是安装期签名。
+   */
+  async verifyInstalledDigests(name: string): Promise<SkillDigestVerdict> {
+    this.assertName(name);
+    const entry = (await this.activeEntry(name)) ?? (await this.disabledEntry(name));
+    if (!entry) return { ok: false, reason: 'missing' };
+    let manifest: AssetManifest | undefined;
+    try {
+      manifest = entry.directoryBundle ? await readAssetManifest(dirname(entry.file)) : await readAssetFileManifest(entry.file);
+    } catch {
+      return { ok: false, reason: 'unreadable' };
+    }
+    if (manifest === undefined || manifest.assetType !== 'skill') return { ok: false, reason: 'unreadable' };
+    if (manifest.source !== 'market') return { ok: true };
+    if (manifest.signature === undefined) return { ok: false, reason: 'signature-missing' };
+    // 清单自身必须自洽：files 与 digest 对不上说明清单被改过，不能再当基准。
+    if (assetManifestDigest(manifest.files) !== manifest.digest) return { ok: false, reason: 'manifest-mismatch' };
+    const target = entry.directoryBundle ? dirname(entry.file) : entry.file;
+    let fingerprint: string;
+    try {
+      fingerprint = await digestFingerprint(target, entry.directoryBundle);
+    } catch {
+      return { ok: false, reason: 'unreadable' };
+    }
+    const key = `${manifest.digest}\0${fingerprint}`;
+    const cached = this.digestCache.get(name);
+    if (cached?.key === key) return cached.verdict;
+    let verdict: SkillDigestVerdict;
+    try {
+      const files = entry.directoryBundle ? await snapshotAssetFiles(target) : [await snapshotAssetFile(target)];
+      verdict = assetManifestDigest(files) === manifest.digest ? { ok: true } : { ok: false, reason: 'digest-mismatch' };
+    } catch {
+      verdict = { ok: false, reason: 'unreadable' };
+    }
+    this.digestCache.delete(name);
+    this.digestCache.set(name, { key, verdict });
+    while (this.digestCache.size > 64) {
+      const oldest = this.digestCache.keys().next().value;
+      if (oldest === undefined) break;
+      this.digestCache.delete(oldest);
+    }
+    return verdict;
+  }
+
+  /**
+   * 签名资产的启用前校验：先验签，再比文件集合与清单摘要。
+   *
+   * 市场来源用运行时缓存（含 24 小时新鲜期）；内置来源的签名随包，没有缓存也没有新鲜期，
+   * 直接用清单里的签名块重建 envelope（文件摘要取自清单一侧），仍然做完整验签。
+   */
+  private async verifySignedSkill(
+    entry: { readonly file: string; readonly directoryBundle: boolean },
+    manifest: AssetManifest,
+  ): Promise<{ readonly ok: true } | { readonly ok: false; readonly reason:
+    | 'signature-missing' | 'signature-invalid' | 'signature-asset-mismatch'
+    | 'manifest-mismatch' | 'manifest-extra-file' }> {
+    const signature = manifest.signature;
+    if (!signature) return { ok: false, reason: 'signature-missing' };
+    const target = entry.directoryBundle ? dirname(entry.file) : entry.file;
+    const cached = await readSignatureCache(
+      entry.directoryBundle ? assetSignatureCachePath(target) : assetFileSignatureCachePath(target),
+    );
+    let envelope: AssetSignatureEnvelope;
+    let fetchedAt: number | undefined;
+    if (cached) {
+      if (signature.payloadVersion !== cached.envelope.payloadVersion
+        || signature.algo !== cached.envelope.algo
+        || signature.keyId !== cached.envelope.keyId
+        || signature.digest !== cached.envelope.digest
+        || signature.signature !== cached.envelope.signature) {
+        return { ok: false, reason: 'signature-invalid' };
+      }
+      envelope = cached.envelope;
+      fetchedAt = cached.fetchedAt;
+    } else if (manifest.source === 'builtin') {
+      // 内置资产没有本地缓存：编号必须来自构建期写入的签名导出，缺失时不能退化成内容比对。
+      if (!manifest.assetId) return { ok: false, reason: 'signature-asset-mismatch' };
+      envelope = {
+        assetType: 'skill',
+        assetId: manifest.assetId,
+        payloadVersion: signature.payloadVersion,
+        algo: signature.algo,
+        keyId: signature.keyId,
+        digest: signature.digest,
+        signature: signature.signature,
+        fileCount: manifest.files.length,
+        files: manifest.files.map(file => ({ path: file.path, size: file.size, sha256: file.sha256 })),
+        signedAt: manifest.installedAt,
+      };
+    } else {
+      return { ok: false, reason: 'signature-missing' };
+    }
+    const files = entry.directoryBundle
+      ? await snapshotAssetFiles(target)
+      : [await snapshotAssetFile(target)];
+    const verdict = verifyAssetSignature({
+      envelope,
+      expectedAssetType: 'skill',
+      expectedAssetId: manifest.assetId ?? '',
+      files,
+      ...(fetchedAt === undefined ? {} : { fetchedAt, maxAgeMs: ASSET_SIGNATURE_FRESHNESS_MS }),
+    });
+    if (!verdict.ok) {
+      const reason = {
+        missing: 'signature-missing', invalid: 'signature-invalid', 'asset-mismatch': 'signature-asset-mismatch',
+        'manifest-mismatch': 'manifest-mismatch', 'manifest-extra-file': 'manifest-extra-file',
+      } as const;
+      return { ok: false, reason: reason[verdict.reason] };
+    }
+    // 清单摘要必须与磁盘现状一致（mtime 不参与；签名资产只认文件集合与哈希）。
+    if (assetManifestDigest(files) !== manifest.digest) return { ok: false, reason: 'manifest-mismatch' };
+    return { ok: true };
+  }
+
+  /**
+   * 撤权协调器用途：列出已安装且来源为市场、带后台编号的技能。
+   *
+   * 只认安装清单，不按名字或目录成员猜来源；启停两侧都扫描，避免用户手动停用后
+   * 恰好被撤权的技能漏标。
+   */
+  async marketAssets(): Promise<readonly { readonly localId: string; readonly assetId: string }[]> {
+    const names = new Set<string>();
+    for (const root of [...this.activeRoots, this.disabledRoot]) {
+      await mkdir(root, { recursive: true });
+      for (const entry of await readdir(root, { withFileTypes: true })) {
+        const name = entry.isDirectory()
+          ? entry.name
+          : entry.isFile() && entry.name.endsWith('.md') ? entry.name.slice(0, -3) : undefined;
+        if (name && skillNamePattern.test(name)) names.add(name);
+      }
+    }
+    const rows: { localId: string; assetId: string }[] = [];
+    for (const name of names) {
+      try {
+        const manifest = await this.installManifest(name);
+        if (manifest?.source === 'market' && manifest.assetId) rows.push({ localId: name, assetId: manifest.assetId });
+      } catch {
+        // 单个技能读清单失败不影响其余资产；失败按「没有清单」处理，不猜来源。
+      }
+    }
+    return rows;
+  }
+
+  private gateProbe(): AssetGateProbe | undefined {
+    try {
+      return this.ctx.reflect.get('workdshAssetGate') as AssetGateProbe | undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** 用户手动启用/卸载后清除撤权标记；闸门未安装或编号缺失时静默跳过。 */
+  private clearGateMark(assetType: string, assetId: string | undefined): void {
+    if (!assetId) return;
+    try { this.gateProbe()?.clearRevoked(assetType, assetId); } catch { /* 闸门不可用不影响主流程 */ }
+  }
+
+  /**
+   * 列表授权状态：market 来源且闸门开启时才有值。
+   * `revoked` 优先于 `unauthorized`，二者文案都来自闸门 reasons.ts。
+   */
+  private async authStateOf(
+    name: string,
+    gate: AssetGateProbe,
+  ): Promise<{ readonly authState?: 'unauthorized' | 'revoked' | 'reinstall' | 'error'; readonly authReason?: string }> {
+    try {
+      const manifest = await this.installManifest(name);
+      if (manifest?.source !== 'market' || !manifest.assetId) return {};
+      if (gate.revoked('skill', manifest.assetId)) {
+        return { authState: 'revoked', authReason: gate.revocationReason().message };
+      }
+      // 验签开关开启但清单没有签名块：资产装于关闭期间，只能重新安装，不做一次性放行。
+      if (gate.signatureEnabled?.() === true && manifest.signature === undefined) {
+        return { authState: 'reinstall', authReason: SIGNATURE_REINSTALL_MESSAGE };
+      }
+      const decision = await gate.decide({ assetType: 'skill', assetId: manifest.assetId, usage: 'use' });
+      return decision.allow ? {} : { authState: 'unauthorized', authReason: decision.message };
+    } catch {
+      // 判定异常不能静默当作正常：按最小权限标记，文案仍取自闸门 reasons.ts。
+      return { authState: 'error', authReason: gate.evaluationError().message };
+    }
+  }
+
+  /**
+   * 一次性回填：为已安装但没有清单的技能补写清单（目录与单文件形态都覆盖）。
+   *
+   * 来源仍按既有记录推定：`market-installs` 命中 → market（并写入后台编号）；
+   * 随包内置技能目录命中 → builtin；其余 → local。幂等：已有可用清单的技能跳过，
+   * 单条失败只记日志、不阻断启动。
+   */
+  async backfillInstallManifests(): Promise<{ scanned: number; written: number; failed: number }> {
+    const installs = await readMarketInstalls(marketInstallFile(this.stateRoot), message => this.ctx.logger.warn(message));
+    const marketIdByName = new Map<string, string>();
+    for (const [id, record] of installs) marketIdByName.set(record.name.trim().toLowerCase(), id);
+    let scanned = 0; let written = 0; let failed = 0;
+    for (const root of [...this.activeRoots, this.disabledRoot]) {
+      await mkdir(root, { recursive: true });
+      for (const entry of await readdir(root, { withFileTypes: true })) {
+        const directory = entry.isDirectory() && skillNamePattern.test(entry.name);
+        const file = entry.isFile() && entry.name.endsWith('.md') && skillNamePattern.test(entry.name.slice(0, -3));
+        if (!directory && !file) continue;
+        scanned += 1;
+        try {
+          if (await this.backfillManifestAt(join(root, entry.name), directory, marketIdByName)) written += 1;
+        } catch (error) {
+          failed += 1;
+          this.ctx.logger.warn(`技能：回填安装清单失败（${entry.name}）：${describe(error)}。`);
+        }
+      }
+    }
+    return { scanned, written, failed };
+  }
+
+  /** 回填单条资产；已有清单返回 false。目录形态写目录内清单，单文件形态写同目录旁挂清单。 */
+  private async backfillManifestAt(target: string, directory: boolean, marketIdByName: Map<string, string>): Promise<boolean> {
+    if (directory ? await readAssetManifest(target) : await readAssetFileManifest(target)) return false;
+    const base = basename(target);
+    const fallbackName = directory ? base : base.slice(0, -3);
+    const document = await readFile(directory ? join(target, 'SKILL.md') : target, 'utf8').catch(() => '');
+    const declared = frontmatterValue(document, 'name');
+    const name = declared && skillNamePattern.test(declared) ? declared : fallbackName;
+    const marketId = marketIdByName.get(name.trim().toLowerCase());
+    const source: AssetManifestSource = marketId
+      ? 'market'
+      : (await this.catalogStore.eligibility(name)).known ? 'builtin' : 'local';
+    const installedAt = new Date((await stat(target)).mtimeMs).toISOString();
+    const input = { assetType: 'skill' as const, name, source, ...(marketId ? { assetId: marketId } : {}), installedAt };
+    if (directory) await writeAssetManifest(target, input);
+    else await writeAssetFileManifest(target, input);
+    return true;
+  }
+
+  /** 写清单失败只记日志：安装本身已成功，清单缺失会让该技能按「用户自建」处理（失败即拒绝）。 */
+  private async recordManifest(target: string, input: { assetType: 'skill'; name: string; source: AssetManifestSource; assetId?: string; version?: string; installedAt?: string }): Promise<void> {
+    try {
+      const info = await lstat(target);
+      if (info.isDirectory()) await writeAssetManifest(target, input);
+      else await writeAssetFileManifest(target, input);
+    } catch (error) { this.ctx.logger.warn(`技能：写入安装清单失败（${input.name}）：${describe(error)}。`); }
+  }
+
+  /**
+   * 单文件技能改名（禁用 / 启用 / 卸载 / 恢复都是改名）时把旁挂清单一起搬走。
+   * 目录形态的清单在目录内，随目录移动，无需处理。搬不动只记日志，不影响技能本身。
+   */
+  private async moveSidecar(from: string, to: string, directoryBundle: boolean): Promise<void> {
+    if (directoryBundle) return;
+    const source = assetFileManifestPath(from);
+    try { await lstat(source); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      this.ctx.logger.warn(`技能：检查安装清单失败（${basename(from)}）：${describe(error)}。`);
+      return;
+    }
+    try { await rename(source, assetFileManifestPath(to)); }
+    catch (error) { this.ctx.logger.warn(`技能：移动安装清单失败（${basename(from)}）：${describe(error)}。`); }
   }
 
   async listTrash(): Promise<readonly TrashedSkillSummary[]> {
@@ -628,11 +1041,13 @@ export class SkillManager extends Service implements SkillManagementService {
         await this.assertAbsent(target); await mkdir(dirname(target), { recursive: true });
         await this.writeJson(this.originPath(receipt.name), { name: receipt.name, originalEntry: receipt.originalEntry, directoryBundle: receipt.directoryBundle } satisfies DisabledOrigin);
         await rename(receipt.trashedEntry, target);
+        await this.moveSidecar(receipt.trashedEntry, target, receipt.directoryBundle);
         await this.removeJson(this.receiptPath(id));
         return { name: receipt.name, state: 'disabled', path: target };
       }
       await this.assertAbsent(receipt.originalEntry); await mkdir(dirname(receipt.originalEntry), { recursive: true });
       await rename(receipt.trashedEntry, receipt.originalEntry); await this.removeJson(this.receiptPath(id));
+      await this.moveSidecar(receipt.trashedEntry, receipt.originalEntry, receipt.directoryBundle);
       return { name: receipt.name, state: 'enabled', path: receipt.originalEntry };
     });
   }
@@ -657,7 +1072,10 @@ export class SkillManager extends Service implements SkillManagementService {
     if (!eligibility.installable) throw new Error('skill/catalog-entry-over-limit');
     const source = await this.catalogStore.payloadPath(name);
     if (!source) throw new Error('skill/catalog-payload-missing');
-    return this.installImport({ source, scope }, signal);
+    const receipt = await this.installImport({ source, scope }, signal);
+    // 从内置技能目录安装的副本同样要写清单，来源标为内置：这是「不误拦内置副本」的关键。
+    await this.recordManifest(receipt.path, { assetType: 'skill', name, source: 'builtin' });
+    return receipt;
   }
 
   async readCatalogIcon(name: string): Promise<SkillCatalogIcon | undefined> {

@@ -1,0 +1,66 @@
+{
+  "schema": 2,
+  "assetType": "skill",
+  "name": "workdsh-workbench-dev",
+  "source": "builtin",
+  "assetId": "2120057474985410562",
+  "installedAt": "2026-11-06T08:15:26.294Z",
+  "files": [
+    {
+      "path": "SKILL.md",
+      "size": 8126,
+      "sha256": "faf4bfd81985e1995e9deb5181caafe4838a0559284433aa6f6e1ca39902d26c",
+      "mtimeMs": 1792370309731
+    },
+    {
+      "path": "references/first-development.md",
+      "size": 6117,
+      "sha256": "cb340b0e76f3a0c3be9306bb7c59044d20715e4f8574f3c34c9635b3a02dda96",
+      "mtimeMs": 1792370309731
+    },
+    {
+      "path": "references/intake.md",
+      "size": 2448,
+      "sha256": "c59d7d29dae499e33fef710c85911204df8dfdadeda30e1c237b6a615bbd4352",
+      "mtimeMs": 1792370309731
+    },
+    {
+      "path": "references/iteration.md",
+      "size": 6491,
+      "sha256": "85fe6e9492b6648653ed3cd3dd70fe39fb34c59e108e6fa88a7acf4fd71d26b6",
+      "mtimeMs": 1792370309731
+    },
+    {
+      "path": "references/product-experience.md",
+      "size": 6844,
+      "sha256": "dbdde2b57f0423a2e792ad86fbb145bb508679c173b9fc487bf9e4d116d1a5e9",
+      "mtimeMs": 1792370309731
+    },
+    {
+      "path": "references/requirements.md",
+      "size": 6619,
+      "sha256": "9aab1038d741a3a455d5f23f490f420cf1539453c3afcd9b49bd53fce5c6e675",
+      "mtimeMs": 1792370309731
+    },
+    {
+      "path": "references/sdk-verification.md",
+      "size": 4872,
+      "sha256": "6c842a91a55ecf5bd762dbb4119234c8fec8033b3507c9493075234e8abacbf7",
+      "mtimeMs": 1792370309731
+    },
+    {
+      "path": "references/startup-validation.md",
+      "size": 6509,
+      "sha256": "7ac555b5e944b19527e55950d0981e8c4b2db357f24ac139625e829994ac98fa",
+      "mtimeMs": 1792370309731
+    }
+  ],
+  "digest": "4dfee54190366ed58662bd578ba57b91ee19791aaff34f85db330121840ff7f7",
+  "signature": {
+    "payloadVersion": "workdsh-asset-signature-v1",
+    "algo": "Ed25519",
+    "keyId": "2026a",
+    "digest": "57a0a09bca447023013ea25d443c9eeeafbcba9424b1823d2afacd048b409738",
+    "signature": "T1gvX6UrezMkgzmf8OvdxDqT6TdJXypRSc5sK+DQ0y5VBML3g6o1pj2hoDWqG/lP+cMVW0HjhHG87N4UYxVnBw=="
+  }
+}

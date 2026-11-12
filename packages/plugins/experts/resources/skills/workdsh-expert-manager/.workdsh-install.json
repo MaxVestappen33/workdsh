@@ -1,0 +1,72 @@
+{
+  "schema": 2,
+  "assetType": "skill",
+  "name": "workdsh-expert-manager",
+  "source": "builtin",
+  "assetId": "2120057884731162626",
+  "installedAt": "2026-11-06T08:15:26.298Z",
+  "files": [
+    {
+      "path": "LICENSE.workbuddy.txt",
+      "size": 10761,
+      "sha256": "ef715b0cdf10700ae842e88844989391dc3bd9efd397bd399212d32f8862f633",
+      "mtimeMs": 1791079233058
+    },
+    {
+      "path": "NOTICE.md",
+      "size": 399,
+      "sha256": "9a0b5601b1f5ca69ae00e7bcf272862580923253d56f25a47c535ebaec308a64",
+      "mtimeMs": 1791079233058
+    },
+    {
+      "path": "SKILL.md",
+      "size": 5313,
+      "sha256": "0f50ed609f297898066863b0b639e459131078e0567958cb560b7112b06477e6",
+      "mtimeMs": 1791079233058
+    },
+    {
+      "path": "references/agent-md-spec.md",
+      "size": 5021,
+      "sha256": "ec7373578a5f84d73ba16dcc71e73755e57aa4170cb07cd9bf379627c0f9c007",
+      "mtimeMs": 1791079233058
+    },
+    {
+      "path": "references/authoring-api.md",
+      "size": 3534,
+      "sha256": "f7a5892e6958f03ed8806889274bb4c09bd23bfb4212d22bc2e5410878010893",
+      "mtimeMs": 1791079233058
+    },
+    {
+      "path": "references/avatar-spec.md",
+      "size": 6350,
+      "sha256": "0b42762e05e311632b2f89af35f34458f851a03cce3fcc0300ca0a75e9f8890e",
+      "mtimeMs": 1791079233058
+    },
+    {
+      "path": "references/plugin-json-spec.md",
+      "size": 5225,
+      "sha256": "b680fb86361efd562298aa817e97fe906dff7da1d4dcea55f29d804555ddde3d",
+      "mtimeMs": 1791079233058
+    },
+    {
+      "path": "references/team-spec.md",
+      "size": 4605,
+      "sha256": "1400af007c6b1179429c6d8c856dc1d45ae25dae63645097ddbc801d25d324f9",
+      "mtimeMs": 1791079233058
+    },
+    {
+      "path": "runtime/team-lead.md",
+      "size": 1834,
+      "sha256": "b51f014edec6416f49c88845ee8652c468b14124aa1b3fdb7070fd0c305a7c7e",
+      "mtimeMs": 1791079233058
+    }
+  ],
+  "digest": "d372a3977db65cb2559572ce6e0cd3fc94e7d029be6b81226ff5edcd5bbb29ca",
+  "signature": {
+    "payloadVersion": "workdsh-asset-signature-v1",
+    "algo": "Ed25519",
+    "keyId": "2026a",
+    "digest": "e4988aa183d6e16e3d849207f7305a3943ffacb3b70bb77287260eb7b9255598",
+    "signature": "k3uiguY7Ey8+jLFhZmmK2F2HsIs5WNshSFH9NZ2mZkfW4vPT5wjJHnbLLlEvm0GwOiHLME7SgHn1XZAtNwoYDA=="
+  }
+}

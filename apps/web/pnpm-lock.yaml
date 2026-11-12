@@ -434,6 +434,18 @@ importers:
         specifier: 5.9.3
         version: 5.9.3
 
+  ../../packages/asset-manifest:
+    devDependencies:
+      '@types/node':
+        specifier: 22.19.0
+        version: 22.19.0
+
+  ../../packages/asset-signature:
+    devDependencies:
+      '@types/node':
+        specifier: 22.19.0
+        version: 22.19.0
+
   ../../packages/bundle:
     dependencies:
       '@deepseek-ai/dsh-browser-use':
@@ -630,6 +642,27 @@ importers:
       react:
         specifier: 19.2.4
         version: 19.2.4
+      workdsh-contracts:
+        specifier: workspace:*
+        version: link:../../contracts
+
+  ../../packages/plugins/asset-gate:
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5
+        version: 4.0.5(@deepseek-ai/cordis-plugin-include@1.0.10)(@deepseek-ai/cordis-plugin-loader@1.0.6)
+      '@deepseek-ai/dsh-agent':
+        specifier: 0.2.1-rc.5
+        version: 0.2.1-rc.5(cbd9b78489f743dd32cfe135059e56db)
+      '@deepseek-ai/dsh-tools':
+        specifier: 0.2.1-rc.5
+        version: 0.2.1-rc.5(47e11ee6492a70a2f2353a0c993abe69)
+      '@types/node':
+        specifier: 22.19.0
+        version: 22.19.0
+      workdsh-asset-signature:
+        specifier: workspace:*
+        version: link:../../asset-signature
       workdsh-contracts:
         specifier: workspace:*
         version: link:../../contracts
@@ -1048,6 +1081,12 @@ importers:
       react:
         specifier: 19.2.4
         version: 19.2.4
+      workdsh-contracts:
+        specifier: workspace:*
+        version: link:../../contracts
+      workdsh-ui:
+        specifier: workspace:*
+        version: link:../../ui
 
   ../../packages/plugins/office:
     dependencies:
@@ -1460,6 +1499,12 @@ importers:
       react:
         specifier: 19.2.4
         version: 19.2.4
+      workdsh-asset-manifest:
+        specifier: workspace:*
+        version: link:../../asset-manifest
+      workdsh-asset-signature:
+        specifier: workspace:*
+        version: link:../../asset-signature
       workdsh-contracts:
         specifier: workspace:*
         version: link:../../contracts

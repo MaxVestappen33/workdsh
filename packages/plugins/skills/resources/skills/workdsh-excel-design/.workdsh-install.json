@@ -1,0 +1,36 @@
+{
+  "schema": 2,
+  "assetType": "skill",
+  "name": "workdsh-excel-design",
+  "source": "builtin",
+  "assetId": "2120049490393743362",
+  "installedAt": "2026-11-06T08:15:26.281Z",
+  "files": [
+    {
+      "path": "SKILL.md",
+      "size": 1165,
+      "sha256": "9007ad5a621e852551dbbacd8d786f73cd66a1a86f13aab15a2b126431009428",
+      "mtimeMs": 1791079233112
+    },
+    {
+      "path": "references/audit-and-usability.md",
+      "size": 2046,
+      "sha256": "d783d223eacb4522da68e72745cbcd37f43e7b2c50cb52c97587746c5729ca50",
+      "mtimeMs": 1791079233112
+    },
+    {
+      "path": "references/schema-and-formulas.md",
+      "size": 1815,
+      "sha256": "98c137228befb2ba73166d28f15df082f2e2a44255ee201b6237f42dc542115a",
+      "mtimeMs": 1791079233112
+    }
+  ],
+  "digest": "960626de59cae368f4fcd9900c15fc46d558439be0b272cca520fffb46ff5a70",
+  "signature": {
+    "payloadVersion": "workdsh-asset-signature-v1",
+    "algo": "Ed25519",
+    "keyId": "2026a",
+    "digest": "7ce43093626b4ec84b4ec70fdd71cecda7fc3cf21e318b1bd178e04c17aa0c91",
+    "signature": "yIbG6aLoZH65Kk+n2DDeQN/EyBRkYcA0uT3NO0EzYf59C6ZnjbhheX2n8oivsWqPxnxItqXaZPUIl9CgJoQzBw=="
+  }
+}

@@ -41,6 +41,16 @@ export interface ManagedSkillSummary {
    * 技能市场可用时界面以市场当前数据为准，该字段只用于市场不可用时的兜底。
    */
   readonly builtin?: boolean;
+  /**
+   * 授权状态（仅市场来源且闸门开启时有值）：
+   * - `unauthorized`：当前账号未获得授权，但仍保留在本机；
+   * - `revoked`：授权已失效，已被闸门自动逻辑禁用（与用户手动停用区分）；
+   * - `reinstall`：安装于验签开关关闭期间，重开后缺少签名，需重新安装；
+   * - `error`：判定过程抛异常，按最小权限处理（不静默当作正常）。
+   */
+  readonly authState?: 'unauthorized' | 'revoked' | 'reinstall' | 'error';
+  /** 与 `authState` 配套的中文原因文案，来自闸门 reasons.ts。 */
+  readonly authReason?: string;
 }
 
 export interface ManagedSkillDetail extends ManagedSkillSummary {
@@ -281,6 +291,28 @@ export type SkillManagementResult<T> = { readonly ok: true; readonly value: T } 
 
 export type SkillDependencyInspector = (name: string) => Promise<readonly SkillDependency[]> | readonly SkillDependency[];
 
+/** 安装清单的判定视图：只暴露来源判定需要的字段，完整清单由 install-manifest 包提供。 */
+export interface SkillInstallManifestView {
+  readonly assetType: 'skill';
+  readonly name: string;
+  readonly source: 'market' | 'builtin' | 'local';
+  /** 后台资产编号；builtin 与 local 没有。 */
+  readonly assetId?: string;
+  readonly installedAt: string;
+  readonly version?: string;
+}
+
+/**
+ * 调用期摘要校验结论：只比文件清单摘要，不做签名验签。
+ * `signature-missing` 表示市场来源没有签名块（装在验签关闭期），与内容被改区分开。
+ */
+export type SkillDigestVerdict =
+  | { readonly ok: true }
+  | {
+      readonly ok: false;
+      readonly reason: 'missing' | 'unreadable' | 'signature-missing' | 'manifest-mismatch' | 'digest-mismatch';
+    };
+
 /**
  * Provided as ctx.workdshSkills; consumers inject the service, not its implementation.
  * Extends the cross-domain revision capability so an expert (or other consumer) can
@@ -306,6 +338,40 @@ export interface SkillManagementService extends SkillRevisionProvider {
   dependencyImpact(name: string): Promise<SkillDependencyImpact>;
   uninstall(name: string, expectedImpactRevision: string): Promise<SkillMutationReceipt>;
   batch(request: SkillBatchRequest): Promise<SkillBatchResult>;
+  /**
+   * 读取该技能的安装清单（资产目录内的隐藏清单文件）。
+   * 启用类动作的来源判定只看它：有清单按清单的来源与后台编号处理，
+   * 没有清单一律视为用户自建。不按名字或目录成员身份猜测。
+   */
+  installManifest?(name: string): Promise<SkillInstallManifestView | undefined>;
+  /**
+   * 撤权协调：列出已安装且来源为市场、带后台编号的技能。
+   * 只读安装清单，不按名字或目录成员猜来源。
+   */
+  marketAssets?(): Promise<readonly { readonly localId: string; readonly assetId: string }[]>;
+  /**
+   * 启用前完整性校验：目录形态比对文件清单，单文件形态比对旁挂清单。
+   * `options.signature` 为 true 时，市场来源先验签再比文件集合（mtime 不参与）；
+   * 为 false 时跳过验签，但清单内容比对仍执行（自我一致性不受开关影响）。
+   * 返回 `missing` 表示没有清单，由调用方按既有口径处理。
+   */
+  verifyInstalledIntegrity?(name: string, options?: { readonly signature?: boolean }): Promise<
+    { readonly ok: true } | {
+      readonly ok: false;
+      readonly reason:
+        | 'missing' | 'file-missing' | 'quick-mismatch' | 'digest-mismatch'
+        | 'signature-missing' | 'signature-invalid' | 'signature-asset-mismatch'
+        | 'manifest-mismatch' | 'manifest-extra-file';
+    }
+  >;
+  /**
+   * 闸门调用期校验：只比「磁盘内容 vs 安装清单摘要」，不做验签（验签留给安装/启用）。
+   * 内置与自建来源返回 ok；市场来源没有签名块时返回 `signature-missing`，
+   * 清单读不到或损坏返回 `unreadable`，由调用方 fail-closed。
+   */
+  verifyInstalledDigests?(name: string): Promise<SkillDigestVerdict>;
+  /** 一次性回填：为已安装但没有清单的技能补写清单；幂等、可重复执行。 */
+  backfillInstallManifests?(): Promise<{ readonly scanned: number; readonly written: number; readonly failed: number }>;
   listTrash(): Promise<readonly TrashedSkillSummary[]>;
   restore(id: string): Promise<SkillMutationReceipt>;
   /** Local catalog metadata joined with the current discovery state. */
@@ -321,6 +387,8 @@ export interface SkillManagementService extends SkillRevisionProvider {
     stage(fileName: string, body: ReadableStream<Uint8Array> | null, signal: AbortSignal): Promise<StagedSkillImport>;
     /** 读取预检通过的暂存文件原始字节：上架申请提交时由宿主直接上传后台，不再经渲染层二次传输。 */
     read(id: string): Promise<{ readonly fileName: string; readonly bytes: Uint8Array }>;
+    /** 暂存区当前文件集合：市场安装验签时与服务端签名里的 files 逐项比对（此时尚未落盘）。 */
+    snapshot(id: string, signal?: AbortSignal): Promise<readonly { readonly path: string; readonly size: number; readonly sha256: string; readonly mtimeMs: number }[]>;
     commit(id: string, scope?: SkillInstallScope, signal?: AbortSignal): Promise<SkillMutationReceipt>;
     discard(id: string): Promise<void>;
   };

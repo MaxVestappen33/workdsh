@@ -24,7 +24,7 @@
     "locale/*.json"
   ],
   "scripts": {
-    "build": "node ../../../apps/web/scripts/generate-builtin-skills.mjs && node ../../../apps/web/node_modules/pnpm/bin/pnpm.cjs --dir ../../../apps/web --filter workdsh-contracts build && node ../../../apps/web/node_modules/pnpm/bin/pnpm.cjs --dir ../../../apps/web --filter workdsh-ui build && tsc -p tsconfig.json && node ../../../apps/web/scripts/build-skills.mjs",
+    "build": "node ../../../apps/web/scripts/generate-builtin-skills.mjs && node ../../../apps/web/node_modules/pnpm/bin/pnpm.cjs --dir ../../../apps/web --filter workdsh-asset-manifest build && node ../../../apps/web/node_modules/pnpm/bin/pnpm.cjs --dir ../../../apps/web --filter workdsh-asset-signature build && node ../../../scripts/write-bundled-skill-manifests.mjs --mode ${WORKDSH_BUILTIN_SIGNATURE_MODE:-warn} resources/skills && node ../../../apps/web/node_modules/pnpm/bin/pnpm.cjs --dir ../../../apps/web --filter workdsh-contracts build && node ../../../apps/web/node_modules/pnpm/bin/pnpm.cjs --dir ../../../apps/web --filter workdsh-ui build && tsc -p tsconfig.json && node ../../../apps/web/scripts/build-skills.mjs",
     "typecheck": "node ../../../apps/web/scripts/generate-builtin-skills.mjs && tsc -p tsconfig.json --noEmit"
   },
   "peerDependencies": {
@@ -54,6 +54,8 @@
     "react": "19.2.4",
     "workdsh-ui": "workspace:*",
     "workdsh-contracts": "workspace:*",
+    "workdsh-asset-manifest": "workspace:*",
+    "workdsh-asset-signature": "workspace:*",
     "@deepseek-ai/dsh-client-ui-primitives": "0.2.1-rc.5",
     "@types/node": "22.19.0"
   },

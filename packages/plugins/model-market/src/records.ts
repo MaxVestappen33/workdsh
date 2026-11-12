@@ -18,6 +18,17 @@ export interface InstallRecord {
   /** 该路由使用的凭据引用名。 */
   readonly credentialRef: string;
   readonly installedAt: string;
+  /**
+   * 安装清单（模型没有资产目录，清单写进安装记录值里）。
+   * `assetId` 是后台资产编号，显式写在记录值中，不再只依赖 `installs` 的键。
+   */
+  readonly manifest?: {
+    readonly assetType: 'model';
+    readonly assetId?: string;
+    readonly source: 'market' | 'local';
+    readonly installedAt: string;
+    readonly version?: string;
+  };
 }
 
 export interface MarketRecordFile {
@@ -55,6 +66,23 @@ const text = (value: unknown): string => typeof value === 'string' ? value : '';
 const strings = (value: unknown): string[] =>
   Array.isArray(value) ? [...new Set(value.flatMap(item => typeof item === 'string' && item ? [item] : []))] : [];
 
+/** 解析安装清单；结构不认识就当作没有清单（按用户自建处理），不影响其他记录。 */
+function parseManifest(value: unknown): InstallRecord['manifest'] | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const row = value as Record<string, unknown>;
+  if (row.assetType !== 'model') return undefined;
+  if (row.source !== 'market' && row.source !== 'local') return undefined;
+  if (typeof row.installedAt !== 'string' || !row.installedAt) return undefined;
+  if (row.assetId !== undefined && typeof row.assetId !== 'string') return undefined;
+  return {
+    assetType: 'model',
+    source: row.source,
+    installedAt: row.installedAt,
+    ...(row.assetId ? { assetId: row.assetId } : {}),
+    ...(typeof row.version === 'string' && row.version ? { version: row.version } : {}),
+  };
+}
+
 /** 读取安装记录；文件缺失或损坏时回退为空记录，不让市场页整体不可用。 */
 export async function readMarketRecords(file = marketRecordFile()): Promise<MarketRecordFile> {
   let parsed: unknown;
@@ -78,12 +106,14 @@ export async function readMarketRecords(file = marketRecordFile()): Promise<Mark
       const credentialRef = text(item.credentialRef);
       const installedAt = text(item.installedAt);
       const kind = item.kind === 'custom' ? 'custom' : 'market';
+      const manifest = parseManifest(item.manifest);
       if (!id || !route || !groupHash || !credentialRef) continue;
       if (kind === 'market' && !modelCode) continue;
       if (kind === 'custom' && modelCodes.length === 0) continue;
       installs[id] = {
         kind, route, modelCode, groupHash, credentialRef, installedAt,
         ...(kind === 'custom' ? { modelCodes } : {}),
+        ...(manifest ? { manifest } : {}),
       };
     }
   }

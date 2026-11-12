@@ -111,10 +111,10 @@ it('retries a failed version-policy installation after restart until official in
   expect(materializeRuntimeProfile(source, home).changed).toBe(false)
 })
 const MARKET_PATHS = {
+  appId: 'police-assistant',
   mcpMarketListPath: '/desktop-client/mcptool/queryAuthorizedMcpToolList',
   mcpMarketCategoriesPath: '/desktop-client/mcptool/queryMcpToolBizSceneList',
-  mcpMarketInstallPath: '/desktop-client/mcptool/installMcpTool',
-  mcpMarketUninstallPath: '/desktop-client/mcptool/unInstallMcpTool',
+  assetOperationReportPath: '/desktop-client/asset/operation/report',
 }
 const asServer = (value: Record<string, unknown>) => value as unknown as ServerConfig
 
@@ -128,7 +128,8 @@ it('injects market paths and the offline package registry as one connectors patc
   const rows = load(readFileSync(patch!, 'utf8')) as { id: string, config: Record<string, unknown> }[]
   expect(rows).toHaveLength(1)
   expect(rows[0]?.id).toBe('workdsh-connectors')
-  expect(rows[0]?.config.paths).toEqual({ list: MARKET_PATHS.mcpMarketListPath, categories: MARKET_PATHS.mcpMarketCategoriesPath, install: MARKET_PATHS.mcpMarketInstallPath, uninstall: MARKET_PATHS.mcpMarketUninstallPath })
+  expect(rows[0]?.config.clientId).toBe('police-assistant')
+  expect(rows[0]?.config.paths).toEqual({ list: MARKET_PATHS.mcpMarketListPath, categories: MARKET_PATHS.mcpMarketCategoriesPath, report: MARKET_PATHS.assetOperationReportPath })
   expect(rows[0]?.config.install).toEqual({ registry, node: '/opt/workdsh/node', pnpm: '/opt/workdsh/pnpm.cjs', root: join(home, 'mcp') })
 })
 
@@ -152,10 +153,11 @@ it('injects skill-market and skill-listing paths as one skills patch layer', () 
   const { home } = fixture()
   mkdirSync(home, { recursive: true })
   const patch = desktopSkillMarketPatch(home, asServer({
+    appId: 'police-assistant',
     skillMarketListPath: '/desktop-client/skill/queryAuthorizedSkillList',
     skillMarketCategoriesPath: '/desktop-client/skill/querySkillBizSceneList',
-    skillMarketInstallPath: '/desktop-client/skill/installSkill',
-    skillMarketUninstallPath: '/desktop-client/skill/unInstallSkill',
+    assetOperationReportPath: '/desktop-client/asset/operation/report',
+    assetGateSignaturePath: '/desktop-client/asset/queryAssetSignature',
     skillListingSubmitPath: '/desktop-client/skill/listingRequest',
     skillListingListPath: '/desktop-client/skill/queryMyListingSkillList',
     skillListingNodePath: '/desktop-client/queryAiNodeList',
@@ -164,14 +166,15 @@ it('injects skill-market and skill-listing paths as one skills patch layer', () 
     skillUploadPath: '/desktop-client/upload',
   }))
   expect(patch).toBeTruthy()
-  const rows = load(readFileSync(patch!, 'utf8')) as { id: string, config: { market: { paths: Record<string, unknown> }, listing: { paths: Record<string, unknown> } } }[]
+  const rows = load(readFileSync(patch!, 'utf8')) as { id: string, config: { market: { clientId: string, paths: Record<string, unknown> }, listing: { paths: Record<string, unknown> } } }[]
   expect(rows).toHaveLength(1)
   expect(rows[0]?.id).toBe('workdsh-skills')
+  expect(rows[0]?.config.market.clientId).toBe('police-assistant')
   expect(rows[0]?.config.market.paths).toEqual({
     list: '/desktop-client/skill/queryAuthorizedSkillList',
     categories: '/desktop-client/skill/querySkillBizSceneList',
-    install: '/desktop-client/skill/installSkill',
-    uninstall: '/desktop-client/skill/unInstallSkill',
+    report: '/desktop-client/asset/operation/report',
+    signature: '/desktop-client/asset/queryAssetSignature',
   })
   expect(rows[0]?.config.listing.paths).toEqual({
     submit: '/desktop-client/skill/listingRequest',
@@ -194,18 +197,18 @@ it('injects model-market paths as one model-market patch layer', () => {
   const { home } = fixture()
   mkdirSync(home, { recursive: true })
   const patch = desktopModelMarketPatch(home, asServer({
+    appId: 'police-assistant',
     modelMarketListPath: '/desktop-client/model/queryAuthorizedModelList',
-    modelMarketUsePath: '/desktop-client/model/useModel',
-    modelMarketUnusePath: '/desktop-client/model/unUseModel',
+    assetOperationReportPath: '/desktop-client/asset/operation/report',
   }))
   expect(patch).toBeTruthy()
-  const rows = load(readFileSync(patch!, 'utf8')) as { id: string, config: { paths: Record<string, unknown> } }[]
+  const rows = load(readFileSync(patch!, 'utf8')) as { id: string, config: { clientId: string, paths: Record<string, unknown> } }[]
   expect(rows).toHaveLength(1)
   expect(rows[0]?.id).toBe('workdsh-model-market')
+  expect(rows[0]?.config.clientId).toBe('police-assistant')
   expect(rows[0]?.config.paths).toEqual({
     list: '/desktop-client/model/queryAuthorizedModelList',
-    use: '/desktop-client/model/useModel',
-    unuse: '/desktop-client/model/unUseModel',
+    report: '/desktop-client/asset/operation/report',
   })
 })
 

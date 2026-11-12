@@ -3,6 +3,7 @@ import { dirname, join, delimiter } from 'node:path'
 import { PRODUCT_PACKAGES } from './workdsh-package-boundary.mjs'
 
 export const PRODUCT_SERVICES = Object.freeze({
+  'workdsh-plugin-asset-gate': 'workdshAssetGate',
   'workdsh-plugin-connectors': 'workdshConnectors',
   'workdsh-plugin-experts': 'workdshExperts',
   'workdsh-plugin-library': 'workdshLibrary',

@@ -32,16 +32,30 @@ export class DesktopAuthorityError extends Error {
   constructor(message: string, readonly status?: number) { super(message); }
 }
 const identifier = (value: unknown): value is string => typeof value === 'string' && /^[\w-]{1,160}$/.test(value);
+/**
+ * 后台绑定的内存复用窗口。
+ *
+ * 绑定只随登录态变化，同一个页面批量加载（例如技能页一次 5 个接口）没有必要各取一次；
+ * 5 秒足以覆盖一批并发请求，同时把「后台已吊销但本地尚未感知」的窗口限制在 5 秒内。
+ * 只存在于进程内存，不落盘、不写日志、不进入任何响应体。
+ */
+const BACKEND_BINDING_TTL_MS = 5_000;
 
-/** Main-owned capability to the Electron Main loopback authority. No backend token leaves Main. */
+/**
+ * Main-owned capability to the Electron Main loopback authority.
+ * The backend token stays in Main memory between calls, but `backendBinding()` fetches it over the
+ * capability-authenticated loopback bridge and hands it to the Host process on demand.
+ */
 export class DesktopAuthority {
   private binding?: Readonly<AuthorityFile>;
+  private cachedBackendBinding?: { value: { url: string, authorization: string }, expires: number };
+  private inflightBackendBinding?: Promise<{ url: string, authorization: string }>;
   private readonly lifetime = new AbortController();
   constructor(readonly config: Readonly<AccountDesktopConfig>) {
     if (!isAbsolute(config.authFile) || !identifier(config.principalId) || !identifier(config.organizationId) || !identifier(config.deviceId))
       throw new Error('Account Desktop requires a protected authFile and fixed user, organization and device');
   }
-  close(): void { this.lifetime.abort(); }
+  close(): void { this.cachedBackendBinding = undefined; this.lifetime.abort(); }
   private async credentials(): Promise<Readonly<AuthorityFile>> {
     const value = JSON.parse(await readProtectedFile(this.config.authFile, 8192)) as AuthorityFile;
     if (value.principalId !== this.config.principalId || value.organizationId !== this.config.organizationId || value.deviceId !== this.config.deviceId ||
@@ -106,6 +120,20 @@ export class DesktopAuthority {
    */
   async backendBinding(signal?: AbortSignal): Promise<{ url: string; authorization: string }> {
     signal?.throwIfAborted();
+    // 5 秒内复用同一份绑定；过期后重新走「复验绑定记录 → 复验登录态 → 取令牌」。
+    const cached = this.cachedBackendBinding;
+    if (cached && cached.expires > Date.now()) return cached.value;
+    // 单飞：同一时刻只允许一个绑定请求在飞，并发调用共享同一次结果。
+    const inflight = this.inflightBackendBinding;
+    if (inflight) return await inflight;
+    const pending = this.fetchBackendBinding(signal).finally(() => {
+      if (this.inflightBackendBinding === pending) this.inflightBackendBinding = undefined;
+    });
+    this.inflightBackendBinding = pending;
+    return await pending;
+  }
+  private async fetchBackendBinding(signal?: AbortSignal): Promise<{ url: string; authorization: string }> {
+    signal?.throwIfAborted();
     // 先确认绑定记录本身仍然完好：受保护文件被替换或绑定变更时，报错必须指向绑定而不是令牌通道。
     const binding = await this.credentials();
     let value: unknown;
@@ -124,7 +152,9 @@ export class DesktopAuthority {
     // 后台地址必须与绑定记录一致；授权值必须是非空字符串。错误消息只描述结论，不回显令牌或地址。
     if (url === undefined || url !== binding.backendUrl || typeof record.authorization !== 'string' || !record.authorization)
       throw new DesktopAuthorityError('Account Desktop backend binding is invalid');
-    return { url, authorization: record.authorization };
+    const result = { url, authorization: record.authorization };
+    this.cachedBackendBinding = { value: result, expires: Date.now() + BACKEND_BINDING_TTL_MS };
+    return result;
   }
   /**
    * 通知 Main：一次成员身份的请求被后台判定为未授权（HTTP 401 或信封 code 401）。
@@ -134,6 +164,8 @@ export class DesktopAuthority {
    * 的能力方调用。调用成功与否都不影响调用方原有的 401 判定，失效通知是尽力而为。
    */
   async unauthorized(signal?: AbortSignal): Promise<void> {
+    // 后台已判定失效：立即丢弃缓存绑定，后续请求必须重新向 Main 复验。
+    this.cachedBackendBinding = undefined;
     await this.request('/auth/backend-unauthorized', 'POST', {}, signal);
   }
   async logout(signal?: AbortSignal): Promise<{ local: true }> {

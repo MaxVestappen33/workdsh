@@ -19,7 +19,7 @@ The Desktop Profile bundles three separate third-party plugins:
 - [`dshmarket`](https://www.npmjs.com/package/dshmarket) version 1.66.8 for
   DSH community plugin discovery. Source and MIT license:
   <https://github.com/dsh-market/dsh-market>.
-- [`dsh-mnemon`](https://www.npmjs.com/package/dsh-mnemon) version 0.5.36 as the
+- [`dsh-mnemon`](https://www.npmjs.com/package/dsh-mnemon) version 0.5.41 as the
   built-in memory and skill-evolution bundle. Source and MIT license:
   <https://github.com/omdsh-dev/dsh-mnemon>.
 

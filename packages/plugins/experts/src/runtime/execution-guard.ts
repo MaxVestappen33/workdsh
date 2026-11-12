@@ -7,6 +7,72 @@ import { expertPersonaConfig, expertPresetDir, readExpertPreset, resolveAgentsHo
 import { join } from 'node:path';
 import { ExpertsError } from '../domain/values.js';
 
+/** 资产闸门是可选宿主能力：缺失或两个专家子闸门都关时完全透明。 */
+type ExpertAssetType = 'expert' | 'expert_group';
+
+interface AssetGateLike {
+  enabled(assetType: ExpertAssetType): boolean;
+  decide(request: { assetType: ExpertAssetType; assetId: string; usage: 'use' }): Promise<{ allow: boolean; reason: string; message: string }>;
+  unlisted(): { reason: string; message: string };
+  /** 拒绝审计只入队；实现侧吞掉所有异常，不影响准入判断。 */
+  auditDenied?(input: {
+    readonly layer: 'call_expert';
+    readonly reasonCode: string;
+    readonly assetType?: string;
+    readonly assetId?: string;
+    readonly assetName?: string;
+  }): void;
+}
+
+/** 判定只需要已解析出的绑定、修订与来源清单。 */
+interface ResolvedRoleLike {
+  readonly binding: { readonly expertRevisionRef: { readonly expertId: string } };
+  readonly revision: { readonly expertId: string; readonly definition: { readonly team?: unknown } };
+}
+
+/**
+ * 专家准入：按安装清单判定，与工具层同一套口径与原因码。
+ *
+ * 团队成员不单独持有清单，解析到所属专家团（lead）记录；`resolveNativeRole` 已校验
+ * 成员属于该团、且成员与主任务同主体，这里不再重复判断身份。
+ * 两个专家子闸门都关时只做一次同步策略读取，不解析身份、不读清单。
+ */
+async function admitExpertAsset(
+  ctx: Context,
+  role: ResolvedRoleLike,
+  membership: { readonly role?: string } | undefined,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  const gate = ctx.reflect.get('workdshAssetGate') as AssetGateLike | undefined;
+  if (!gate) return;
+  if (!gate.enabled('expert') && !gate.enabled('expert_group')) return;
+  signal?.throwIfAborted();
+  const teammate = membership?.role === 'teammate';
+  const targetId = teammate ? role.binding.expertRevisionRef.expertId : role.revision.expertId;
+  const manifest = ctx.workdshExperts.installManifestOf(targetId);
+  const assetType: ExpertAssetType = manifest?.assetType
+    ?? (teammate || role.revision.definition.team ? 'expert_group' : 'expert');
+  if (!gate.enabled(assetType)) return;
+  if (manifest?.source === 'market' && manifest.assetId) {
+    const decision = await gate.decide({ assetType, assetId: manifest.assetId, usage: 'use' });
+    if (!decision.allow) {
+      gate.auditDenied?.({ layer: 'call_expert', reasonCode: decision.reason, assetType, assetId: manifest.assetId });
+      throw new ExpertsError(decision.reason, decision.message);
+    }
+    return;
+  }
+  if (manifest?.source === 'builtin') return;
+  // local 或无清单（用户自建/导入）：按未上架拒绝。
+  const denial = gate.unlisted();
+  gate.auditDenied?.({
+    layer: 'call_expert',
+    reasonCode: denial.reason,
+    assetType,
+    ...(manifest?.assetId ? { assetId: manifest.assetId } : {}),
+  });
+  throw new ExpertsError(denial.reason, denial.message);
+}
+
 /** Asset admission and role composition only. No child driver, mailbox or Team state. */
 export function registerExpertExecutionGuard(ctx: Context, options: { agentsHome?: string } = {}): void {
   const agentsHome = resolveAgentsHome(options.agentsHome);
@@ -39,6 +105,7 @@ export function registerExpertExecutionGuard(ctx: Context, options: { agentsHome
       if (childActor.principalId !== actor.principalId || childActor.organizationId !== actor.organizationId) throw new ExpertsError('experts/forbidden', '成员和主任务不属于同一授权主体。');
     }
     const { revision } = role;
+    await admitExpertAsset(ctx, role, membership, signal);
     if (root === agent && !revision.definition.team) return;
     if (installed.get(agent) === revision.compositionDigest) return;
     signal?.throwIfAborted();

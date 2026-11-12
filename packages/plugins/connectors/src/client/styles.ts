@@ -143,7 +143,10 @@ export const connectorCss = `${modalCss}
 .wd-connectors .switch-loading{flex:none;display:grid;place-items:center;width:34px;height:34px}
 .wd-connectors .installed-pill{flex:none;padding:4px 10px;border-radius:999px}
 .wd-connectors .installed-pill{background:var(--dsw-alias-bg-layer-1);color:#55ce63;font-size:12px;font-weight:500}
+.wd-connectors .auth-reason{overflow:hidden;margin:8px 0 0;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}
 .wd-connectors .market-foot{display:flex;justify-content:center;padding:22px 0 6px;color:var(--dsw-alias-label-tertiary);font-size:12px}
+/* 列表/卡片区：覆盖层只罩这一块，顶部页签与筛选保持可点。 */
+.wd-connectors .panel-content{position:relative;min-height:120px}
 
 /* ------------------------------------------------------------ 安装进度条 */
 .wd-connectors .install-bar,.connector-detail-dialog .install-bar{position:relative;overflow:hidden;height:3px;margin-top:10px}

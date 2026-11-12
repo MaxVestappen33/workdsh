@@ -3,17 +3,18 @@
 export interface ModelMarketPaths {
   /** 已授权模型列表（GET）。 */
   readonly list: string;
-  /** 使用模型上报（POST）。 */
-  readonly use: string;
-  /** 卸载模型上报（POST）。 */
-  readonly unuse: string;
+  /** 资产操作记录上报（POST）：安装/卸载完成后实时上报一条事件，宿主可覆盖。 */
+  readonly report?: string;
 }
 
-/** 与 Desktop 随包 workdsh-app.json 的 server 段保持一致；Desktop 可通过插件选项覆盖。 */
+/**
+ * 与 Desktop 随包 workdsh-app.json 的 server 段保持一致；Desktop 可通过插件选项覆盖。
+ * 上报路径只在 Host 侧使用（缺省回退到 contracts 的常量），这里写字面量是为了避免
+ * 客户端 bundle 引入 contracts 子路径模块（它依赖 node:crypto）。
+ */
 export const DEFAULT_MODEL_MARKET_PATHS: ModelMarketPaths = {
   list: '/desktop-client/model/queryAuthorizedModelList',
-  use: '/desktop-client/model/useModel',
-  unuse: '/desktop-client/model/unUseModel',
+  report: '/desktop-client/asset/operation/report',
 };
 
 /** 后台字典（与 jeecg 字典 model_provider 一致）。 */

@@ -21,8 +21,6 @@ export interface AccountUser {
 /** Encrypted payload written to disk. */
 export interface AccountSession {
   token: string
-  /** JWT exp (seconds) if the token carried one; undefined if opaque. */
-  expiry?: number
   user: AccountUser
   /** The raw userInfo delivered by the login response (kept whole for later permission use). */
   rawUserInfo: Record<string, unknown>
@@ -69,16 +67,6 @@ export type AccountSyncOutcome =
   | { outcome: 'unauthorized', message: string }
   | { outcome: 'retry', message: string }
 
-/** Decode the JWT exp claim without validating signature (local freshness only). */
-export function jwtExpiry(token: string): number | undefined {
-  const parts = token.split('.')
-  if (parts.length !== 3) return undefined
-  try {
-    const payload = JSON.parse(Buffer.from(parts[1]!, 'base64url').toString('utf8')) as { exp?: unknown }
-    return typeof payload.exp === 'number' && Number.isFinite(payload.exp) ? payload.exp : undefined
-  } catch { return undefined }
-}
-
 function accountOrigin(baseUrl: string): string {
   const url = new URL(baseUrl.startsWith('http') ? baseUrl : `http://${baseUrl}`)
   if (url.search || url.hash || url.username || url.password) throw new Error('账号服务地址无效')
@@ -89,18 +77,16 @@ export class AccountLogin {
   readonly config: ServerConfig
   readonly origin: string
   readonly token: string
-  readonly expiry: number | undefined
   /** 可刷新快照：登录后由 syncProfile() 更新，凭证（token/config）保持不可变。 */
   #user: AccountUser
   #rawUserInfo: Record<string, unknown>
   #fetch: typeof fetch
   #lifetime = new AbortController()
 
-  private constructor(config: ServerConfig, token: string, user: AccountUser, rawUserInfo: Record<string, unknown>, request: typeof fetch, expiry?: number) {
+  private constructor(config: ServerConfig, token: string, user: AccountUser, rawUserInfo: Record<string, unknown>, request: typeof fetch) {
     this.config = Object.freeze({ ...config })
     this.origin = accountOrigin(config.baseUrl)
     this.token = token
-    this.expiry = expiry ?? jwtExpiry(token)
     this.#user = Object.freeze({ ...user })
     this.#rawUserInfo = Object.freeze({ ...rawUserInfo })
     this.#fetch = request
@@ -136,11 +122,6 @@ export class AccountLogin {
     }
     const user = accountUser(origin, result.userInfo as Record<string, unknown>)
     return new AccountLogin(config, result.token, user, result.userInfo as Record<string, unknown>, request)
-  }
-
-  /** True when the JWT carries an exp and it is already past. Opaque tokens always assumed live. */
-  isExpired(now = Date.now()): boolean {
-    return this.expiry !== undefined && this.expiry * 1000 <= now
   }
 
   /**
@@ -212,12 +193,12 @@ export class AccountLogin {
   }
 
   seal(): AccountSession {
-    return { token: this.token, ...(this.expiry === undefined ? {} : { expiry: this.expiry }), user: { ...this.user }, rawUserInfo: { ...this.rawUserInfo } }
+    return { token: this.token, user: { ...this.user }, rawUserInfo: { ...this.rawUserInfo } }
   }
 
-  /** Restore a prior login from its decrypted store. Expiry defaults to the JWT's own exp. */
-  static restore(config: ServerConfig, user: AccountUser, token: string, expiry: number | undefined, rawUserInfo: Record<string, unknown>, request: typeof fetch = fetch): AccountLogin {
-    return new AccountLogin(config, token, user, rawUserInfo, request, expiry)
+  /** Restore a prior login from its decrypted store. */
+  static restore(config: ServerConfig, user: AccountUser, token: string, rawUserInfo: Record<string, unknown>, request: typeof fetch = fetch): AccountLogin {
+    return new AccountLogin(config, token, user, rawUserInfo, request)
   }
 
   cancelRequests(): void { this.#lifetime.abort() }
@@ -320,9 +301,8 @@ export class AccountStore {
       const user = parsed.user as AccountUser
       if (typeof user.userId !== 'string' || typeof user.username !== 'string' || typeof user.displayName !== 'string') throw new Error('bad-user')
       const token = parsed.token
-      const expiry = typeof parsed.expiry === 'number' ? parsed.expiry : undefined
       const rawUserInfo = (parsed.rawUserInfo && typeof parsed.rawUserInfo === 'object') ? parsed.rawUserInfo as Record<string, unknown> : {}
-      return { session: { token, ...(expiry === undefined ? {} : { expiry }), user, rawUserInfo }, user, token }
+      return { session: { token, user, rawUserInfo }, user, token }
     } catch {
       // 解不开就丢弃旧会话，让用户重新登录；不把加密失败升级成启动失败。
       this.clear()
@@ -334,8 +314,8 @@ export class AccountStore {
 }
 
 /** Restore a previous login purely from its store (already decrypted). */
-export function restoreAccountLogin(config: ServerConfig, user: AccountUser, token: string, expiry: number | undefined, rawUserInfo: Record<string, unknown>): AccountLogin {
-  return AccountLogin.restore(config, user, token, expiry, rawUserInfo, fetch)
+export function restoreAccountLogin(config: ServerConfig, user: AccountUser, token: string, rawUserInfo: Record<string, unknown>): AccountLogin {
+  return AccountLogin.restore(config, user, token, rawUserInfo, fetch)
 }
 
 /**
@@ -347,7 +327,7 @@ export function restoreAccountLogin(config: ServerConfig, user: AccountUser, tok
  * `onUnauthorized` is optional: Main uses it to run the same session-invalidation
  * finish as the sync loop (提示 + 退回登录页) when a member request was rejected by the backend.
  */
-export async function startAccountAuthority(login: AccountLogin, onLogout: () => void, onInvalid: () => void, onUnauthorized?: () => void): Promise<AccountAuthority> {
+export async function startAccountAuthority(login: AccountLogin, onLogout: () => void, onUnauthorized?: () => void): Promise<AccountAuthority> {
   const key = randomBytes(32).toString('hex')
   const expected = Buffer.from(`Bearer ${key}`)
   let closing = false
@@ -367,16 +347,15 @@ export async function startAccountAuthority(login: AccountLogin, onLogout: () =>
       res.once('finish', () => { setTimeout(onLogout, 100) }); return
     }
     if (url.pathname === '/auth/me' && req.method === 'GET' && !url.search) {
-      if (login.isExpired()) { closing = true; reject(401, 'Account authorization expired'); setImmediate(onInvalid); return }
       res.writeHead(200, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ ...login.user, principalId: login.user.userId, backendUrl: login.origin, mustChangePassword: false, desktop: true }))
       return
     }
     // 只读的业务后台绑定：登录 JWT 只在 Main 内存里按需取用，绝不下发给渲染层，也不落盘。
-    // 与 /auth/me 同样只在登录态有效时下发；已过期一律 401，避免上层拿到失效令牌。
+    // 会话是否有效由后台判定（后台以 Redis 白名单为准，可在 token 字符串不变的前提下持续续期），
+    // 本地不再按 JWT exp 拒绝，避免把仍在线的会话提前踢下线。
     if (url.pathname === '/auth/backend-binding' && req.method === 'GET' && !url.search) {
       if (req.headers['content-length'] !== undefined || req.headers['transfer-encoding'] !== undefined) { reject(400, 'Desktop read-only operation accepts no request body'); return }
-      if (login.isExpired()) { closing = true; reject(401, 'Account authorization expired'); setImmediate(onInvalid); return }
       res.writeHead(200, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ url: login.origin, authorization: login.token }))
       return

@@ -72,13 +72,24 @@ function harness(models, options = {}) {
       if (query?.isDefault === '1') {
         return { records: defaults, total: defaults.length, pages: defaults.length ? 1 : 0, size: 100, current: 1 };
       }
-      const row = models[query?.id];
-      return { records: row ? [row] : [], total: row ? 1 : 0, pages: row ? 1 : 0, size: 1, current: 1 };
+      const row = query?.id === undefined ? undefined : models[query.id];
+      if (query?.id !== undefined) {
+        return { records: row ? [row] : [], total: row ? 1 : 0, pages: row ? 1 : 0, size: 1, current: 1 };
+      }
+      const rows = Object.values(models);
+      return { records: rows, total: rows.length, pages: rows.length ? 1 : 0, size: 100, current: 1 };
     },
-    async post(_path, body) { calls.push(body.id); },
+    async post(path, body) { calls.push({ path, body }); },
   };
   const ctx = {
-    reflect: { provide() {}, get(name) { return name === 'workdshBackend' ? channel : undefined; } },
+    reflect: {
+      provide() {},
+      get(name) {
+        if (name === 'workdshBackend') return channel;
+        if (name === 'workdshAssetGate') return options.gate;
+        return undefined;
+      },
+    },
     effect() { return () => {}; },
     logger: { warn() {} },
     settings,
@@ -86,6 +97,38 @@ function harness(models, options = {}) {
   };
   return { ctx, sections, secrets, calls };
 }
+
+test('资产闸门开启时过滤未授权模型并拒绝未授权安装', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'workdsh-model-market-service-'));
+  const previous = process.env.DSH_HOME;
+  process.env.DSH_HOME = home;
+  try {
+    const models = {
+      1: { ...base, id: '1', modelName: 'DeepSeek-V4.1-Flash', modelCode: 'deepseek-flash', isDefault: '0', apiKey: 'sk-1' },
+      2: { ...base, id: '2', modelName: 'DeepSeek-R1', modelCode: 'deepseek-r1', isDefault: '0', apiKey: 'sk-1' },
+    };
+    const gate = {
+      enabled: type => type === 'model',
+      async decide({ assetId }) {
+        return assetId === '1'
+          ? { allow: true, reason: 'gate/allowed-entitled', message: '已授权。' }
+          : { allow: false, reason: 'gate/denied-not-entitled', message: '当前账号未获得该项资产的授权。' };
+      },
+    };
+    const { ctx } = harness(models, { gate });
+    const service = new ModelMarketService(ctx, {});
+
+    assert.deepEqual((await service.list({})).records.map(row => row.id), ['1']);
+    await assert.rejects(() => service.install('2'), error => error.code === 'gate/denied-not-entitled');
+    // 已授权模型可安装，卸载始终放行。
+    await service.install('1');
+    await service.uninstall('1');
+  } finally {
+    if (previous === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previous;
+    await rm(home, { recursive: true, force: true });
+  }
+});
 
 test('安装按供应商聚合、写凭据并同步会话默认', async () => {
   const home = await mkdtemp(join(tmpdir(), 'workdsh-model-market-service-'));
@@ -97,7 +140,8 @@ test('安装按供应商聚合、写凭据并同步会话默认', async () => {
       2: { ...base, id: '2', modelName: 'DeepSeek-R1', modelCode: 'deepseek-r1', isDefault: '0', apiKey: 'sk-1' },
     };
     const { ctx, sections, secrets, calls } = harness(models);
-    const service = new ModelMarketService(ctx, {});
+    // clientId 来自插件配置（宿主从 server.appId 注入），不再取设备标识。
+    const service = new ModelMarketService(ctx, { clientId: 'police-assistant' });
 
     const first = await service.install('1');
     assert.equal(first.route, 'workdsh-deepseek');
@@ -113,6 +157,10 @@ test('安装按供应商聚合、写凭据并同步会话默认', async () => {
     assert.deepEqual(providers()['workdsh-deepseek'].models.map(row => row.id), ['deepseek-flash', 'deepseek-r1']);
     assert.deepEqual((await service.list({})).installedIds.sort(), ['1', '2']);
 
+    // 已安装的模型再次点击添加属于覆盖安装：不产生新的 install 上报。
+    await service.install('1');
+    assert.equal(calls.filter(call => call.body.assetId === '1' && call.body.operationType === 'install').length, 1);
+
     await service.uninstall('1');
     assert.deepEqual(sections.get('llm-pi-ai').value.providers['workdsh-deepseek'].models.map(row => row.id), ['deepseek-r1']);
     assert.equal(sections.get('agent-default-model').value.provider, undefined);
@@ -120,7 +168,45 @@ test('安装按供应商聚合、写凭据并同步会话默认', async () => {
     await service.uninstall('2');
     assert.equal(sections.get('llm-pi-ai').value.providers['workdsh-deepseek'], undefined);
     assert.equal(secrets.has('WORKDSH_DEEPSEEK_API_KEY'), false);
-    assert.deepEqual(calls, ['1', '2', '1', '2']);
+
+    // 安装/卸载都实时上报到统一接口，一次一条且不带旧 useModel/unUseModel 路径。
+    assert.deepEqual(
+      calls.map(call => [call.path, call.body.assetType, call.body.assetId, call.body.operationType, call.body.operationResult]),
+      [
+        ['/desktop-client/asset/operation/report', 'model', '1', 'install', 'success'],
+        ['/desktop-client/asset/operation/report', 'model', '2', 'install', 'success'],
+        ['/desktop-client/asset/operation/report', 'model', '1', 'uninstall', 'success'],
+        ['/desktop-client/asset/operation/report', 'model', '2', 'uninstall', 'success'],
+      ],
+    );
+    assert.equal(calls[0].body.clientId, 'police-assistant');
+    assert.match(calls[0].body.operationTime, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/u);
+  } finally {
+    if (previous === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previous;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('安装失败上报 failed 与失败码，且失败不影响原有安装记录', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'workdsh-model-market-service-'));
+  const previous = process.env.DSH_HOME;
+  process.env.DSH_HOME = home;
+  try {
+    const models = {
+      9: { ...base, id: '9', modelName: '缺密钥模型', modelCode: 'no-key', apiKey: '' },
+    };
+    const { ctx, calls } = harness(models);
+    await assert.rejects(new ModelMarketService(ctx, { clientId: 'police-assistant' }).install('9'));
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].path, '/desktop-client/asset/operation/report');
+    assert.equal(calls[0].body.assetType, 'model');
+    assert.equal(calls[0].body.assetId, '9');
+    assert.equal(calls[0].body.operationType, 'install');
+    assert.equal(calls[0].body.operationResult, 'failed');
+    assert.equal(calls[0].body.failReason, 'other');
+    assert.match(calls[0].body.failDetail, /访问密钥/u);
+    assert.equal(calls[0].body.clientId, 'police-assistant');
   } finally {
     if (previous === undefined) delete process.env.DSH_HOME;
     else process.env.DSH_HOME = previous;
@@ -142,6 +228,45 @@ test('非默认模型安装不会改写会话默认', async () => {
     const provider = sections.get('llm-pi-ai').value.providers['workdsh-qwen'];
     assert.equal(provider.api, 'anthropic-messages');
     assert.deepEqual(provider.models[0].input, ['text']);
+  } finally {
+    if (previous === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previous;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('执行期反查按 route + modelCode 命中，且按账号隔离', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'workdsh-model-market-lookup-'));
+  const previous = process.env.DSH_HOME;
+  process.env.DSH_HOME = home;
+  try {
+    const models = {
+      1: { ...base, id: '1', modelName: 'DeepSeek-V4.1-Flash', modelCode: 'deepseek-flash', isDefault: '1', apiKey: 'sk-1' },
+    };
+    const accountA = join(home, 'accounts', 'member-a');
+    const accountB = join(home, 'accounts', 'member-b');
+    const serviceA = new ModelMarketService(harness(models).ctx, { stateDir: accountA });
+    await serviceA.install('1');
+
+    assert.deepEqual(await serviceA.installManifestOfModel('workdsh-deepseek', 'deepseek-flash'), {
+      kind: 'market', source: 'market', assetId: '1',
+    });
+    assert.equal(await serviceA.installManifestOfModel('workdsh-deepseek', 'deepseek-r1'), undefined);
+    assert.equal(await serviceA.installManifestOfModel('other-route', 'deepseek-flash'), undefined, 'route 不匹配不得命中');
+    assert.equal(await serviceA.installManifestOfModel('', 'deepseek-flash'), undefined);
+
+    const serviceB = new ModelMarketService(harness(models).ctx, { stateDir: accountB });
+    assert.equal(await serviceB.installManifestOfModel('workdsh-deepseek', 'deepseek-flash'), undefined, '反查必须按账号隔离');
+
+    await serviceA.customInstall({
+      providerId: 'acme-gateway', displayName: 'Acme', apiUrl: 'https://gw.example/v1',
+      apiProtocol: 'openai-completions', apiKey: 'sk-custom',
+      models: [{ id: 'acme-think', name: 'Acme Think', input: ['text'] }],
+    });
+    assert.deepEqual(await serviceA.installManifestOfModel('acme-gateway', 'acme-think'), { kind: 'custom', source: 'local' });
+
+    await serviceA.uninstall('1');
+    assert.equal(await serviceA.installManifestOfModel('workdsh-deepseek', 'deepseek-flash'), undefined);
   } finally {
     if (previous === undefined) delete process.env.DSH_HOME;
     else process.env.DSH_HOME = previous;
@@ -263,7 +388,7 @@ test('默认模型首次安装、卸载后不再装回，只补齐新增默认�
     const seedModels = () => (providers()['workdsh-deepseek']?.models ?? []).map(row => row.id);
 
     // 打开模型市场页会触发默认模型种子。
-    const service = new ModelMarketService(ctx, { stateDir });
+    const service = new ModelMarketService(ctx, { stateDir, clientId: 'police-assistant' });
     await service.list({});
     await until(() => Promise.resolve(existsSync(join(stateDir, 'defaults-ready.json'))));
 
@@ -278,7 +403,7 @@ test('默认模型首次安装、卸载后不再装回，只补齐新增默认�
     models['3'] = added;
 
     // 第二次启动：已安装的 1 跳过，卸载过的 2 不再装回，只安装新增的 3。
-    const restarted = new ModelMarketService(ctx, { stateDir });
+    const restarted = new ModelMarketService(ctx, { stateDir, clientId: 'police-assistant' });
     await restarted.list({});
     await until(() => Promise.resolve(seedModels().includes('seed-c')));
 
@@ -286,7 +411,15 @@ test('默认模型首次安装、卸载后不再装回，只补齐新增默认�
     const records = JSON.parse(await readFile(join(stateDir, 'market-installs.json'), 'utf8'));
     assert.deepEqual(records.handledDefaults.sort(), ['1', '2', '3']);
     assert.deepEqual(records.dismissedDefaults, ['2']);
-    assert.deepEqual(calls, ['1', '2', '2', '3']);
+    assert.deepEqual(
+      calls.map(call => [call.body.assetId, call.body.operationType, call.body.operationResult]),
+      [
+        ['1', 'install', 'success'],
+        ['2', 'install', 'success'],
+        ['2', 'uninstall', 'success'],
+        ['3', 'install', 'success'],
+      ],
+    );
   } finally {
     await rm(home, { recursive: true, force: true });
   }

@@ -44,22 +44,30 @@ export function marketListQuery(filter: MarketListFilter, page: number, dictiona
   };
 }
 
+/**
+ * 是否还有下一页：只按后台原始分页判断（页码 × 每页条数 < 后台原始总数）。
+ * `items` 已经被授权闸门二次过滤，不能参与翻页判断，否则某一页被过滤清空时会提前停止。
+ */
+function rawHasMore(page: MarketPage, total: number): boolean {
+  return page.page * MARKET_PAGE_SIZE < total;
+}
+
 /** 首屏或筛选变化：用新的一页替换已有列表（回到该页，不保留旧结果）。 */
 export function startMarketList(page: MarketPage): MarketListState {
   return {
     items: page.items,
     total: page.total,
     page: page.page,
-    hasMore: page.items.length > 0 && page.items.length < page.total,
+    hasMore: rawHasMore(page, page.total),
   };
 }
 
-/** 加载更多：把下一页追加到已有列表，按 originId 去重；返回的记录为空时视为到底。 */
+/** 加载更多：把下一页追加到已有列表，按 originId 去重；后台已无下一页时视为到底。 */
 export function appendMarketList(state: MarketListState, page: MarketPage): MarketListState {
   const seen = new Set(state.items.map(item => item.originId));
   const items = [...state.items, ...page.items.filter(item => !seen.has(item.originId))];
   const total = Math.max(state.total, page.total);
-  return { items, total, page: page.page, hasMore: page.items.length > 0 && items.length < total };
+  return { items, total, page: page.page, hasMore: rawHasMore(page, total) };
 }
 
 /** 分类字典 value → 界面文案；无法映射的 value 直接跳过，不把原始编码显示给用户。 */

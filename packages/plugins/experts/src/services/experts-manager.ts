@@ -34,6 +34,7 @@ import type {
   ExpertDetail,
   ExpertDraft,
   ExpertExport,
+  ExpertInstallManifest,
   ExpertListQuery,
   ExpertListResult,
   ExpertListingOptions,
@@ -78,6 +79,7 @@ import { assertUploadWithinLimit, buildExport, preflightPackage } from './portab
 import { installationsDomainSpec, installationKey } from '../storage/installations.js';
 import { RemoteExpertCatalog, type BackendChannelLike } from './remote-catalog.js';
 import { resolveExpertApiPaths, type ExpertApiPaths } from './endpoints.js';
+import { resolveInstallManifest } from './visibility.js';
 
 /**
  * The single Host domain service for experts (D04 / P1-02, expert module 0.1).
@@ -289,6 +291,17 @@ function listingFailure(error: unknown): string {
 }
 
 declare module '@deepseek-ai/cordis' { interface Context { workdshConnectors: ConnectorManagementService; } }
+
+/** 闸门服务的最小结构面：专家插件不直接依赖 asset-gate，未接入时全部退回无闸门行为。 */
+interface AssetGateProbe {
+  enabled(assetType: string): boolean;
+  revoked(assetType: string, assetId: string): boolean;
+  clearRevoked(assetType: string, assetId: string): void;
+  revocationReason(): { readonly reason: string; readonly message: string };
+  integrityMismatch(): { readonly reason: string; readonly message: string };
+  decide(request: { readonly assetType: string; readonly assetId: string; readonly usage: string }):
+    Promise<{ readonly allow: boolean; readonly message: string }>;
+}
 
 /** 后台管理系统单点跳转结果：degraded 为 true 时只拿到纯登录地址。 */
 export interface AdminSsoTarget {
@@ -601,6 +614,10 @@ export class ExpertsManager extends Service implements ExpertsService {
       id: expertId, owner: this.newOwner(actor), origin: 'default', availability: 'enabled',
       revision: `r-${randomUUID()}`, draftRevision,
       publishedRevisionRef: { expertId, revisionId }, createdAt: now, updatedAt: now,
+      installManifest: {
+        assetType: normalized.team ? 'expert_group' : 'expert', source: 'builtin',
+        installedAt: now, digest: compiled.compositionDigest,
+      },
     };
     await this.revisionsTable().put(keys.revision(expertId, revisionId), revision);
     await this.draftsTable().put(keys.draft(expertId), draft);
@@ -740,6 +757,44 @@ export class ExpertsManager extends Service implements ExpertsService {
   }
 
   /**
+   * 撤权协调：已安装且来源为市场、带后台编号的专家与专家团。
+   * 团队成员跳过（其清单解析到所属专家团，由团记录统一判定）。
+   */
+  gateAssets(): readonly { readonly localId: string; readonly assetId: string; readonly assetType: 'expert' | 'expert_group' }[] {
+    const rows: { localId: string; assetId: string; assetType: 'expert' | 'expert_group' }[] = [];
+    for (const [, expert] of this.expertsTable().entries()) {
+      if (expert.teamParentId) continue;
+      const manifest = this.installManifestOf(expert.id);
+      if (manifest?.source === 'market' && manifest.assetId) {
+        rows.push({ localId: expert.id, assetId: manifest.assetId, assetType: manifest.assetType });
+      }
+    }
+    return rows;
+  }
+
+  private gateProbe(): AssetGateProbe | undefined {
+    try { return this.ctx.reflect.get('workdshAssetGate') as AssetGateProbe | undefined; } catch { return undefined; }
+  }
+
+  private clearGateMark(assetType: string, assetId: string | undefined): void {
+    if (!assetId) return;
+    try { this.gateProbe()?.clearRevoked(assetType, assetId); } catch { /* 闸门不可用不影响主流程 */ }
+  }
+
+  /** 列表授权状态：只对市场来源且对应子闸门开启的资产计算。 */
+  private async authStateOf(expert: Expert): Promise<{ readonly authState?: 'unauthorized' | 'revoked'; readonly authReason?: string }> {
+    const manifest = this.installManifestOf(expert.id);
+    if (manifest?.source !== 'market' || !manifest.assetId) return {};
+    const gate = this.gateProbe();
+    if (!gate?.enabled(manifest.assetType)) return {};
+    if (gate.revoked(manifest.assetType, manifest.assetId)) {
+      return { authState: 'revoked', authReason: gate.revocationReason().message };
+    }
+    const decision = await gate.decide({ assetType: manifest.assetType, assetId: manifest.assetId, usage: 'use' });
+    return decision.allow ? {} : { authState: 'unauthorized', authReason: decision.message };
+  }
+
+  /**
    * Execution gate for product mode: an expert is executable only when it came from
    * a backend installation. Team members inherit their lead's installation through
    * `teamParentId`, because only the team itself is installed.
@@ -846,6 +901,7 @@ export class ExpertsManager extends Service implements ExpertsService {
     readiness: ExpertReadiness,
     preference: ExpertPreference | undefined,
     caps: { canUse: boolean; canEdit: boolean; canManage: boolean },
+    auth?: { readonly authState?: 'unauthorized' | 'revoked'; readonly authReason?: string },
   ): ExpertSummary {
     const definition = draft.definition;
     return {
@@ -859,7 +915,8 @@ export class ExpertsManager extends Service implements ExpertsService {
       origin: expert.origin,
       availability: expert.availability,
       ...(expert.publishedRevisionRef === undefined ? {} : { publishedRevisionRef: expert.publishedRevisionRef }),
-      canUse: caps.canUse,
+      // 授权失效时即使记录仍是 enabled 也不可召唤；用户启用位保持原样，恢复授权后自动还原。
+      canUse: caps.canUse && auth?.authState !== 'revoked',
       canEdit: caps.canEdit,
       canManage: caps.canManage,
       readiness,
@@ -868,6 +925,7 @@ export class ExpertsManager extends Service implements ExpertsService {
       updatedAt: expert.updatedAt,
       installedFromCatalog: this.isInstalledExpert(expert.id),
       ...(this.executionBlockOf(expert.id) === undefined ? {} : { executionBlocked: 'approval-required' as const }),
+      ...(auth?.authState ? { authState: auth.authState, ...(auth.authReason ? { authReason: auth.authReason } : {}) } : {}),
     };
   }
 
@@ -925,7 +983,11 @@ export class ExpertsManager extends Service implements ExpertsService {
     });
   }
 
-  async list(actor: ActorContext, query: ExpertListQuery, signal?: AbortSignal): Promise<ExpertListResult> {
+  async list(
+    actor: ActorContext,
+    query: ExpertListQuery,
+    signal?: AbortSignal,
+  ): Promise<ExpertListResult> {
     signal?.throwIfAborted();
     assertActorContext(actor);
     if (query.search !== undefined && codePointLength(query.search) > EXPERT_LIMITS.searchMaxChars) {
@@ -947,7 +1009,8 @@ export class ExpertsManager extends Service implements ExpertsService {
       if (query.availability !== undefined && expert.availability !== query.availability) continue;
       const draft = this.draftsTable().get(keys.draft(expert.id));
       if (!draft) continue;
-      if (query.expertType !== undefined && (draft.definition.team ? 'team' : 'agent') !== query.expertType) continue;
+      const expertType = draft.definition.team ? 'team' : 'agent';
+      if (query.expertType !== undefined && expertType !== query.expertType) continue;
       if (query.categoryId !== undefined && (draft.definition.categoryId ?? null) !== query.categoryId) continue;
       if (search !== undefined && search.length > 0 && !matchesSearch(draft.definition, search)) continue;
       const preference = this.preferenceFor(actor, expert.id);
@@ -967,12 +1030,12 @@ export class ExpertsManager extends Service implements ExpertsService {
     const readiness = await this.readinessMap(revisions);
     const readinessByRevision = new Map(revisions.map((revision) => [revision.revisionId, readiness.get(revision.revisionId) ?? 'unknown']));
 
-    const items = page.map((row) => {
+    const items = await Promise.all(page.map(async (row) => {
       const caps = this.capabilities(actor, row.expert);
       const revisionId = row.expert.publishedRevisionRef?.revisionId;
       const rowReadiness: ExpertReadiness = revisionId ? (readinessByRevision.get(revisionId) ?? 'unknown') : 'unknown';
-      return this.toSummary(row.expert, row.draft, rowReadiness, row.preference, caps);
-    });
+      return this.toSummary(row.expert, row.draft, rowReadiness, row.preference, caps, await this.authStateOf(row.expert));
+    }));
     const nextOffset = offset + page.length;
     await this.audit(actor, 'experts.list', undefined, 'succeeded', 'experts/list-succeeded', { count: String(items.length), total: String(rows.length) });
     return {
@@ -1140,6 +1203,7 @@ export class ExpertsManager extends Service implements ExpertsService {
           const expert: Expert = {
             id: expertId, owner: this.newOwner(actor), origin: 'personal', availability: 'enabled',
             revision: `r-${randomUUID()}`, draftRevision, createdAt: now, updatedAt: now,
+            installManifest: { assetType: candidate.team ? 'expert_group' : 'expert', source: 'local', installedAt: now },
           };
           await this.expertsTable().put(keys.expert(expertId), expert);
           await this.draftsTable().put(keys.draft(expertId), nextDraft);
@@ -1239,6 +1303,7 @@ export class ExpertsManager extends Service implements ExpertsService {
           const expert: Expert = {
             id: newId, owner: this.newOwner(actor), origin: 'personal', availability: 'enabled',
             revision: `r-${randomUUID()}`, draftRevision, createdAt: now, updatedAt: now,
+            installManifest: { assetType: candidate.team ? 'expert_group' : 'expert', source: 'local', installedAt: now },
           };
           await this.expertsTable().put(keys.expert(newId), expert);
           await this.draftsTable().put(keys.draft(newId), nextDraft);
@@ -1406,6 +1471,8 @@ export class ExpertsManager extends Service implements ExpertsService {
           const publishedRef: ExpertRevisionRef = { expertId, revisionId };
           await this.expertsTable().update(keys.expert(expertId), (row) => ({
             ...row, publishedRevisionRef: publishedRef, revision: `r-${randomUUID()}`, updatedAt: now,
+            // 清单已存在时同步发布修订的完整性摘要；市场安装随后会覆盖成自己的来源与编号。
+            ...(row.installManifest ? { installManifest: { ...row.installManifest, digest: compiled.compositionDigest } } : {}),
           }));
           const result: PublishReceipt = {
             expertId, revision: publishedRef, presetRevisionRef: compiled.presetId,
@@ -1446,6 +1513,18 @@ export class ExpertsManager extends Service implements ExpertsService {
     await this.authorize(actor, 'experts.set-availability', expert, signal);
     // Availability is reversible (enable/disable/archive are states, never a hard delete),
     // so 0.1 does not require a content-bound confirmation proof here; `_proof` is reserved.
+    const manifest = this.installManifestOf(expertId);
+    const gate = this.gateProbe();
+    // 启用前摘要校验：专家/专家团没有文件清单，只能比对安装清单记录的组合摘要。
+    if (availability === 'enabled' && gate?.enabled(manifest?.assetType ?? 'expert')
+      && manifest?.source === 'market' && manifest.assetId && manifest.digest) {
+      const ref = expert.publishedRevisionRef;
+      const revision = ref ? this.revisionsTable().get(keys.revision(ref.expertId, ref.revisionId)) : undefined;
+      if (revision && revision.compositionDigest !== manifest.digest) {
+        const denial = gate.integrityMismatch();
+        throw new ExpertsError(denial.reason, denial.message, { reason: denial.reason });
+      }
+    }
     const payloadDigest = digestOf({ action: 'experts.set-availability', expertId, availability });
     try {
       const receipt = await this.withOperation(actor, 'experts.set-availability', context, payloadDigest, signal,
@@ -1467,6 +1546,8 @@ export class ExpertsManager extends Service implements ExpertsService {
         },
       );
       await this.audit(actor, 'experts.set-availability', expertId, 'succeeded', 'experts/set-availability-succeeded', { availability });
+      // 用户手动启用即视为覆盖闸门自动禁用，清除撤权标记，后续同步不再自动恢复。
+      if (availability === 'enabled' && manifest?.assetId) this.clearGateMark(manifest.assetType, manifest.assetId);
       return receipt;
     } catch (error) {
       await this.audit(actor, 'experts.set-availability', expertId, 'failed', errorCode(error, 'experts/internal'));
@@ -1997,6 +2078,7 @@ export class ExpertsManager extends Service implements ExpertsService {
           const expert: Expert = {
             id: expertId, owner: this.newOwner(actor), origin: 'personal', availability: 'enabled',
             revision: `r-${randomUUID()}`, draftRevision, createdAt: now, updatedAt: now,
+            installManifest: { assetType: candidate.team ? 'expert_group' : 'expert', source: 'local', installedAt: now },
           };
           await this.expertsTable().put(keys.expert(expertId), expert);
           await this.draftsTable().put(keys.draft(expertId), nextDraft);
@@ -2187,6 +2269,22 @@ export class ExpertsManager extends Service implements ExpertsService {
     }
     const now = new Date().toISOString();
     const expert = this.loadExpert(expertId);
+    // 安装清单写进专家/专家团记录本身：后台编号显式落在值里，台账键与 remoteId 不作为判定依据。
+    const publishedRevision = expert.publishedRevisionRef
+      ? this.revisionsTable().get(keys.revision(expertId, expert.publishedRevisionRef.revisionId))
+      : undefined;
+    await this.expertsTable().update(keys.expert(expertId), (row) => ({
+      ...row,
+      installManifest: {
+        assetType: request.expertType === 'agent' ? 'expert' : 'expert_group',
+        assetId: request.remoteId,
+        source: 'market',
+        installedAt: existing?.installedAt ?? now,
+        version: remote.version,
+        ...(publishedRevision ? { digest: publishedRevision.compositionDigest } : {}),
+      },
+      updatedAt: now,
+    }));
     const installation: ExpertInstallation = {
       remoteKey, remoteId: request.remoteId, expertType: request.expertType, expertId,
       version: remote.version, fileName: remote.package.fileName, sourceUrl: remote.package.url,
@@ -2217,6 +2315,7 @@ export class ExpertsManager extends Service implements ExpertsService {
     const expert = this.expertsTable().get(keys.expert(installation.expertId));
     if (!expert || !this.isVisible(actor, expert)) throw new ExpertsError('experts/not-found', '未找到该专家。');
     await this.authorize(actor, 'experts.uninstall', expert, signal);
+    const uninstallManifest = this.installManifestOf(expert.id);
     const deletedExpertIds = [installation.expertId, ...[...this.expertsTable().entries()]
       .filter(([, row]) => row.teamParentId === installation.expertId)
       .map(([id]) => id)];
@@ -2226,6 +2325,8 @@ export class ExpertsManager extends Service implements ExpertsService {
       await this.installationsTable().delete(remoteKey);
     });
     await this.audit(actor, 'experts.uninstall', installation.expertId, 'succeeded', 'experts/uninstall-succeeded', { remoteKey, deleted: String(deletedExpertIds.length), boundSessions: String(boundSessions) });
+    // 卸载后清单随记录一起消失，撤权标记此刻用原编号清除，避免留下孤儿账本项。
+    this.clearGateMark(uninstallManifest?.assetType ?? 'expert', uninstallManifest?.assetId);
     return { remoteKey, expertId: installation.expertId, deletedExpertIds, boundSessions };
   }
 
@@ -2241,6 +2342,7 @@ export class ExpertsManager extends Service implements ExpertsService {
     const expert = this.expertsTable().get(keys.expert(expertId));
     if (!expert || !this.isVisible(actor, expert)) throw new ExpertsError('experts/not-found', '未找到该专家。');
     await this.authorize(actor, 'experts.delete-expert', expert, signal);
+    const deleteManifest = this.installManifestOf(expert.id);
     const deletedExpertIds = this.deletionIds(expertId);
     const boundSessions = this.boundSessionCount(deletedExpertIds);
     await this.enqueue(async () => {
@@ -2250,6 +2352,7 @@ export class ExpertsManager extends Service implements ExpertsService {
       }
     });
     await this.audit(actor, 'experts.delete-expert', expertId, 'succeeded', 'experts/delete-expert-succeeded', { deleted: String(deletedExpertIds.length), boundSessions: String(boundSessions) });
+    this.clearGateMark(deleteManifest?.assetType ?? 'expert', deleteManifest?.assetId);
     return { expertId, deletedExpertIds, boundSessions };
   }
 
@@ -2405,6 +2508,77 @@ export class ExpertsManager extends Service implements ExpertsService {
 
   private installationFor(expertType: 'agent' | 'team', remoteId: string): ExpertInstallation | undefined {
     return this.installationsTable().get(installationKey(expertType, remoteId));
+  }
+
+  /**
+   * 闸门用途：只读安装清单。
+   *
+   * 团队成员不单独持有清单，解析到所属专家团记录；台账命中与 `origin === 'default'`
+   * 都不再作为来源判据。
+   */
+  installManifestOf(expertId: string): ExpertInstallManifest | undefined {
+    return resolveInstallManifest(
+      this.expertsTable().get(keys.expert(expertId)),
+      (id) => this.expertsTable().get(keys.expert(id)),
+    );
+  }
+
+  /**
+   * 一次性幂等回填：只为还没有清单的专家/专家团记录补写。
+   *
+   * - 安装台账命中 → market + 台账里的 `remoteId`；
+   * - 记录 `origin === 'default'` → 随包内置种子，记为 builtin；
+   * - 其余（新建、导入）→ local。
+   *
+   * 团队成员不单独写清单，判定时解析到所属专家团记录，所以不计入写入条数。
+   */
+  async backfillInstallManifests(): Promise<{ scanned: number; written: number; failed: number }> {
+    let scanned = 0;
+    let written = 0;
+    let failed = 0;
+    const installations = new Map([...this.installationsTable().entries()].map(([, row]) => [row.expertId, row]));
+    for (const [key, expert] of this.expertsTable().entries()) {
+      scanned += 1;
+      if (expert.teamParentId || expert.installManifest) continue;
+      try {
+        const installation = installations.get(expert.id);
+        const revision = expert.publishedRevisionRef
+          ? this.revisionsTable().get(keys.revision(expert.id, expert.publishedRevisionRef.revisionId))
+          : undefined;
+        const digest = revision ? { digest: revision.compositionDigest } : {};
+        const manifest: ExpertInstallManifest = installation
+          ? {
+            assetType: installation.expertType === 'agent' ? 'expert' : 'expert_group',
+            assetId: installation.remoteId,
+            source: 'market',
+            installedAt: installation.installedAt,
+            version: installation.version,
+            ...digest,
+          }
+          : {
+            assetType: this.assetTypeOf(expert.id),
+            source: expert.origin === 'default' ? 'builtin' : 'local',
+            installedAt: expert.createdAt,
+            ...digest,
+          };
+        await this.expertsTable().put(key, { ...expert, installManifest: manifest });
+        written += 1;
+      } catch (error) {
+        failed += 1;
+        this.ctx.logger.warn(`专家：回填安装清单失败（${expert.id}）：${describeError(error)}。`);
+      }
+    }
+    return { scanned, written, failed };
+  }
+
+  /** 记录里没有清单时，从草稿或已发布修订判断这张记录是专家还是专家团。 */
+  private assetTypeOf(expertId: string): 'expert' | 'expert_group' {
+    const draft = this.draftsTable().get(keys.draft(expertId));
+    if (draft) return draft.definition.team ? 'expert_group' : 'expert';
+    for (const [, revision] of this.revisionsTable().entries()) {
+      if (revision.expertId === expertId) return revision.definition.team ? 'expert_group' : 'expert';
+    }
+    return 'expert';
   }
 
   private boundSessionCount(expertIds: readonly string[]): number {

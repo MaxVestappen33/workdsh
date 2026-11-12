@@ -10,13 +10,129 @@ import {
   type ModelMarketPaths, type ModelMarketQuery, type ModelMarketUninstallResult,
 } from './shared.js';
 import { ModelMarketBackend, ModelMarketError, type BackendChannelLike, type BackendModel } from './market.js';
-import { marketRecordFile, readMarketRecords, writeMarketDefaultsMarker, writeMarketRecords, type MarketRecordFile } from './records.js';
+import { marketRecordFile, readMarketRecords, writeMarketDefaultsMarker, writeMarketRecords, type InstallRecord, type MarketRecordFile } from './records.js';
+import {
+  ASSET_OPERATION_REPORT_PATH, AssetOperationReporter, assetOperationEventId, clientIdOf, isPermissionFailure,
+  type AssetOperationBackend, type AssetOperationFailReason, type AssetOperationResult,
+} from 'workdsh-contracts/asset-operation';
 
 const SETTINGS_NS = 'llm-pi-ai';
 const DEFAULT_MODEL_NS = 'agent-default-model';
 const DEFAULT_PAGE_SIZE = 100;
 const DEFAULT_RETRY_MIN_MS = 15_000;
 const DEFAULT_RETRY_MAX_MS = 300_000;
+
+/**
+ * 资产闸门是可选宿主能力：缺失、关闭或 model 子闸门未开启时完全透明，
+ * 不解析身份、不读快照、也不改变任何返回结果。判定由 asset-gate 的纯函数给出。
+ */
+type GateAssetType = 'skill' | 'mcp' | 'expert' | 'expert_group' | 'model' | 'prompt';
+/** 审计动作：数据层只上报这五种关键写操作。 */
+type GateAuditAction = 'install' | 'enable' | 'restore' | 'uninstall' | 'delete';
+interface AssetGateLike {
+  enabled(assetType: GateAssetType): boolean;
+  /** 触发式校验：进市场页/刷新/写操作完成后做一次 revision 比对；旧版闸门没有该方法时跳过。 */
+  refreshNow?(): Promise<void>;
+  decide(request: { assetType: GateAssetType; assetId: string; usage: 'read' | 'use' | 'write' }): Promise<{ allow: boolean; reason: string; message: string }>;
+  /** 拒绝审计只入队；闸门关闭或上报异常都由实现自行吞掉。 */
+  auditDenied?(input: {
+    readonly layer: 'data_layer';
+    readonly reasonCode: string;
+    readonly action?: GateAuditAction;
+    readonly assetType?: string;
+    readonly assetId?: string;
+    readonly assetName?: string;
+  }): void;
+  /** 关键写操作审计；同样只入队、不阻断业务。 */
+  auditWrite?(input: {
+    readonly action: GateAuditAction;
+    readonly assetType?: string;
+    readonly assetId?: string;
+    readonly assetName?: string;
+    readonly succeeded: boolean;
+    readonly reasonCode?: string;
+    readonly failReason?: string;
+  }): void;
+}
+const assetGate = (ctx: Context): AssetGateLike | undefined => ctx.reflect.get('workdshAssetGate') as AssetGateLike | undefined;
+
+/** 拒绝时保留稳定原因码（gate/denied-*）与集中维护的文案，UI 据此区分「未授权」与「后台失败」。 */
+export class AssetGateDenied extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message);
+    this.name = 'AssetGateDenied';
+  }
+}
+
+async function requireAsset(ctx: Context, assetType: GateAssetType, assetId: string): Promise<void> {
+  const gate = assetGate(ctx);
+  if (!gate?.enabled(assetType)) return;
+  const decision = await gate.decide({ assetType, assetId, usage: 'write' });
+  if (!decision.allow) throw new AssetGateDenied(decision.reason, decision.message);
+}
+
+/** 写操作审计的共同元数据。 */
+interface WriteAuditMeta {
+  readonly action: GateAuditAction;
+  readonly assetType?: string;
+  readonly assetId?: string;
+  readonly assetName?: string;
+}
+
+/** 审计异常一律吞掉，绝不影响模型市场业务。 */
+function auditWrite(ctx: Context, meta: WriteAuditMeta, succeeded: boolean, failure?: unknown): void {
+  try {
+    assetGate(ctx)?.auditWrite?.({
+      ...meta,
+      succeeded,
+      ...(succeeded ? {} : { failReason: failure instanceof Error ? failure.message : String(failure ?? '') }),
+    });
+  } catch {
+    // 审计是可选旁路，失败不向调用方抛出。
+  }
+}
+
+function auditDenied(ctx: Context, meta: WriteAuditMeta, reasonCode: string): void {
+  try {
+    assetGate(ctx)?.auditDenied?.({ layer: 'data_layer', reasonCode, ...meta });
+  } catch {
+    // 同上。
+  }
+}
+
+/** 成功记 write/success，失败记 write/failed，被闸门拒绝时记 denied（带 action 与原因码）。 */
+async function auditedWrite<T>(ctx: Context, meta: WriteAuditMeta, run: () => Promise<T>): Promise<T> {
+  try {
+    const value = await run();
+    auditWrite(ctx, meta, true);
+    return value;
+  } catch (error) {
+    if (error instanceof AssetGateDenied) auditDenied(ctx, meta, error.code);
+    else auditWrite(ctx, meta, false, error);
+    throw error;
+  }
+}
+
+/** 不抛错的授权判断，供后台自动安装分支使用。 */
+async function gateAllows(ctx: Context, assetId: string): Promise<boolean> {
+  const gate = assetGate(ctx);
+  if (!gate?.enabled('model')) return true;
+  return (await gate.decide({ assetType: 'model', assetId, usage: 'write' })).allow;
+}
+
+async function visibleModels<T>(ctx: Context, rows: readonly T[], idOf: (row: T) => string | undefined): Promise<readonly T[]> {
+  const gate = assetGate(ctx);
+  if (!gate?.enabled('model')) return rows;
+  // 进市场页签/刷新/写操作后都会走到这里：先做一次 revision 校验（单飞 + 节流）。
+  await gate.refreshNow?.();
+  const visible: T[] = [];
+  for (const row of rows) {
+    const id = idOf(row);
+    if (id === undefined) continue;
+    if ((await gate.decide({ assetType: 'model', assetId: id, usage: 'read' })).allow) visible.push(row);
+  }
+  return visible;
+}
 
 type SettingsPathOp =
   | { readonly op: 'set'; readonly path: readonly string[]; readonly value: unknown }
@@ -225,12 +341,28 @@ export interface ModelMarketOptions {
   readonly paths?: Partial<ModelMarketPaths>;
   /** 安装记录与默认模型标记所在目录；Desktop 按账号注入，未注入时回退到 DSH_HOME 下的共享目录。 */
   readonly stateDir?: string;
+  /** 客户端应用标识：由宿主（Desktop）从 ServerConfig.appId 注入，用于资产操作记录。 */
+  readonly clientId?: string;
+}
+
+/** 反查结果只保留判定需要的信息：来源标记与后台资产编号。 */
+export interface ModelInstallBasis {
+  readonly kind: 'market' | 'custom';
+  readonly source?: 'market' | 'local';
+  readonly assetId?: string;
 }
 
 export interface ModelMarketServiceApi {
   available(): Promise<boolean>;
   list(input?: ModelMarketQuery, signal?: AbortSignal): Promise<ModelMarketPage>;
   detail(id: string, signal?: AbortSignal): Promise<ModelMarketDetail>;
+  /**
+   * 执行期反查：按 route + modelCode 找安装记录，只返回判定需要的来源与后台编号。
+   *
+   * 读的是按账号注入的安装记录文件，所以结果天然按账号隔离；查不到表示用户在官方
+   * 设置里自填的 provider，由调用方按自建豁免。
+   */
+  installManifestOfModel(route: string, modelCode: string): Promise<ModelInstallBasis | undefined>;
   install(id: string, signal?: AbortSignal): Promise<ModelMarketInstallResult>;
   uninstall(id: string, signal?: AbortSignal): Promise<ModelMarketUninstallResult>;
   /** 本机自定义模型（来自安装记录，不属于后台授权列表）。 */
@@ -241,6 +373,8 @@ export interface ModelMarketServiceApi {
   customUninstall(key: string): Promise<ModelMarketUninstallResult>;
   /** 用当前表单的地址、协议和密钥探测可用的模型目录。 */
   customDiscover(input: unknown): Promise<readonly CustomModelDefinition[]>;
+  /** 一次性回填：为旧安装记录补写安装清单；幂等、可重复执行。 */
+  backfillInstallManifests(): Promise<{ readonly scanned: number; readonly written: number; readonly failed: number }>;
 }
 
 declare module '@deepseek-ai/cordis' { interface Context { workdshModelMarket: ModelMarketServiceApi } }
@@ -251,6 +385,10 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
   /** 安装记录文件；按账号注入 stateDir 后每个账号各自一份。 */
   private readonly recordsFile: string;
   private readonly stateDir: string | undefined;
+  /** 客户端应用标识（server.appId）：宿主注入；缺失时跳过资产操作记录。 */
+  private readonly clientId: string | undefined;
+  /** 资产操作记录接口路径：宿主注入优先，否则用内置缺省值。 */
+  private readonly reportPath: string;
   /** 串行化安装/卸载与默认模型种子，避免同一配置被并发写坏。 */
   private serial: Promise<unknown> = Promise.resolve();
   private defaultsTimer?: ReturnType<typeof setTimeout>;
@@ -263,7 +401,9 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
     super(ctx, 'workdshModelMarket');
     const paths: ModelMarketPaths = { ...DEFAULT_MODEL_MARKET_PATHS, ...options.paths };
     this.stateDir = options.stateDir;
+    this.clientId = options.clientId;
     this.recordsFile = marketRecordFile(options.stateDir);
+    this.reportPath = options.paths?.report?.trim() || DEFAULT_MODEL_MARKET_PATHS.report || ASSET_OPERATION_REPORT_PATH;
     this.backend = new ModelMarketBackend(
       () => this.ctx.reflect.get('workdshBackend') as BackendChannelLike | undefined,
       paths,
@@ -287,7 +427,12 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
     const page = await this.backend.list(input, signal);
     // 市场页被打开时也尝试补齐默认模型，避免用户必须先重启客户端。
     this.scheduleDefaults(0);
-    return { ...page, installedIds: await this.installedIds() };
+    // 二次过滤：未授权的模型不下发给 UI；闸门关闭时原样返回。
+    return {
+      ...page,
+      records: await visibleModels(this.ctx, page.records, model => model.id),
+      installedIds: await this.installedIds(),
+    };
   }
 
   async detail(id: string, signal?: AbortSignal): Promise<ModelMarketDetail> {
@@ -297,12 +442,76 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
     return { model: sanitize(model), installed, ...(installed && records.installs[id] ? { route: records.installs[id].route } : {}) };
   }
 
-  async install(id: string, signal?: AbortSignal): Promise<ModelMarketInstallResult> {
-    return this.enqueue(() => this.installInternal(id, signal, true));
+  async installManifestOfModel(route: string, modelCode: string): Promise<ModelInstallBasis | undefined> {
+    if (!route || !modelCode) return undefined;
+    const records = await readMarketRecords(this.recordsFile);
+    // 同一 route 下按 modelCode 唯一命中；market 用单值，custom 可能有多个模型。
+    for (const install of Object.values(records.installs)) {
+      if (install.route !== route) continue;
+      const custom = install.kind === 'custom';
+      const matched = custom ? install.modelCodes?.includes(modelCode) === true : install.modelCode === modelCode;
+      if (!matched) continue;
+      return {
+        kind: custom ? 'custom' : 'market',
+        ...(install.manifest
+          ? { source: install.manifest.source, ...(install.manifest.assetId ? { assetId: install.manifest.assetId } : {}) }
+          : {}),
+      };
+    }
+    return undefined;
   }
 
+  async install(id: string, signal?: AbortSignal): Promise<ModelMarketInstallResult> {
+    // 安装判授权；卸载始终放行。两者都记关键写操作。
+    return auditedWrite(this.ctx, { action: 'install', assetType: 'model', assetId: id }, async () => {
+      await requireAsset(this.ctx, 'model', id);
+      return this.enqueue(() => this.installInternal(id, signal, true));
+    });
+  }
+
+  /**
+   * 卸载：本机配置移除成功后上报 uninstall/success，失败上报 failed 后照常抛出；
+   * 上报失败只记日志，不阻断本机卸载（结果通过 reported 暴露）。
+   */
   async uninstall(id: string, signal?: AbortSignal): Promise<ModelMarketUninstallResult> {
-    return this.enqueue(() => this.uninstallInternal(id, signal));
+    return auditedWrite(this.ctx, { action: 'uninstall', assetType: 'model', assetId: id }, async () => {
+      const eventId = assetOperationEventId();
+      try {
+        await this.enqueue(() => this.uninstallInternal(id, signal));
+      } catch (cause) {
+        await this.reportFailure(id, id, eventId, 'uninstall', cause, signal);
+        throw cause;
+      }
+      // 卸载时不再额外查询后台：assetName 先传标识，后台按 assetType + assetId 补全名称。
+      const reported = await this.reportOperation(id, id, eventId, 'uninstall', { result: 'success' });
+      return { uninstalled: true, reported };
+    });
+  }
+
+  /**
+   * 一次性回填：为没有安装清单的旧记录补写清单（幂等、失败不阻断启动）。
+   * 来源按既有记录推定：market 记录用 installs 的键作为后台编号；custom 记录记 local。
+   */
+  async backfillInstallManifests(): Promise<{ scanned: number; written: number; failed: number }> {
+    const records = await readMarketRecords(this.recordsFile);
+    const entries = Object.entries(records.installs);
+    let written = 0;
+    const installs: Record<string, InstallRecord> = {};
+    for (const [id, record] of entries) {
+      if (record.manifest) { installs[id] = record; continue; }
+      installs[id] = {
+        ...record,
+        manifest: {
+          assetType: 'model',
+          ...(record.kind === 'custom' ? {} : { assetId: id }),
+          source: record.kind === 'custom' ? 'local' : 'market',
+          installedAt: record.installedAt || new Date().toISOString(),
+        },
+      };
+      written += 1;
+    }
+    if (written) await writeMarketRecords({ ...records, installs }, this.recordsFile);
+    return { scanned: entries.length, written, failed: 0 };
   }
 
   async customList(): Promise<readonly CustomModelEntry[]> {
@@ -395,66 +604,92 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
     });
   }
 
+  /**
+   * 本机安装：写官方 llm-pi-ai 配置与凭据，并记下「市场条目 id → 路由」。
+   * 安装清单写完后上报 install/success；任一步失败上报 failed。已在本机的模型
+   * （安装记录存在且配置里仍有该 modelCode）按覆盖安装处理，不上报，避免重复计数。
+   */
   private async installInternal(id: string, signal: AbortSignal | undefined, setDefault: boolean): Promise<ModelMarketInstallResult> {
-    const records = await readMarketRecords(this.recordsFile);
-    const model = await this.backend.get(id, signal);
-    const usable = installability(model);
-    if (!usable.installable) {
-      const code = !model.modelCode.trim() || !model.apiUrl.trim()
-        ? 'model-market/invalid-model'
-        : protocolApi(model.apiProtocol) ? 'model-market/unsupported-type' : 'model-market/unsupported-protocol';
-      throw new ModelMarketError(code, usable.reason);
-    }
-    const api = protocolApi(model.apiProtocol)!;
-    if (!model.apiKey.trim()) throw new ModelMarketError('model-market/invalid-model', '模型缺少访问密钥，无法添加。');
-
-    const settings = this.settings();
-    if (!settings.writable) throw new ModelMarketError('model-market/settings-readonly', '当前配置为只读，无法添加模型。');
-    const descriptor = this.descriptor(SETTINGS_NS);
-    if (!descriptor) throw new ModelMarketError('model-market/settings-unavailable', '当前环境缺少模型配置，无法添加。');
-    const providers = providersOf(descriptor);
-    const groupHash = groupHashOf(model);
-    const route = this.allocateRoute(model, groupHash, providers, records);
-    const credentialRefName = credentialName(route);
-    const entry = modelRouteEntry(model);
-
-    const changedCredential = await this.writeCredential(credentialRefName, model.apiKey);
+    // 事件标识在流程开始时生成一次：成功与失败上报复用它，后台据此幂等。
+    const eventId = assetOperationEventId();
+    let assetName = id;
+    let alreadyInstalled = false;
     try {
-      await this.mutateProvider(providersNow => {
-        const provider = providerOf(providersNow, route);
-        const models = modelsOf(provider);
-        const index = models.findIndex(item => text(item.id) === entry.id);
-        const next = index >= 0
-          ? models.map((item, position) => position === index ? { ...item, ...entry } : item)
-          : [...models, entry];
-        return [
-          { op: 'set', path: ['providers', route, 'displayName'], value: model.providerName || model.provider || route },
-          { op: 'set', path: ['providers', route, 'api'], value: api },
-          { op: 'set', path: ['providers', route, 'baseURL'], value: model.apiUrl },
-          { op: 'set', path: ['providers', route, 'apiKeyEnv'], value: credentialRefName },
-          { op: 'set', path: ['providers', route, 'models'], value: next },
-        ];
-      });
+      const records = await readMarketRecords(this.recordsFile);
+      const model = await this.backend.get(id, signal);
+      assetName = model.modelName || model.modelCode || id;
+      const usable = installability(model);
+      if (!usable.installable) {
+        const code = !model.modelCode.trim() || !model.apiUrl.trim()
+          ? 'model-market/invalid-model'
+          : protocolApi(model.apiProtocol) ? 'model-market/unsupported-type' : 'model-market/unsupported-protocol';
+        throw new ModelMarketError(code, usable.reason);
+      }
+      const api = protocolApi(model.apiProtocol)!;
+      if (!model.apiKey.trim()) throw new ModelMarketError('model-market/invalid-model', '模型缺少访问密钥，无法添加。');
+
+      const settings = this.settings();
+      if (!settings.writable) throw new ModelMarketError('model-market/settings-readonly', '当前配置为只读，无法添加模型。');
+      const descriptor = this.descriptor(SETTINGS_NS);
+      if (!descriptor) throw new ModelMarketError('model-market/settings-unavailable', '当前环境缺少模型配置，无法添加。');
+      const providers = providersOf(descriptor);
+      // 已安装判定与 installedIds 同口径：安装记录存在且配置里仍有该 modelCode。
+      const previous = records.installs[id];
+      alreadyInstalled = previous !== undefined && previous.kind !== 'custom'
+        && modelsOf(providerOf(providers, previous.route)).some(item => text(item.id) === previous.modelCode);
+
+      const groupHash = groupHashOf(model);
+      const route = this.allocateRoute(model, groupHash, providers, records);
+      const credentialRefName = credentialName(route);
+      const entry = modelRouteEntry(model);
+
+      const changedCredential = await this.writeCredential(credentialRefName, model.apiKey);
+      try {
+        await this.mutateProvider(providersNow => {
+          const provider = providerOf(providersNow, route);
+          const models = modelsOf(provider);
+          const index = models.findIndex(item => text(item.id) === entry.id);
+          const next = index >= 0
+            ? models.map((item, position) => position === index ? { ...item, ...entry } : item)
+            : [...models, entry];
+          return [
+            { op: 'set', path: ['providers', route, 'displayName'], value: model.providerName || model.provider || route },
+            { op: 'set', path: ['providers', route, 'api'], value: api },
+            { op: 'set', path: ['providers', route, 'baseURL'], value: model.apiUrl },
+            { op: 'set', path: ['providers', route, 'apiKeyEnv'], value: credentialRefName },
+            { op: 'set', path: ['providers', route, 'models'], value: next },
+          ];
+        });
+      } catch (cause) {
+        if (changedCredential) await this.removeCredential(credentialRefName);
+        throw cause;
+      }
+
+      const installedAt = new Date().toISOString();
+      const install = {
+        route, modelCode: entry.id, groupHash, credentialRef: credentialRefName, installedAt,
+        // 模型没有资产目录：清单写进安装记录值，后台编号显式记在 assetId（不再只当 map 的键）。
+        manifest: { assetType: 'model' as const, assetId: id, source: 'market' as const, installedAt },
+      };
+      await this.updateRecords(current => ({
+        ...current,
+        installs: { ...current.installs, [id]: install },
+        handledDefaults: model.isDefault ? [...current.handledDefaults, id] : current.handledDefaults,
+        // 用户重新安装某个默认模型后，撤销先前的卸载忽略，允许后续缺失时再次自动补齐。
+        dismissedDefaults: current.dismissedDefaults.filter(value => value !== id),
+      }));
+
+      if (setDefault && model.isDefault) await this.setSessionDefault(model, route);
+      // 覆盖安装不算一次新的安装：不上报 install。
+      if (!alreadyInstalled) await this.reportOperation(id, assetName, eventId, 'install', { result: 'success' });
+      return { installed: true, route, modelCode: entry.id };
     } catch (cause) {
-      if (changedCredential) await this.removeCredential(credentialRefName);
+      if (!alreadyInstalled) await this.reportFailure(id, assetName, eventId, 'install', cause, signal);
       throw cause;
     }
-
-    const install = { route, modelCode: entry.id, groupHash, credentialRef: credentialRefName, installedAt: new Date().toISOString() };
-    await this.updateRecords(current => ({
-      ...current,
-      installs: { ...current.installs, [id]: install },
-      handledDefaults: model.isDefault ? [...current.handledDefaults, id] : current.handledDefaults,
-      // 用户重新安装某个默认模型后，撤销先前的卸载忽略，允许后续缺失时再次自动补齐。
-      dismissedDefaults: current.dismissedDefaults.filter(value => value !== id),
-    }));
-
-    if (setDefault && model.isDefault) await this.setSessionDefault(model, route);
-    await this.report('use', id);
-    return { installed: true, route, modelCode: entry.id };
   }
 
-  private async uninstallInternal(id: string, signal: AbortSignal | undefined): Promise<ModelMarketUninstallResult> {
+  private async uninstallInternal(id: string, _signal: AbortSignal | undefined): Promise<void> {
     const records = await readMarketRecords(this.recordsFile);
     const install = records.installs[id];
     if (!install) throw new ModelMarketError('model-market/not-installed', '该模型尚未添加。');
@@ -477,8 +712,6 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
       dismissedDefaults: [...new Set([...current.dismissedDefaults, id])],
     }));
     await this.clearSessionDefault(install.route, install.modelCode);
-    const reported = await this.report('unuse', id, signal);
-    return { uninstalled: true, reported };
   }
 
   private async customInstallInternal(input: unknown): Promise<CustomModelEntry> {
@@ -514,13 +747,16 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
     }
 
     const key = `custom:${route}`;
+    const installedAt = new Date().toISOString();
     await this.updateRecords(current => ({
       ...current,
       installs: {
         ...current.installs,
         [key]: {
           kind: 'custom', route, modelCode: '', modelCodes: draft.models.map(model => model.id),
-          groupHash: key, credentialRef: credentialRefName, installedAt: new Date().toISOString(),
+          groupHash: key, credentialRef: credentialRefName, installedAt,
+          // 本机自定义模型同样留清单，来源记 local（没有后台编号）。
+          manifest: { assetType: 'model' as const, source: 'local' as const, installedAt },
         },
       },
     }));
@@ -790,16 +1026,70 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
     await writeMarketRecords(update(current), this.recordsFile);
   }
 
-  /** 后台当前只做记账；失败不改变本机安装结果。 */
-  private async report(kind: 'use' | 'unuse', id: string, signal?: AbortSignal): Promise<boolean> {
-    try {
-      if (kind === 'use') await this.backend.use(id, signal);
-      else await this.backend.unuse(id, signal);
-      return true;
-    } catch (cause) {
-      this.ctx.logger.warn(`模型市场：${kind === 'use' ? '使用' : '卸载'}上报失败（${cause instanceof Error ? cause.message : String(cause)}）。`);
-      return false;
+  /** 资产操作记录：一次一条实时上报；上报失败只记日志，不阻断本机安装/卸载。 */
+  private async reportOperation(
+    assetId: string,
+    assetName: string,
+    eventId: string,
+    operationType: 'install' | 'uninstall',
+    outcome: { readonly result: AssetOperationResult; readonly failReason?: AssetOperationFailReason; readonly detail?: string },
+  ): Promise<boolean> {
+    const channel = this.ctx.reflect.get('workdshBackend') as BackendChannelLike | undefined;
+    if (!channel) return false;
+    const reporter = new AssetOperationReporter({
+      backend: { post: (path, body) => channel.post(path, body) } as AssetOperationBackend,
+      // 客户端应用标识来自载体配置 server.appId；缺失时上报器会跳过并记日志。
+      clientId: () => clientIdOf(this.clientId),
+      path: this.reportPath,
+      warn: message => this.ctx.logger.warn(message),
+    });
+    const result = await reporter.report({
+      eventId,
+      assetType: 'model',
+      assetId,
+      assetName,
+      operationType,
+      operationResult: outcome.result,
+      ...(outcome.failReason ? { failReason: outcome.failReason } : {}),
+      ...(outcome.detail ? { failDetail: outcome.detail } : {}),
+    });
+    return result.reported;
+  }
+
+  /** 失败上报：用户取消按 canceled，其余结合错误码归类；只放短说明。 */
+  private async reportFailure(
+    assetId: string,
+    assetName: string,
+    eventId: string,
+    operationType: 'install' | 'uninstall',
+    cause: unknown,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const canceled = signal?.aborted === true;
+    await this.reportOperation(assetId, assetName, eventId, operationType, {
+      result: canceled ? 'canceled' : 'failed',
+      failReason: canceled ? 'canceled_by_user' : this.failReasonOf(cause),
+      detail: cause instanceof Error ? cause.message : String(cause),
+    });
+  }
+
+  /** 失败大类：后台码按错误码归类，权限类错误优先于通用兜底。 */
+  private failReasonOf(cause: unknown): AssetOperationFailReason {
+    if (cause instanceof ModelMarketError) {
+      switch (cause.code) {
+        case 'model-market/unavailable':
+        case 'model-market/backend':
+        case 'model-market/not-found': return 'network_failed';
+        case 'model-market/settings-readonly':
+        case 'model-market/credential-readonly': return 'permission_denied';
+        case 'model-market/settings-unavailable':
+        case 'model-market/conflict':
+        case 'model-market/settings-rejected': return 'write_failed';
+        default: break;
+      }
     }
+    if (isPermissionFailure(cause)) return 'permission_denied';
+    return 'other';
   }
 
   private scheduleDefaults(delay: number): void {
@@ -857,6 +1147,12 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
         continue;
       }
       try {
+        if (!(await gateAllows(this.ctx, model.id))) {
+          // 未授权的默认模型不再自动安装；记入 handled，避免每轮退避重复尝试。
+          handled.add(model.id);
+          this.ctx.logger.warn(`模型市场：默认模型「${model.modelName || model.modelCode}」未获授权，已跳过自动安装。`);
+          continue;
+        }
         await this.installInternal(model.id, undefined, false);
         handled.add(model.id);
         firstInstalled ??= model;

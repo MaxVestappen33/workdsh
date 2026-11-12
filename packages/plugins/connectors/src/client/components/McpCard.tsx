@@ -98,7 +98,11 @@ function isCardAction(target: EventTarget | null): boolean {
 export function LocalMcpCard({ row, category, market, busy, toggling, batchMode, selected, onOpen, onToggle, onRemove, onSelect }: LocalCardProps) {
   // 来源只有两种：市场安装（可卸载）与随客户端内置（只能本机移除）；没有分类的实例只显示来源。
   const tag = [row.originId ? '已安装' : '内置', category].filter(Boolean).join(' · ');
-  const state = row.enabled ? connectorStateLabels[row.state] : '已停用';
+  // 授权异常时优先显示原因，开关一并置灰；记录里的用户启用位不变，恢复授权后可自动还原。
+  const blocked = row.authState !== undefined;
+  const state = blocked
+    ? (row.authState === 'revoked' ? '已失效' : '未授权')
+    : row.enabled ? connectorStateLabels[row.state] : '已停用';
   const actionText = row.enabled ? '停用' : '启用';
   const togglingText = `正在${actionText}…`;
   /** 整卡可点击：点描述、状态行等空白区同样打开详情；批量模式下改为勾选。 */
@@ -108,7 +112,7 @@ export function LocalMcpCard({ row, category, market, busy, toggling, batchMode,
     else onOpen(row.id);
   };
   return (
-    <article className={`card${row.enabled ? '' : ' is-off'}${selected ? ' is-selected' : ''}`} onClick={openCard}>
+    <article className={`card${row.enabled && !blocked ? '' : ' is-off'}${selected ? ' is-selected' : ''}`} onClick={openCard}>
       <div className="card-top">
         {batchMode ? (
           <button type="button" className="batch-check" role="checkbox" aria-checked={selected} aria-label={`选择 ${row.title}`} onClick={() => onSelect(row.id)}>{selected ? '✓' : ''}</button>
@@ -125,12 +129,13 @@ export function LocalMcpCard({ row, category, market, busy, toggling, batchMode,
             {/* 启停要拉起或断开 MCP 进程，耗时可能十几秒：开关位置换成加载态，避免点了没反应。 */}
             {toggling
               ? <span className="switch-loading" role="status" aria-label={`正在${actionText} ${row.title}`}><i className="spinner" /></span>
-              : <button type="button" className="switch" role="switch" aria-checked={row.enabled} aria-label={`${actionText} ${row.title}`} disabled={busy} onClick={() => onToggle(row, !row.enabled)} />}
+              : <button type="button" className="switch" role="switch" aria-checked={row.enabled && !blocked} aria-label={`${actionText} ${row.title}`} disabled={busy || blocked} onClick={() => onToggle(row, !row.enabled)} />}
             <button type="button" className="card-delete" title="删除 MCP" aria-label={`删除 ${row.title}`} disabled={busy || toggling} onClick={() => onRemove(row)}><Glyph paths={glyphs.trash} /></button>
           </>
         )}
       </div>
       <p className="card-desc">{row.description || 'MCP 服务'}</p>
+      {row.authState && row.authReason ? <p className="auth-reason">{row.authReason}</p> : null}
       {toggling ? (
         <div className="install-bar" role="progressbar" aria-label={`正在${actionText} ${row.title}`}>
           <i className="install-bar-fill" />

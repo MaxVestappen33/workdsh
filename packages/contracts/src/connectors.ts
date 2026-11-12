@@ -42,6 +42,9 @@ export interface ConnectorSummary {
   readonly resourceTemplateCount: number;
   readonly lastCheckedAt: string;
   readonly diagnostic?: string;
+  /** 授权状态：`unauthorized` 未授权；`revoked` 授权失效后被闸门自动停用。 */
+  readonly authState?: 'unauthorized' | 'revoked';
+  readonly authReason?: string;
 }
 
 export interface ConnectorConfigView {
@@ -91,4 +94,8 @@ export interface ConnectorManagementService {
   /** Defaults to every ready connector until the session saves an explicit choice. */
   selection(sessionId: string): Promise<readonly string[]>;
   setSelection(sessionId: string, connectorIds: readonly string[]): Promise<readonly string[]>;
+  /** 撤权协调：已安装且来源为市场、带后台编号的连接器。 */
+  marketAssets?(): readonly { readonly localId: string; readonly assetId: string }[];
+  /** 账本变化后按当前账号重算运行态。 */
+  applyGateState?(): Promise<void>;
 }

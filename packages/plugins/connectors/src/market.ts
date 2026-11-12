@@ -87,10 +87,11 @@ export interface MarketPage {
 export interface MarketPaths {
   readonly list: string;
   readonly categories: string;
-  /** 安装上报接口：安装时调用，后台只记录安装行为。 */
-  readonly install: string;
-  /** 卸载上报接口：卸载时调用，后台只记录卸载行为。 */
-  readonly uninstall: string;
+  /**
+   * 资产操作记录接口：安装/卸载完成后实时上报一条事件。
+   * 未配置时用内置默认路径（见 market-entry 的 DEFAULT_MARKET_PATHS）。
+   */
+  readonly report?: string;
 }
 
 export interface Config {
@@ -231,19 +232,8 @@ const pathOf = (value: unknown, label: string): string => {
 const pathsOf = (value: MarketPaths): MarketPaths => ({
   list: pathOf(value?.list, '列表'),
   categories: pathOf(value?.categories, '分类'),
-  install: pathOf(value?.install, '安装'),
-  uninstall: pathOf(value?.uninstall, '卸载'),
+  ...(value?.report ? { report: pathOf(value.report, '资产操作记录') } : {}),
 });
-
-/**
- * 安装/卸载上报的请求体。后台接口是 `@RequestBody JSONObject`（参数在请求体，不是 query），
- * 同时给出市场条目 id 与服务标识，让后台少做一次关联。
- * 请求体字段名为待对齐项，后台实现后可调整。
- */
-const reportBody = (id: string, serviceId?: string): Record<string, string> => {
-  const service = text(serviceId);
-  return { id, ...(service ? { serviceId: service } : {}), clientType: 'workdsh-desktop' };
-};
 
 /**
  * 通用通道错误按 name + code 判定，而不是 instanceof：通道与市场可能在
@@ -330,27 +320,6 @@ export class ConnectorMarketClient {
       const color = text(row.color);
       return [{ value, text: label, ...(color ? { color } : {}) }];
     });
-  }
-
-  /**
-   * 安装上报：安装到本机时告知后台。后台目前只记录行为、不回传业务字段，
-   * 因此这里不解析响应体，也不因为返回体缺少字段而判失败。
-   * 连接配置不再从后台获取，安装所需的字段全部取自列表结果（见 ConnectorMarketService.install）。
-   */
-  async reportInstall(id: string, serviceId?: string, signal?: AbortSignal): Promise<void> {
-    const key = text(id);
-    if (!key) throw new MarketRequestError('connector/market-rejected', '缺少市场条目标识，无法安装。');
-    await this.request('POST', this.paths.install, undefined, reportBody(key, serviceId), signal);
-  }
-
-  /**
-   * 卸载上报：卸载本机实例时告知后台，参数形态与安装上报一致。
-   * 调用方负责决定上报失败时的取舍（当前为不阻断本地卸载）。
-   */
-  async reportUninstall(id: string, serviceId?: string, signal?: AbortSignal): Promise<void> {
-    const key = text(id);
-    if (!key) throw new MarketRequestError('connector/market-rejected', '缺少市场条目标识，无法卸载。');
-    await this.request('POST', this.paths.uninstall, undefined, reportBody(key, serviceId), signal);
   }
 
   /** 只做协议转发：市场不实现请求头、地址拼接与信封解开。 */

@@ -48,6 +48,15 @@ const domainIssueSchema = z.object({
   dependencyRef: z.string().optional(),
 });
 
+export const expertInstallManifestSchema = z.object({
+  assetType: z.enum(['expert', 'expert_group']),
+  assetId: bounded.optional(),
+  source: z.enum(['market', 'builtin', 'local']),
+  installedAt: iso,
+  version: bounded.optional(),
+  digest: bounded.optional(),
+});
+
 const expertSchema: z.ZodType<Expert> = z.object({
   id: bounded,
   owner: resourceOwnerSchema,
@@ -59,6 +68,7 @@ const expertSchema: z.ZodType<Expert> = z.object({
   createdAt: iso,
   updatedAt: iso,
   teamParentId: bounded.optional(),
+  installManifest: expertInstallManifestSchema.optional(),
 });
 
 const draftSchema: z.ZodType<ExpertDraft> = z.object({
