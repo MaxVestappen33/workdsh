@@ -47,3 +47,6 @@ apps/desktop/build/official-release-cache/
 
 # Local package archives are build outputs.
 /packages/plugins/*/*.tgz
+
+# Brand constants generated from brand.config.json + assets at build time.
+/packages/plugins/brand/src/generated/

@@ -1,7 +1,7 @@
 ﻿#!/usr/bin/env node
 /** Boot the public official Profile API with release resources and no local node_modules. */
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -62,7 +62,34 @@ try {
   }
   // account-settings 声明 client.immediately，官方客户端会立即拉起随包的账号设置 UI；
   // 其余默认客户端必须与产品清单完全一致，不允许额外 WorkDSH 客户端混入。
-  const expectedOwned = [...PRODUCT_PACKAGES, 'workdsh-bundle', 'workdsh-plugin-account-settings'].sort()
+  // 期望客户端由包清单自身声明推导：只有声明 dsh.client 的随包插件才必须出现在启动图里，
+  // 仅有 dsh.bundle 的服务（如 asset-gate）不参与客户端校验。
+  const profileNodeModules = join(source, 'node_modules')
+  const declaresClient = name => {
+    const manifest = JSON.parse(readFileSync(join(profileNodeModules, name, 'package.json'), 'utf8'))
+    return manifest.dsh?.client !== undefined
+  }
+  // 组合补丁里按条件关闭的条目（如 headless 下的 !!js '!process.env.DSH_ELECTRON_EXECUTABLE'）
+  // 不会进入 boot graph，期望名单必须同步排除，否则会误报。
+  const conditionallyDisabled = new Set()
+  {
+    let current
+    for (const raw of readFileSync(join(source, 'cordis.patch.yml'), 'utf8').split(/\r?\n/)) {
+      const line = raw.replace(/\s+#.*$/, '')
+      if (/^\s*-\s+insert:\s*$/.test(line)) { current = undefined; continue }
+      const id = /^\s*-\s+id:\s*['"]?([^'"\s]+)['"]?\s*$/.exec(line)
+      if (id) { current = {}; continue }
+      if (!current) continue
+      if (/^\s*-\s/.test(line)) { current = undefined; continue }
+      const name = /^\s+name:\s*['"]?([^'"\s]+)['"]?\s*$/.exec(line)
+      if (name) current.name = name[1]
+      const disabled = /^\s+disabled:\s*(.+?)\s*$/.exec(line)
+      if (disabled && disabled[1].toLowerCase() !== 'false' && current.name) conditionallyDisabled.add(current.name)
+    }
+  }
+  const expectedOwned = readdirSync(profileNodeModules)
+    .filter(name => name.startsWith('workdsh-') && declaresClient(name) && !conditionallyDisabled.has(name))
+    .sort()
   for (const name of expectedOwned) if (!ids.has(name)) throw new Error('Owned client missing at runtime: ' + name + '; owned graph=' + [...ids].filter(row => row.startsWith('workdsh-')).join(',') + '; ' + diagnostics())
   const owned = [...ids].filter(name => name.startsWith('workdsh-')).sort()
   if (JSON.stringify(owned) !== JSON.stringify(expectedOwned)) throw new Error('Unexpected default owned client inventory: expected=' + JSON.stringify(expectedOwned) + '; actual=' + JSON.stringify(owned) + '; ' + diagnostics())

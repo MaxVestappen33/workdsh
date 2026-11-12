@@ -1,0 +1,12 @@
+{
+  "sidebar": {
+    "mark": { "size": 22, "asset": null },
+    "name": "警务助手",
+    "badge": { "visible": false, "text": "" }
+  },
+  "hero": {
+    "title": "警务助手",
+    "badge": { "mode": "version" },
+    "mark": { "size": 25, "asset": null }
+  }
+}

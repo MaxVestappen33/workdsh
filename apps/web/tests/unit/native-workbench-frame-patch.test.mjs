@@ -26,7 +26,7 @@ test('local copy applies idempotently, rolls back exactly and rejects unknown ve
   await assert.rejects(verifyNativeWorkbenchFrame(profile),/adapter is missing/);
   await ensureNativeWorkbenchFrame(profile);assert.equal(await readFile(join(pkg,'lib/client.js'),'utf8'),patchNativeWorkbenchFrame(source));
   const verified=await verifyNativeWorkbenchFrame(profile);
-  assert.equal(verified.version,'0.2.1-rc.5');assert.equal(verified.sha256,'d84e9f0b1cfe67a08125b0d4c5c4a06a32364258780e8d07cdbfed4c49767602');
+  assert.equal(verified.version,'0.2.1-rc.5');assert.equal(verified.sha256,'4d1fa140eb743ca1305ec1fcf57f5b4604d3d08633ac53ca9588e58bf7d5a985');
   assert.equal(await readFile(untouched,'utf8'),source,'other hardlinked installations must remain unmodified');
   await ensureNativeWorkbenchFrame(profile);await ensureNativeWorkbenchFrame(profile,{rollback:true});
   assert.equal(await readFile(join(pkg,'lib/client.js'),'utf8'),source);
@@ -56,7 +56,7 @@ test('packaged verification reads copied Resources bytes and refuses missing, ch
   await assert.rejects(verifyNativeWorkbenchFrame(packaged),/adapter is missing/);
   await writeFile(join(copied,'lib/client.js'),patchNativeWorkbenchFrame(source)+'\n');
   await assert.rejects(verifyNativeWorkbenchFrame(packaged),/unsupported packaged runtime bytes/);
-  assert.equal((await verifyNativeWorkbenchFrame(sourceProfile)).sha256,'d84e9f0b1cfe67a08125b0d4c5c4a06a32364258780e8d07cdbfed4c49767602','unchanged source receipts cannot hide a changed installer copy');
+  assert.equal((await verifyNativeWorkbenchFrame(sourceProfile)).sha256,'4d1fa140eb743ca1305ec1fcf57f5b4604d3d08633ac53ca9588e58bf7d5a985','unchanged source receipts cannot hide a changed installer copy');
   await writeFile(join(copied,'package.json'),JSON.stringify({...manifest,version:'0.2.1-unknown'}));
   await assert.rejects(verifyNativeWorkbenchFrame(packaged),/version mismatch/);
  }finally{await rm(directory,{recursive:true,force:true});}

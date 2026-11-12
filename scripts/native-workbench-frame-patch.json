@@ -3,7 +3,7 @@
   "version": "0.2.1-rc.5",
   "file": "lib/client.js",
   "originalSha256": "cfbd9fd95b0509f7c93a22a62a67ebc10481c8eda611704ea50c2e195b9a5a69",
-  "patchedSha256": "d84e9f0b1cfe67a08125b0d4c5c4a06a32364258780e8d07cdbfed4c49767602",
+  "patchedSha256": "4d1fa140eb743ca1305ec1fcf57f5b4604d3d08633ac53ca9588e58bf7d5a985",
   "replacements": [
     [
       "return renderSlot(\"main.conversation\", {});",
@@ -28,6 +28,10 @@
     [
       "\t\t\t\t\t\"conversation.composer.dock\": {\n\t\t\t\t\t\tkind: \"list\",\n\t\t\t\t\t\tscope: \"session\"\n\t\t\t\t\t}\n\t\t\t\t},",
       "\t\t\t\t\t\"conversation.composer.dock\": {\n\t\t\t\t\t\tkind: \"list\",\n\t\t\t\t\t\tscope: \"session\"\n\t\t\t\t\t},\n\t\t\t\t\t\"conversation.context.panel.footer\": {\n\t\t\t\t\t\tkind: \"list\",\n\t\t\t\t\t\tscope: \"session\"\n\t\t\t\t\t}\n\t\t\t\t},"
+    ],
+    [
+      "children: [(0, react_jsx_runtime.jsx)(\"span\", { children: t(\"hero.headline\") }), (0, react_jsx_runtime.jsx)(\"span\", {\n\t\t\t\t\t\t\t\tclassName: HeroShell_module_css_default.previewBadge,\n\t\t\t\t\t\t\t\tchildren: t(\"hero.preview\")\n\t\t\t\t\t\t\t})]",
+      "children: [(0, react_jsx_runtime.jsx)(\"span\", { children: globalThis.__WORKDSH_BRAND__?.hero.title ?? t(\"hero.headline\") }), (globalThis.__WORKDSH_BRAND__?.hero.badge.label === null ? null : (0, react_jsx_runtime.jsx)(\"span\", {\n\t\t\t\t\t\t\t\tclassName: HeroShell_module_css_default.previewBadge,\n\t\t\t\t\t\t\t\tchildren: globalThis.__WORKDSH_BRAND__?.hero.badge.label ?? t(\"hero.preview\")\n\t\t\t\t\t\t\t}))]"
     ]
   ]
 }

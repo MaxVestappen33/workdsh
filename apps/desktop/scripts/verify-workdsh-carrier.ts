@@ -143,8 +143,17 @@ export async function afterPack(context: PackContext): Promise<void> {
   }
   const patch = readFileSync(join(profile, 'cordis.patch.yml'), 'utf8')
   verifyDefaultComposition(patch)
+  // 这些包不贡献 Loader 条目：contracts/ui 与两个纯依赖库由 bundle 补丁或依赖闭包引入，
+  // browser-session 由 bundle 补丁插入；它们都没有独立的 cordis.patch.yml 插入行。
+  const patchesWithoutEntries = new Set([
+    'workdsh-contracts',
+    'workdsh-ui',
+    'workdsh-provider-browser-session',
+    'workdsh-asset-manifest',
+    'workdsh-asset-signature',
+  ])
   for (const name of release.packages.map(item => item.name).filter(name => !productPackages.has(name) && !ENTERPRISE_PACKAGES.includes(name))) {
-    if (['workdsh-contracts', 'workdsh-ui', 'workdsh-provider-browser-session'].includes(name)) continue // inserted by the bundle patch
+    if (patchesWithoutEntries.has(name)) continue
     // 账号身份只在 Desktop 运行期由账号补丁（desktopAccountPatch 的 .account-desktop.patch.yml）插入，
     // 未登录不建立身份服务，因此它的根入口是空实现、不贡献基础 Profile 补丁行。
     if (name === 'workdsh-provider-identity-account') continue

@@ -14,7 +14,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-session/client';
 import type {} from '@deepseek-ai/dsh-api-session-controller/client';
 import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client';
 import * as workbench from 'workdsh-plugin-workbench';
-import { BrandMark, BrandName, DiagnosticsMark } from '../components/Brand.js';
+import { DiagnosticsMark } from '../components/Brand.js';
 import { DiagnosticsPanel, type Inventory } from '../components/DiagnosticsPanel.js';
 import { NavigationLocation } from '../components/NavigationLocation.js';
 import { OfficialEntriesHidden } from '../components/OfficialEntriesHidden.js';
@@ -153,8 +153,7 @@ export function apply(ctx: Context): void {
   // Appearance follows the official ThemeRuntime and the user's Settings and
   // system preference; the workbench must not pin a theme or veto theme/change.
   ctx.plugin(workbench);
-  ctx.slots.inject('sidebar.brand.name', () => ctx.slots.register({ name: 'sidebar.brand.name', priority: -10 }, BrandName));
-  ctx.slots.inject('sidebar.brand.mark', () => ctx.slots.register({ name: 'sidebar.brand.mark', priority: -10 }, BrandMark));
+  // 侧栏品牌标识由 workdsh-plugin-brand 统一接管（同一槽同 priority 重复注册会抛错）。
   ctx.slots.inject('shell.overlay', () => ctx.slots.register({
     name: 'shell.overlay', id: 'workdsh-location', inject: () => ({ panelToView, selectView }),
   }, NavigationLocation));

@@ -3,35 +3,51 @@ import * as React from 'react';
 export type LogoMarkProps = {
   readonly size?: number;
   readonly title?: string;
+  /** Passed through to the root `<svg>` so the owner can apply its own layout or motion classes. */
+  readonly className?: string;
+  /** Gradient id prefix; give each mount a distinct value when several marks share one document. */
+  readonly idPrefix?: string;
 };
 
 /** Cross-platform WorkDSH mark. The application tile is deliberately kept outside. */
-export function LogoMark({ size = 24, title }: LogoMarkProps) {
+export function LogoMark({ size = 24, title, className, idPrefix = 'workdsh-mark' }: LogoMarkProps) {
   const labelled = Boolean(title);
+  const cool = `${idPrefix}-cool`;
+  const warm = `${idPrefix}-warm`;
+  const warmTop = `${idPrefix}-warm-top`;
   return (
-    <svg width={size} height={size} viewBox="22 22 214 214" role={labelled ? 'img' : undefined} aria-label={title} aria-hidden={labelled ? undefined : true} focusable={false}>
+    <svg
+      width={size}
+      height={size}
+      viewBox="22 22 214 214"
+      className={className}
+      role={labelled ? 'img' : undefined}
+      aria-label={title}
+      aria-hidden={labelled ? undefined : true}
+      focusable={false}
+    >
       <defs>
-        <linearGradient id="workdsh-mark-cool" x1="0.12" y1="0.02" x2="0.5" y2="1">
+        <linearGradient id={cool} x1="0.12" y1="0.02" x2="0.5" y2="1">
           <stop offset="0" stopColor="#D6F8FE" />
           <stop offset="0.26" stopColor="#8FDBFA" />
           <stop offset="0.58" stopColor="#3E82F8" />
           <stop offset="1" stopColor="#2138CE" />
         </linearGradient>
-        <linearGradient id="workdsh-mark-warm" x1="0.85" y1="0.06" x2="0.22" y2="0.94">
+        <linearGradient id={warm} x1="0.85" y1="0.06" x2="0.22" y2="0.94">
           <stop offset="0" stopColor="#FBB8F7" />
           <stop offset="0.38" stopColor="#D97BF7" />
           <stop offset="0.72" stopColor="#9B3FEE" />
           <stop offset="1" stopColor="#6B27D6" />
         </linearGradient>
-        <linearGradient id="workdsh-mark-warm-top" x1="0.55" y1="0.2" x2="1" y2="0.8">
+        <linearGradient id={warmTop} x1="0.55" y1="0.2" x2="1" y2="0.8">
           <stop offset="0" stopColor="#F9AEF6" />
           <stop offset="0.6" stopColor="#C86BF4" />
           <stop offset="1" stopColor="#7B34E4" />
         </linearGradient>
       </defs>
-      <circle cx="128" cy="128" r="106" fill="url(#workdsh-mark-cool)" />
-      <path d="M174 126C178 130 188 136 191 152C194 174 178 200 152 216C138 226 122 230 116 226C100 224 76 214 56 198C40 185 30 168 31 166C45 178 68 192 90 195C116 197 142 184 158 165C170 150 173 133 174 126Z" fill="url(#workdsh-mark-warm)" />
-      <path d="M177 63C196 62 218 72 228 90C238 108 238 132 227 142C218 149 204 148 201 158C199 148 196 128 180 106C168 90 160 88 157 88C162 82 170 72 177 63Z" fill="url(#workdsh-mark-warm-top)" />
+      <circle cx="128" cy="128" r="106" fill={`url(#${cool})`} />
+      <path d="M174 126C178 130 188 136 191 152C194 174 178 200 152 216C138 226 122 230 116 226C100 224 76 214 56 198C40 185 30 168 31 166C45 178 68 192 90 195C116 197 142 184 158 165C170 150 173 133 174 126Z" fill={`url(#${warm})`} />
+      <path d="M177 63C196 62 218 72 228 90C238 108 238 132 227 142C218 149 204 148 201 158C199 148 196 128 180 106C168 90 160 88 157 88C162 82 170 72 177 63Z" fill={`url(#${warmTop})`} />
       <path d="M148 53C170 48 196 54 210 68C198 61 178 59 166 61C150 64 134 76 127 88C140 92 166 96 178 107C189 118 185 142 175 158C165 174 146 183 129 184C109 185 88 171 78 149C68 127 72 101 90 81C108 61 128 56 148 53Z" fill="#050B22" />
     </svg>
   );
