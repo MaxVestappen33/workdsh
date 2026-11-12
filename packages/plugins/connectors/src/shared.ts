@@ -82,7 +82,17 @@ export interface ConnectorInstallManifest {
  */
 export type ConnectorAssetLookup =
   | { readonly found: false }
-  | { readonly found: true; readonly bundled: boolean; readonly manifest?: ConnectorInstallManifest };
+  | {
+    readonly found: true;
+    readonly bundled: boolean;
+    readonly manifest?: ConnectorInstallManifest;
+    /**
+     * 工具级收窄信息，只在该连接器被白名单限制时出现：
+     * - `raw`：由白名单正向推出的原始工具名；不在白名单内时是无损后缀，用于让闸门给出「未授权」；
+     * - `untrusted`：白名单推导集合与实际注册工具完全不相交，按映射不可信拒绝。
+     */
+    readonly tool?: { readonly raw?: string; readonly untrusted?: boolean };
+  };
 
 export interface ConnectorSummary {
   readonly id: string;
@@ -116,6 +126,20 @@ export interface ConnectorSummary {
   readonly authState?: 'unauthorized' | 'revoked';
   /** 与 `authState` 配套的中文原因文案，来自闸门 reasons.ts。 */
   readonly authReason?: string;
+  /**
+   * 工具级授权（仅连接器被白名单收窄时有值）：
+   * - `allowed`：后台白名单里的原始工具名；
+   * - `total`：当前实际注册的工具数；
+   * - `usable`：白名单与实际注册工具的交集数量，用于展示「可用 x/y」；
+   * - `denied`：未授权的公共工具名，界面置灰展示并给原因。
+   */
+  readonly toolAuth?: {
+    readonly restricted: true;
+    readonly allowed: readonly string[];
+    readonly total: number;
+    readonly usable: number;
+    readonly denied: readonly string[];
+  };
 }
 
 export interface ConnectorConfigView {

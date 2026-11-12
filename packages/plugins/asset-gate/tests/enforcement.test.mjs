@@ -131,6 +131,49 @@ test('MCP 工具按连接器清单判定：市场编号授权、内置与残留�
   }
 });
 
+test('MCP 工具级收窄：白名单外与映射不可信按 call_tool_item 拒绝，连接器级仍记 call_tool', async () => {
+  resetEnforcementState();
+  const TOOL_NOT_ENTITLED = '当前账号未获得该工具的使用授权。';
+  const MAPPING_UNTRUSTED = '工具与授权记录的映射不可信，已拒绝。';
+  const gate = fakeGate(['mcp']);
+  gate.entitled.add('mcp:a1');
+  const audits = [];
+  gate.auditDenied = entry => audits.push(entry);
+  gate.mcpTools = () => ({ restricted: true, tools: ['search'] });
+  gate.decideTool = async ({ assetId, tool }) => (assetId === 'a1' && tool === 'search'
+    ? { allow: true, reason: 'gate/allowed-entitled', message: '当前账号已获得该项资产的授权。' }
+    : { allow: false, reason: 'gate/denied-tool-not-entitled', message: TOOL_NOT_ENTITLED });
+  const table = {
+    'mcp__a__search': { found: true, manifest: manifest('market', 'a1'), tool: { raw: 'search' } },
+    'mcp__a__delete': { found: true, manifest: manifest('market', 'a1'), tool: { raw: 'delete' } },
+    'mcp__a__weird': { found: true, manifest: manifest('market', 'a1'), tool: { untrusted: true } },
+    'mcp__a__plain': { found: true, manifest: manifest('market', 'a1') },
+    'mcp__b__search': { found: true, manifest: manifest('market', 'a2') },
+  };
+  const { ctx, guards } = harness({ gate, connectors: { connectorAssetForTool: name => table[name] } });
+
+  assert.equal((await preExecute(ctx, execution('mcp__a__search'))).kind, 'allow', '白名单内放行');
+  assert.equal((await preExecute(ctx, execution('mcp__a__plain'))).kind, 'allow', '目录没给工具信息时不判工具');
+
+  const outside = execution('mcp__a__delete');
+  const denied = await preExecute(ctx, outside);
+  assert.equal(denied.kind, 'deny');
+  assert.equal(denied.reason, TOOL_NOT_ENTITLED, 'reason 只放中文文案');
+  assert.equal(denied.info.code, 'gate/denied-tool-not-entitled');
+  assert.equal(guards[0](outside), TOOL_NOT_ENTITLED, 'guard 必须复述同一判定');
+
+  const untrusted = await preExecute(ctx, execution('mcp__a__weird'));
+  assert.equal(untrusted.kind, 'deny');
+  assert.equal(untrusted.reason, MAPPING_UNTRUSTED);
+
+  const connectorLevel = await preExecute(ctx, execution('mcp__b__search'));
+  assert.equal(connectorLevel.info.code, 'gate/denied-not-entitled', '连接器级拒绝优先');
+
+  assert.deepEqual(audits.map(entry => entry.layer), ['call_tool_item', 'call_tool_item', 'call_tool']);
+  assert.equal(audits[0].toolName, 'mcp__a__delete');
+  assert.equal(audits[1].reasonCode, 'gate/denied-mapping-untrusted');
+});
+
 test('skill 工具按 arguments.name 定位清单；无 agent 与参数不合法时不读清单', async () => {
   resetEnforcementState();
   const gate = fakeGate(['skill']);

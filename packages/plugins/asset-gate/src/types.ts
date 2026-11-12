@@ -63,6 +63,38 @@ export interface EffectiveGatePolicy {
   readonly failClosed?: boolean;
 }
 
+/**
+ * 连接器授权条目。
+ *
+ * `id` 必有；`tools` 缺省或空数组表示该连接器全部工具可用，非空表示工具白名单。
+ * 白名单只做收窄：条目本身仍代表「连接器已授权」。
+ */
+export interface McpEntitlementEntry {
+  readonly id: string;
+  readonly tools?: readonly string[];
+}
+
+/** 七类资产的授权集合：`mcp` 为条目数组，其余六类为编号数组。 */
+export interface SnapshotAssets {
+  readonly skill: readonly string[];
+  readonly mcp: readonly McpEntitlementEntry[];
+  readonly expert: readonly string[];
+  readonly expert_group: readonly string[];
+  readonly model: readonly string[];
+  readonly knowledge: readonly string[];
+  readonly prompt: readonly string[];
+}
+
+/**
+ * 某类资产的授权编号投影。
+ *
+ * `mcp` 从条目里取 `id`，其余类型直接用数组；撤权对账、判定器与界面统计都走这一个投影，
+ * 避免出现「编号集合」与「工具明细」两套来源。
+ */
+export function entitlementIds(assets: SnapshotAssets, assetType: AssetType): readonly string[] {
+  return assetType === 'mcp' ? assets.mcp.map(entry => entry.id) : assets[assetType];
+}
+
 /** 一次授权快照的本地记录（后台字段 + 本地归属信息）。 */
 export interface SnapshotRecord {
   /** 本地账号键（组织 + 主体），不来自后台，用于隔离缓存。 */
@@ -73,8 +105,8 @@ export interface SnapshotRecord {
   readonly generatedAt?: string;
   /** 授权最晚结束时间；空值表示后台未给出时限。 */
   readonly staleAt?: string | null;
-  /** 七类资产各自被授权的资产 id。 */
-  readonly assets: Readonly<Record<AssetType, readonly string[]>>;
+  /** 七类资产各自被授权的资产集合。 */
+  readonly assets: SnapshotAssets;
   /** 本地抓取时间，仅用于诊断。 */
   readonly fetchedAt: string;
 }
@@ -87,7 +119,7 @@ export type SnapshotResult =
     readonly revision: string;
     readonly generatedAt?: string;
     readonly staleAt?: string | null;
-    readonly assets: Readonly<Record<AssetType, readonly string[]>>;
+    readonly assets: SnapshotAssets;
   };
 
 /** 判定结果。 */
@@ -111,6 +143,17 @@ export interface DecisionInput {
   readonly assetType: GateAssetType;
   readonly assetId: string;
   readonly usage: AssetUsage;
+  /** 毫秒时间戳；缺省取 Date.now()，测试必须显式传入。 */
+  readonly now?: number;
+}
+
+/** 工具级判定输入：`tool` 是后台记录的原始工具名，不是客户端公共名。 */
+export interface ToolDecisionInput {
+  readonly policy: EffectiveGatePolicy;
+  readonly snapshot?: SnapshotRecord;
+  /** 连接器编号（后台 `ai_mcp_tool.id`）。 */
+  readonly assetId: string;
+  readonly tool: string;
   /** 毫秒时间戳；缺省取 Date.now()，测试必须显式传入。 */
   readonly now?: number;
 }

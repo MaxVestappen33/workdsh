@@ -143,7 +143,7 @@ export function LocalMcpCard({ row, category, market, busy, toggling, batchMode,
       ) : null}
       <div className="card-foot">
         <span className="status-line"><i className={`dot${toggling ? ' discovering' : row.enabled ? ` ${row.state}` : ''}`} />{toggling ? togglingText : state}</span>
-        <span>{row.toolNames.length} 个工具</span>
+        <span>{row.toolAuth ? `可用 ${row.toolAuth.usable}/${row.toolAuth.total} 个工具` : `${row.toolNames.length} 个工具`}</span>
       </div>
     </article>
   );

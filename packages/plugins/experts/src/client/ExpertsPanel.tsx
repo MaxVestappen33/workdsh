@@ -34,9 +34,6 @@ type View = 'center' | 'mine' | 'applications';
 type StateFilter = 'all' | 'draft' | 'published' | 'disabled' | 'archived';
 type Notice = { kind: 'info' | 'warn' | 'error'; text: string };
 
-/** 回到前台时 focus 与 visibilitychange 会连着触发：这个窗口内只重取一轮。 */
-const REVALIDATE_DEDUPE_MS = 1_000;
-
 function messageOf(cause: unknown): string { return cause instanceof Error ? cause.message : '专家操作失败，请重试。'; }
 function codeOf(cause: unknown): string { const code = (cause as unknown as { code?: unknown })?.code; return typeof code === 'string' ? code : ''; }
 function icon(name: string) { return <Icon name={name as IconName} />; }
@@ -169,22 +166,6 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
     } catch { /* non-fatal: summaries still carry installedFromCatalog */ }
   }, [management]);
   useEffect(() => { void loadInstallations(); }, [loadInstallations]);
-  // 刷新按钮与窗口重新获得焦点都只重取当前视图的数据源；
-  // 中心页的列表由 RemoteExperts 自己监听 focus，面板不再重复触发。
-  const revalidateRef = useRef<() => void>(() => {});
-  /** 最近一次 focus/visibilitychange 重取的时间：同一次回到前台只触发一轮。 */
-  const lastRevalidateAtRef = useRef(0);
-  useEffect(() => {
-    const revalidate = () => {
-      if (document.visibilityState !== 'visible') return;
-      const now = Date.now();
-      if (now - lastRevalidateAtRef.current < REVALIDATE_DEDUPE_MS) return;
-      lastRevalidateAtRef.current = now;
-      revalidateRef.current();
-    };
-    window.addEventListener('focus', revalidate); document.addEventListener('visibilitychange', revalidate);
-    return () => { window.removeEventListener('focus', revalidate); document.removeEventListener('visibilitychange', revalidate); };
-  }, []);
   useEffect(() => {
     if (!actionMenu) return;
     const outside = (event: PointerEvent) => { if (!(event.target instanceof Element) || !event.target.closest('.card-actions')) setActionMenu(undefined); };
@@ -212,11 +193,6 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
     void loadMineCount();
     void loadInstallations();
   }, [refresh, loadMineCount, loadInstallations]);
-  revalidateRef.current = () => {
-    if (view === 'mine') void load();
-    // 中心页由 RemoteExperts 自己监听 focus，面板不再重复触发，避免一次回前台打两路。
-    else if (view === 'applications') setRemoteReload(value => value + 1);
-  };
   const closeEditor = () => {
     setEditorId(undefined);
     const url = new URL(window.location.href);

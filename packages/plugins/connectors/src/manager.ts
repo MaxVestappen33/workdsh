@@ -39,6 +39,26 @@ interface AssetGateProbe {
   revocationReason(): { readonly reason: string; readonly message: string };
   decide(request: { readonly assetType: string; readonly assetId: string; readonly usage: string }):
     Promise<{ readonly allow: boolean; readonly message: string }>;
+  /** 工具级白名单；旧版闸门没有该方法时按未收窄处理。 */
+  mcpTools?(assetId: string): { readonly restricted: boolean; readonly tools: readonly string[] };
+}
+
+/**
+ * 与官方 `dsh-mcp-client` 完全一致的公共工具名推导。
+ *
+ * 官方明确「公共名不用于还原原始名」，因此这里只做正向推导（原始名 → 公共名）：
+ * 用它构造白名单的允许集合，再与实际注册的工具名求交。推导一旦与官方规则分歧，
+ * 表现是「已授权的工具被误拒」而不是「未授权的工具被误放」，方向安全。
+ *
+ * @param serverName 连接器本地标识
+ * @param rawName    MCP 服务自己声明的工具名
+ */
+export function publicToolName(serverName: string, rawName: string): string {
+  const joined = `mcp__${serverName}__${rawName}`;
+  const normalized = joined.replace(/[^A-Za-z0-9_-]/g, '_');
+  if (normalized === joined && normalized.length <= 64) return normalized;
+  const hash = createHash('sha256').update(`${serverName}\0${rawName}`).digest('hex').slice(0, 12);
+  return `${normalized.slice(0, 64 - 12 - 1)}_${hash}`;
 }
 
 /**
@@ -83,8 +103,10 @@ const credentialHeaders = (value: string): Record<string, string> => {
   }
   return { Authorization: value };
 };
-/** 本次要写入凭据的请求头：市场条目按 `requestHeaders` 原样带入，单令牌输入等价于 Authorization。 */
-const inputHeaders = (input: Pick<ConnectorInput, 'requestHeaders' | 'authorizationToken'>): Record<string, string> | undefined => {
+/**
+ * 本次要写入凭据的请求头：市场条目按 `requestHeaders` 原样带入，单令牌输入等价于 Authorization。
+ */
+export const inputHeaders = (input: Pick<ConnectorInput, 'requestHeaders' | 'authorizationToken'>): Record<string, string> | undefined => {
   const headers: Record<string, string> = {};
   for (const header of requestHeadersOf(input.requestHeaders)) headers[header.key] = header.value;
   const token = input.authorizationToken?.trim();
@@ -264,7 +286,6 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
    */
   async applyGateState(): Promise<void> {
     return this.enqueue(async () => {
-      let touched = false;
       for (const [, definition] of this.table().entries()) {
         const gated = this.gated(definition);
         const desired = definition.enabled && !gated;
@@ -273,14 +294,14 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
         if (!desired && running) {
           await this.stop(definition.id, false);
           await this.removeFromSelections(definition.id);
-          touched = true;
         } else if (desired && runtime.state === 'disabled') {
           runtime.state = 'discovering';
           await this.start(definition).catch(() => undefined);
-          touched = true;
         }
       }
-      if (touched) this.reapplyRestrictions();
+      // 工具白名单变化不改变运行态，必须在每次对账后无条件重算可见工具，
+      // 否则会出现「执行层已拒绝、模型仍看得见」的错位。
+      this.reapplyRestrictions();
     });
   }
 
@@ -335,10 +356,12 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
         if (!matched || definition.serverName.length > matched.serverName.length) matched = definition;
       }
       if (!matched) return { found: false };
+      const tool = this.toolScope(matched, toolName);
       return {
         found: true,
         bundled: isBundledConnector(matched),
         ...(matched.installManifest ? { manifest: matched.installManifest } : {}),
+        ...(tool ? { tool } : {}),
       };
     } catch {
       // 存储域尚未打开（初始化中）：当作没有该记录，放行后由工具自身报未知工具。
@@ -418,6 +441,16 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
     // 被撤权的连接器对外表现为停用（运行时已在 applyGateState 中停掉），
     // 但不改写记录里的用户启用位，恢复授权后可自动还原。
     const gated = authState === 'revoked';
+    // 工具级收窄：只影响可用工具数量，不改变连接器的授权状态与启停。
+    const whitelist = this.toolWhitelist(definition);
+    const deniedTools = whitelist === undefined ? [] : health.toolNames.filter(name => !whitelist.publics.has(name));
+    const toolAuth = whitelist === undefined ? undefined : {
+      restricted: true as const,
+      allowed: whitelist.raws,
+      total: health.toolNames.length,
+      usable: health.toolNames.length - deniedTools.length,
+      denied: deniedTools,
+    };
     return { id: definition.id, title: definition.title, description: definition.description, serverName: definition.serverName,
       transport: definition.transport, scope: 'shared', enabled: definition.enabled && !gated, state: gated ? 'disabled' : health.state, toolNames: health.toolNames,
       tools: health.tools, resourceCount: health.resourceCount, resourceTemplateCount: health.resourceTemplateCount, lastCheckedAt: new Date().toISOString(),
@@ -425,6 +458,7 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
       ...(definition.installManifest ? { installManifest: definition.installManifest } : {}),
       ...(definition.marketServiceId ? { marketServiceId: definition.marketServiceId } : {}),
       ...(authState ? { authState, ...(authReason ? { authReason } : {}) } : {}),
+      ...(toolAuth ? { toolAuth } : {}),
       ...(health.diagnostic ? { diagnostic: health.diagnostic } : {}) };
   }
 
@@ -442,6 +476,51 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
   private clearGateMark(assetType: string, assetId: string | undefined): void {
     if (!assetId) return;
     try { this.gateProbe()?.clearRevoked(assetType, assetId); } catch { /* 闸门不可用不影响主流程 */ }
+  }
+
+  /**
+   * 连接器的工具白名单（公共名集合 + 原始名）。
+   *
+   * 只在「闸门开启 + 市场来源 + 有后台编号 + 连接器被收窄」时返回；
+   * 其余情况返回 undefined，调用方据此完全不做工具级处理（关闭态零开销）。
+   */
+  private toolWhitelist(definition: ConnectorDefinition):
+    { readonly publics: ReadonlySet<string>; readonly raws: readonly string[] } | undefined {
+    const manifest = definition.installManifest;
+    if (manifest?.source !== 'market' || !manifest.assetId) return undefined;
+    const gate = this.gateProbe();
+    if (!gate?.enabled('mcp')) return undefined;
+    const policy = gate.mcpTools?.(manifest.assetId);
+    if (!policy?.restricted || policy.tools.length === 0) return undefined;
+    return {
+      publics: new Set(policy.tools.map(raw => publicToolName(definition.serverName, raw))),
+      raws: policy.tools,
+    };
+  }
+
+  /** 该连接器当前实际注册的工具名。 */
+  private liveToolNames(definition: ConnectorDefinition): readonly string[] {
+    const prefix = `mcp__${definition.serverName}__`;
+    try { return this.ctx.tools.schemas().map(tool => tool.name).filter(name => name.startsWith(prefix)); }
+    catch { return []; }
+  }
+
+  /**
+   * 一次工具调用对应的原始工具名。
+   *
+   * - 公共名命中白名单 → 直接给出对应的原始名；
+   * - 白名单推导集合与当前注册工具完全不相交 → `untrusted`（官方命名规则可能变化，宁误拒不误放）；
+   * - 其余情况：该工具不在白名单内，后缀即无损原始名，交给闸门给出「未授权工具」。
+   */
+  private toolScope(definition: ConnectorDefinition, toolName: string): { raw?: string; untrusted?: boolean } | undefined {
+    const whitelist = this.toolWhitelist(definition);
+    if (!whitelist) return undefined;
+    for (const raw of whitelist.raws) {
+      if (publicToolName(definition.serverName, raw) === toolName) return { raw };
+    }
+    const live = this.liveToolNames(definition);
+    if (live.length > 0 && !live.some(name => whitelist.publics.has(name))) return { untrusted: true };
+    return { raw: toolName.slice(`mcp__${definition.serverName}__`.length) };
   }
 
   private async health(definition: ConnectorDefinition, signal?: AbortSignal): Promise<{ state: ConnectorState; toolNames: string[]; tools: ConnectorTool[]; resourceCount: number; resourceTemplateCount: number; diagnostic?: string }> {
@@ -531,13 +610,34 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
     const row = this.selectionTable().get(sessionId);
     return row ? row.connectorIds.includes(definition.id) : definition.enabled;
   }
+  /**
+   * 会话可见工具 = 已选连接器的工具 −（被收窄时）白名单外的工具。
+   *
+   * 白名单与「全部工具」是同一套投影：未收窄的连接器不产生任何 deny 项，
+   * 因此闸门关闭或未收窄时与既有行为完全一致。
+   */
   private applyRestriction(agent: Agent): void {
     this.restrictions.get(agent)?.();
     this.restrictions.delete(agent);
     const selected = new Set(this.effectiveSelection(String(agent.id)));
-    const denied = [...this.table().entries()]
-      .filter(([id]) => !selected.has(id))
-      .flatMap(([, definition]) => this.ctx.tools.schemas().map(tool => tool.name).filter(name => name.startsWith(`mcp__${definition.serverName}__`)));
+    const schemas = this.ctx.tools.schemas().map(tool => tool.name);
+    const denied: string[] = [];
+    for (const [id, definition] of this.table().entries()) {
+      const prefix = `mcp__${definition.serverName}__`;
+      const names = schemas.filter(name => name.startsWith(prefix));
+      if (!selected.has(id)) {
+        denied.push(...names);
+        continue;
+      }
+      const whitelist = this.toolWhitelist(definition);
+      if (!whitelist) continue;
+      // 映射不可信时整连接器的工具都隐藏，避免收窄静默失效。
+      if (names.length > 0 && !names.some(name => whitelist.publics.has(name))) {
+        denied.push(...names);
+        continue;
+      }
+      denied.push(...names.filter(name => !whitelist.publics.has(name)));
+    }
     if (denied.length) this.restrictions.set(agent, agent.ctx.tools.restrict({ deny: denied }));
   }
   private reapplyRestrictions(): void { for (const agent of this.ctx.agents.list()) this.applyRestriction(agent); }

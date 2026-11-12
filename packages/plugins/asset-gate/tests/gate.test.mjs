@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { Context } from '@deepseek-ai/cordis';
-import { AssetGateService, decide, failClosedPolicy, parseGatePolicy, PolicyStore, resolveEffectivePolicy, SnapshotStore } from '../dist/index.js';
+import { AssetGateService, decide, decideTool, failClosedPolicy, parseGatePolicy, parseSnapshotResult, PolicyStore, resolveEffectivePolicy, SnapshotStore } from '../dist/index.js';
 
 const ALL_OFF = { skill: false, mcp: false, expert: false, expert_group: false, model: false, knowledge: false, prompt: false };
 const policy = (masterEnabled, assetGates = {}) => ({
@@ -445,6 +445,167 @@ test('按 staleAt 接力重拉，插件销毁后定时器不再请求', async ()
     await new Promise(resolve => setTimeout(resolve, 300));
     assert.equal(revisions.length, 2, '销毁后定时器必须清理');
   } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('连接器条目解析：全量、白名单、重复合并与非法结构', () => {
+  const base = { skill: [], expert: [], expert_group: [], model: [], knowledge: [], prompt: [] };
+  const parse = mcp => parseSnapshotResult({ revision: 'r1', assets: { ...base, mcp } }).assets.mcp;
+
+  assert.deepEqual(
+    parse([{ id: 'b' }, { id: 'a', tools: [] }, { id: 'c', tools: ['z', 'a'] }]),
+    [{ id: 'a' }, { id: 'b' }, { id: 'c', tools: ['a', 'z'] }],
+    'tools 缺省或空数组都表示全部工具，工具名排序归一化',
+  );
+  assert.deepEqual(parse([{ id: 'a', tools: ['x'] }, { id: 'a' }]), [{ id: 'a' }], '重复条目中任一处未收窄即全量');
+  assert.deepEqual(parse([{ id: 'a', tools: ['x'] }, { id: 'a', tools: ['y'] }]), [{ id: 'a', tools: ['x', 'y'] }], '重复条目白名单求并集');
+
+  assert.throws(() => parse(['a']), /mcp/, '字符串条目不可识别');
+  assert.throws(() => parse([{ tools: [] }]), /连接器编号/, '缺少 id');
+  assert.throws(() => parse([{ id: 'a', tools: 'x' }]), /不是数组/, '工具清单不是数组');
+  assert.throws(() => parse([{ id: 'a', tools: [''] }]), /空工具名/, '空工具名');
+});
+
+test('工具级判定：白名单外拒绝、未收窄放行、连接器未授权拒绝', () => {
+  const open = policy(true, { mcp: true });
+  const record = snapshot({ mcp: [{ id: 'c1', tools: ['read_doc'] }, { id: 'c2' }] }, '2999-01-01T00:00:00.000Z');
+  const at = (assetId, tool, snap = record, pol = open) => decideTool({ policy: pol, snapshot: snap, assetId, tool, now: 0 });
+
+  assert.equal(at('c1', 'read_doc').allow, true);
+  const denied = at('c1', 'delete_doc');
+  assert.equal(denied.allow, false);
+  assert.equal(denied.reason, 'gate/denied-tool-not-entitled');
+  assert.equal(at('c2', 'anything').allow, true, '未收窄的连接器全部工具可用');
+  assert.equal(at('c3', 'anything').reason, 'gate/denied-not-entitled', '连接器不在快照内');
+
+  assert.equal(decideTool({ policy: policy(false), snapshot: hostile(), assetId: 'c1', tool: 'x', now: 0 }).reason, 'gate/allowed-open');
+  assert.equal(decideTool({ policy: policy(true, { skill: true }), snapshot: hostile(), assetId: 'c1', tool: 'x', now: 0 }).reason, 'gate/allowed-open');
+  assert.equal(decideTool({ policy: open, assetId: 'c1', tool: 'x', now: 0 }).reason, 'gate/denied-no-snapshot');
+});
+
+test('结构不可识别的快照不撤权：保留旧快照、不写账本、不停进程', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'asset-gate-'));
+  const calls = { applyGateState: 0 };
+  let malformed;
+  const ctx = new Context();
+  ctx.provide('workdshIdentity', identity());
+  ctx.provide('workdshConnectors', {
+    marketAssets: () => [{ localId: 'c1', assetId: 'a1' }],
+    applyGateState: () => { calls.applyGateState += 1; },
+  });
+  ctx.provide('workdshBackend', {
+    async available() { return true; },
+    async get(path) {
+      if (path.endsWith('queryGatePolicy')) return { masterEnabled: true, assetGates: { mcp: true }, revision: 'p1' };
+      const assets = {
+        skill: [], mcp: [{ id: 'a1' }], expert: [], expert_group: [], model: [], knowledge: [], prompt: [],
+      };
+      if (malformed === 'entry') {
+        // 条目不是对象：连接器结构不可识别。
+        return { revision: 'r2', staleAt: '2999-01-01T00:00:00.000Z', assets: { ...assets, mcp: ['a1'] } };
+      }
+      if (malformed === 'tools') {
+        // 工具清单不是数组：同样不可识别。
+        return { revision: 'r2', staleAt: '2999-01-01T00:00:00.000Z', assets: { ...assets, mcp: [{ id: 'a1', tools: 'read' }] } };
+      }
+      if (malformed === 'assets') {
+        // 整个授权集合缺失：不能当成「七类都为空」。
+        return { revision: 'r2', staleAt: '2999-01-01T00:00:00.000Z', assets: {} };
+      }
+      return { revision: 'r1', staleAt: '2999-01-01T00:00:00.000Z', assets };
+    },
+  });
+  try {
+    await ctx.plugin(AssetGateService, { autoSync: false, stateDir: directory });
+    await ctx.workdshAssetGate.sync();
+    assert.equal(ctx.workdshAssetGate.snapshot().revision, 'r1');
+    const appliedBefore = calls.applyGateState;
+    assert.equal(appliedBefore, 1, '正常快照应完成一次对账');
+
+    for (const mode of ['entry', 'tools', 'assets']) {
+      malformed = mode;
+      await ctx.workdshAssetGate.sync();
+      assert.equal(ctx.workdshAssetGate.snapshot().revision, 'r1', `${mode}：必须保留上一份快照`);
+      assert.equal(existsSync(join(directory, 'revocations.json')), false, `${mode}：不得写撤权账本`);
+      assert.equal(calls.applyGateState, appliedBefore, `${mode}：不得停进程`);
+      assert.equal(ctx.workdshAssetGate.revoked('mcp', 'a1'), false, `${mode}：不得标记撤权`);
+      assert.equal(
+        (await ctx.workdshAssetGate.decide({ assetType: 'mcp', assetId: 'a1', usage: 'use' })).allow,
+        true,
+        `${mode}：判定仍按旧快照执行`,
+      );
+    }
+  } finally {
+    await ctx.fiber.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('空快照且本地无已装资产：一次无副作用的空同步', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'asset-gate-'));
+  const ctx = new Context();
+  ctx.provide('workdshIdentity', identity());
+  // 注意：applyGateState 是每次对账都会调用的幂等重算入口，不代表停了进程；
+  // 这里断言的是「没有撤权标记、没有账本」。
+  ctx.provide('workdshConnectors', {
+    marketAssets: () => [],
+    applyGateState: () => undefined,
+  });
+  ctx.provide('workdshBackend', {
+    async available() { return true; },
+    async get(path) {
+      if (path.endsWith('queryGatePolicy')) return { masterEnabled: true, assetGates: { mcp: true }, revision: 'p1' };
+      return {
+        revision: 'r1', staleAt: '2999-01-01T00:00:00.000Z',
+        assets: { skill: [], mcp: [], expert: [], expert_group: [], model: [], knowledge: [], prompt: [] },
+      };
+    },
+  });
+  try {
+    await ctx.plugin(AssetGateService, { autoSync: false, stateDir: directory });
+    await ctx.workdshAssetGate.sync();
+    assert.equal(ctx.workdshAssetGate.snapshot().revision, 'r1', '空快照是合法快照，必须被接受');
+    assert.equal(ctx.workdshAssetGate.revoked('mcp', 'a1'), false, '不得凭空产生撤权标记');
+    assert.equal(existsSync(join(directory, 'revocations.json')), false, '没有已装资产时不得生成撤权账本');
+  } finally {
+    await ctx.fiber.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('七类齐全的空快照是合法撤权，与「读不懂」分开处理', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'asset-gate-'));
+  let empty = false;
+  const calls = { applyGateState: 0 };
+  const ctx = new Context();
+  ctx.provide('workdshIdentity', identity());
+  ctx.provide('workdshConnectors', {
+    marketAssets: () => [{ localId: 'c1', assetId: 'a1' }],
+    applyGateState: () => { calls.applyGateState += 1; },
+  });
+  ctx.provide('workdshBackend', {
+    async available() { return true; },
+    async get(path) {
+      if (path.endsWith('queryGatePolicy')) return { masterEnabled: true, assetGates: { mcp: true }, revision: 'p1' };
+      const assets = { skill: [], mcp: empty ? [] : [{ id: 'a1' }], expert: [], expert_group: [], model: [], knowledge: [], prompt: [] };
+      return { revision: empty ? 'r2' : 'r1', staleAt: '2999-01-01T00:00:00.000Z', assets };
+    },
+  });
+  try {
+    await ctx.plugin(AssetGateService, { autoSync: false, stateDir: directory });
+    await ctx.workdshAssetGate.sync();
+    assert.equal(ctx.workdshAssetGate.revoked('mcp', 'a1'), false);
+
+    empty = true;
+    await ctx.workdshAssetGate.sync();
+    assert.equal(ctx.workdshAssetGate.snapshot().revision, 'r2', '合法空快照必须被接受');
+    assert.equal(ctx.workdshAssetGate.revoked('mcp', 'a1'), true, '真实撤权仍需标记');
+    assert.equal(calls.applyGateState, 2, '撤权后需要重算运行态');
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal(existsSync(join(directory, 'revocations.json')), true, '真实撤权应落账本');
+  } finally {
+    await ctx.fiber.dispose();
     await rm(directory, { recursive: true, force: true });
   }
 });

@@ -57,10 +57,12 @@ export function LocalMcpDetailModal({ row, category, market, busy, toggling, onC
               <div className="metric"><small>真实状态</small><strong>{state}</strong></div>
               <div className="metric"><small>来源</small><strong>{row.originId ? '市场安装' : '内置'}</strong></div>
               <div className="metric"><small>分类</small><strong>{category || '—'}</strong></div>
-              <div className="metric"><small>MCP 工具</small><strong>{row.toolNames.length}</strong></div>
+              <div className="metric"><small>MCP 工具</small><strong>{row.toolAuth ? `可用 ${row.toolAuth.usable} / ${row.toolAuth.total}` : row.toolNames.length}</strong></div>
               <div className="metric"><small>资源 / URI 模板</small><strong>{row.resourceCount} / {row.resourceTemplateCount}</strong></div>
             </div>
-            <ToolList title="会话可调用工具" tools={row.toolNames.map(name => ({ name }))} empty="停用后工具已从官方目录移除" />
+            {row.toolAuth ? <p className="hint">该连接器仅开放部分工具，未授权工具已在会话中隐藏。</p> : null}
+            <ToolList title="会话可调用工具" tools={row.toolNames.map(name => ({ name }))} empty="停用后工具已从官方目录移除"
+              {...(row.toolAuth ? { denied: new Set(row.toolAuth.denied) } : {})} />
           </div>
           {row.diagnostic ? (failed ? <p className="error" role="alert">{row.diagnostic}</p> : <p className="hint">{row.diagnostic}</p>) : null}
         </>

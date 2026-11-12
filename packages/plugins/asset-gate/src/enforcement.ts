@@ -34,10 +34,14 @@ interface GateLike {
   /** 主闸门与验签子闸门是否同时开启；旧版闸门没有该方法时按关闭处理。 */
   signatureEnabled?(): boolean;
   decide(request: { readonly assetType: 'mcp' | 'skill' | 'model'; readonly assetId: string; readonly usage: 'use' }): Promise<{ readonly allow: boolean; readonly reason: string; readonly message: string }>;
+  /** 工具级判定；旧版闸门没有该方法时按「不做工具级收窄」处理。 */
+  decideTool?(request: { readonly assetId: string; readonly tool: string }): Promise<{ readonly allow: boolean; readonly reason: string; readonly message: string }>;
+  /** 连接器的工具白名单；`restricted=false` 表示未收窄。 */
+  mcpTools?(assetId: string): { readonly restricted: boolean; readonly tools: readonly string[] };
   unlisted(): { readonly reason: string; readonly message: string };
   /** 判定拒绝的审计入口；闸门关闭或上报异常都由实现自行吞掉。 */
   auditDenied?(input: {
-    readonly layer: 'call_tool' | 'call_skill' | 'call_skill_inject' | 'call_model' | 'call_expert' | 'data_layer' | 'revocation' | 'write_action';
+    readonly layer: 'call_tool' | 'call_tool_item' | 'call_skill' | 'call_skill_inject' | 'call_model' | 'call_expert' | 'data_layer' | 'revocation' | 'write_action';
     readonly reasonCode: string;
     readonly assetType?: string;
     readonly assetId?: string;
@@ -66,8 +70,20 @@ interface SkillDirectoryLike {
 }
 
 type ConnectorLookupLike =
-  | { readonly found: false }
-  | { readonly found: true; readonly bundled?: boolean; readonly manifest?: InstallManifestLike };
+  | {
+    readonly found: false;
+  }
+  | {
+    readonly found: true;
+    readonly bundled?: boolean;
+    readonly manifest?: InstallManifestLike;
+    /**
+     * 工具级信息，仅在连接器被白名单收窄时出现：
+     * - `raw`：由白名单正向推出的原始工具名；
+     * - `untrusted`：白名单无法推出该公共名，按映射不可信拒绝。
+     */
+    readonly tool?: { readonly raw?: string; readonly untrusted?: boolean };
+  };
 
 interface ConnectorDirectoryLike {
   connectorAssetForTool?(toolName: string): ConnectorLookupLike | undefined;
@@ -91,6 +107,8 @@ interface GateDenial {
   /** 审计用的资产归属（未登记时只有类型，没有编号）。 */
   readonly assetType?: 'mcp' | 'skill' | 'model';
   readonly assetId?: string;
+  /** 审计层级；缺省按工具调用类型推导，工具级拒绝必须显式给 `call_tool_item`。 */
+  readonly layer?: 'call_tool' | 'call_tool_item';
 }
 
 /** 判定过程抛异常时的统一拒绝：原因码与文案只从 reasons.ts 取，不复用「未授权」。 */
@@ -127,6 +145,11 @@ function remember(token: symbol, reason: string | undefined): void {
   }
 }
 
+/** 安装清单里的后台编号：去空白后非空才算存在。 */
+function manifestAssetId(manifest: InstallManifestLike | undefined): string | undefined {
+  return typeof manifest?.assetId === 'string' && manifest.assetId.trim() ? manifest.assetId.trim() : undefined;
+}
+
 /**
  * 唯一的资产判定口径（pre-execute 与 guard 共用，技能与 MCP 共用）：
  * - `market` + 后台编号 → 按编号判授权；
@@ -134,7 +157,7 @@ function remember(token: symbol, reason: string | undefined): void {
  * - 无清单或 `local`（用户自建/导入）→ 按「未上架/未登记」拒绝。
  */
 async function judge(gate: GateLike, assetType: 'mcp' | 'skill', manifest: InstallManifestLike | undefined): Promise<GateDenial | undefined> {
-  const assetId = typeof manifest?.assetId === 'string' && manifest.assetId.trim() ? manifest.assetId.trim() : undefined;
+  const assetId = manifestAssetId(manifest);
   if (manifest?.source === 'market' && assetId !== undefined) {
     const decision = await gate.decide({ assetType, assetId, usage: 'use' });
     return decision.allow ? undefined : { reason: decision.message, code: decision.reason, assetType, assetId };
@@ -226,7 +249,36 @@ async function judgeTool(ctx: Context, gate: GateLike, exec: Readonly<ToolExecut
   if (lookup === undefined || lookup.found === false) return undefined;
   // 随包内置连接器与清单标了 builtin 的记录都放行。
   if (lookup.bundled === true) return undefined;
-  return judge(gate, 'mcp', lookup.manifest);
+  const denial = await judge(gate, 'mcp', lookup.manifest);
+  // 连接器级拒绝优先：语义仍是「整服务未授权」，不因工具明细改变。
+  if (denial !== undefined) return denial;
+  return judgeToolScope(gate, lookup, manifestAssetId(lookup.manifest));
+}
+
+/**
+ * 工具级收窄：只在连接器被白名单限制、且目录能给出原始工具名时生效。
+ *
+ * - 目录没有工具信息（连接器未收窄 / 旧版连接器插件）→ 不做工具级判定；
+ * - 白名单无法推出该公共名 → `denied-mapping-untrusted`（宁误拒不误放）；
+ * - 否则按原始工具名走一次工具级判定，拒绝记 `call_tool_item`。
+ */
+async function judgeToolScope(gate: GateLike, lookup: ConnectorLookupLike, assetId: string | undefined): Promise<GateDenial | undefined> {
+  if (lookup.found !== true || lookup.tool === undefined) return undefined;
+  if (assetId === undefined) return undefined;
+  if (lookup.tool.untrusted === true) {
+    return {
+      reason: gateReasonMessage(GATE_REASONS.deniedMappingUntrusted),
+      code: GATE_REASONS.deniedMappingUntrusted,
+      assetType: 'mcp',
+      assetId,
+      layer: 'call_tool_item',
+    };
+  }
+  if (lookup.tool.raw === undefined || typeof gate.decideTool !== 'function') return undefined;
+  const decision = await gate.decideTool({ assetId, tool: lookup.tool.raw });
+  return decision.allow
+    ? undefined
+    : { reason: decision.message, code: decision.reason, assetType: 'mcp', assetId, layer: 'call_tool_item' };
 }
 
 /**
@@ -251,7 +303,7 @@ function registerToolInterception(ctx: Context, gate: GateLike): () => void {
     if (denial !== undefined) {
       // 审计只入队，不影响本次调用耗时；实现侧会吞掉任何异常。
       gate.auditDenied?.({
-        layer: exec.name === SKILL_TOOL ? 'call_skill' : 'call_tool',
+        layer: denial.layer ?? (exec.name === SKILL_TOOL ? 'call_skill' : 'call_tool'),
         reasonCode: denial.code,
         ...(denial.assetType ? { assetType: denial.assetType } : {}),
         ...(denial.assetId ? { assetId: denial.assetId } : {}),

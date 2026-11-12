@@ -123,15 +123,11 @@ const iconOf = (value: unknown): string | undefined => {
   return icon && /^https?:\/\//iu.test(icon) ? icon : undefined;
 };
 /**
- * 市场条目的请求头：新格式取 `requestHeaders`（可按名称自定义多个）；
- * 后台灰度期间仍可能只下发 `token`，此时按旧约定回退成 Authorization 头，避免装完连不上。
+ * 市场条目的请求头：只认 `requestHeaders`（可按名称自定义多个）。
+ * 市场接口已停止下发 `token`，这里不再做任何回退：为空即视为「无凭据」。
  */
-const requestHeadersFor = (row: Record<string, unknown>): readonly ConnectorRequestHeader[] => {
-  const headers = requestHeadersOf(row.requestHeaders);
-  if (headers.length) return headers;
-  const token = text(row.token);
-  return token ? [{ key: 'Authorization', value: token }] : [];
-};
+export const requestHeadersFor = (row: Record<string, unknown>): readonly ConnectorRequestHeader[] =>
+  requestHeadersOf(row.requestHeaders);
 /** args 表里是「每行一个」，连接器侧是字符串数组。 */
 const argsOf = (value: unknown): readonly string[] | undefined => {
   if (!Array.isArray(value)) return undefined;

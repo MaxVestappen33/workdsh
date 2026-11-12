@@ -21,6 +21,8 @@ export const GATE_REASONS = {
   deniedSnapshotStale: 'gate/denied-snapshot-stale',
   /** 快照存在，但该资产 id 不在对应类别中。 */
   deniedNotEntitled: 'gate/denied-not-entitled',
+  /** 连接器已授权，但该工具不在工具白名单内（连接器级已通过后才会出现）。 */
+  deniedToolNotEntitled: 'gate/denied-tool-not-entitled',
   /** 保留：资产内容与授权记录不一致（第三期完整性校验使用）。 */
   deniedContentModified: 'gate/denied-content-modified',
   /**
@@ -56,10 +58,11 @@ export const GATE_REASON_MESSAGES: Readonly<Record<GateReasonCode, string>> = {
   [GATE_REASONS.deniedExpired]: '授权已过期，请联网刷新授权后重试。',
   [GATE_REASONS.deniedSnapshotStale]: '离线时间过长（超过 24 小时未成功同步授权），联网后可继续操作。',
   [GATE_REASONS.deniedNotEntitled]: '当前账号未获得该项资产的授权。',
+  [GATE_REASONS.deniedToolNotEntitled]: '当前账号未获得该工具的使用授权。',
   [GATE_REASONS.deniedContentModified]: '资产内容与授权记录不一致，已拒绝。',
   [GATE_REASONS.deniedIntegrityBroken]: '资产内容与安装时的记录不一致（可能已被修改），已拒绝本次调用，请重新从市场安装。',
   [GATE_REASONS.deniedNotListed]: '该资产未上架或未登记，请先提交上架申请，审批通过后从市场安装。',
-  [GATE_REASONS.deniedMappingUntrusted]: '资产与授权条目的映射不可信，已拒绝。',
+  [GATE_REASONS.deniedMappingUntrusted]: '工具与授权记录的映射不可信，已拒绝。',
   [GATE_REASONS.revokedAuthorization]: '授权已失效，该资产已被自动停用。',
   [GATE_REASONS.deniedEvaluationError]: '资产判定出现异常，本次操作已按最小权限拒绝，请稍后重试。',
   [GATE_REASONS.deniedSignatureMissing]: ASSET_SIGNATURE_REASON_MESSAGES[ASSET_SIGNATURE_REASONS.missing],

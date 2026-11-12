@@ -15,8 +15,8 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { formatClientTime } from 'workdsh-contracts/asset-operation';
 
-/** 审计层级：与后台枚举一致；`call_skill_inject` 表示技能消息注入阶段被剔除。 */
-export const AUDIT_LAYERS = ['call_tool', 'call_skill', 'call_skill_inject', 'call_model', 'call_expert', 'data_layer', 'revocation', 'write_action', 'install_verify'] as const;
+/** 审计层级：与后台枚举一致；`call_skill_inject` 表示技能消息注入阶段被剔除，`call_tool_item` 表示连接器内单个工具被收窄。 */
+export const AUDIT_LAYERS = ['call_tool', 'call_tool_item', 'call_skill', 'call_skill_inject', 'call_model', 'call_expert', 'data_layer', 'revocation', 'write_action', 'install_verify'] as const;
 export type AuditLayer = typeof AUDIT_LAYERS[number];
 
 export const AUDIT_ACTIONS = ['install', 'enable', 'restore', 'uninstall', 'delete'] as const;

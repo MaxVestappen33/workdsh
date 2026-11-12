@@ -12,7 +12,8 @@
  */
 import { GATE_REASONS, gateReasonMessage, type GateReasonCode } from './reasons.js';
 import { snapshotExpired } from './snapshot.js';
-import type { DecisionInput, GateDecision, GateAssetType, AssetUsage } from './types.js';
+import { entitlementIds } from './types.js';
+import type { DecisionInput, GateDecision, GateAssetType, AssetUsage, ToolDecisionInput } from './types.js';
 
 /** 写操作允许离线使用快照的上限：以快照自身的 `fetchedAt`（最近一次成功拉取时间）为准。 */
 export const SNAPSHOT_WRITE_FRESHNESS_MS = 24 * 60 * 60 * 1000;
@@ -66,8 +67,41 @@ export function decide(input: DecisionInput): GateDecision {
     return result(false, GATE_REASONS.deniedSnapshotStale, identity, snapshot.revision);
   }
 
-  const entitled = snapshot.assets[assetType] ?? [];
+  const entitled = entitlementIds(snapshot.assets, assetType);
   return entitled.includes(assetId)
     ? result(true, GATE_REASONS.allowedEntitled, identity, snapshot.revision)
     : result(false, GATE_REASONS.deniedNotEntitled, identity, snapshot.revision);
+}
+
+/**
+ * 工具级判定：只回答「该连接器内的这个原始工具名是否在白名单内」。
+ *
+ * 调用前提是连接器级判定已经放行；这里仍按同样的顺序检查两道闸门与快照，
+ * 保证被绕过调用时也不会读到不该读的数据。工具级不涉及写操作，不检查 24 小时新鲜期。
+ */
+export function decideTool(input: ToolDecisionInput): GateDecision {
+  const identity: Identity = { assetType: 'mcp', assetId: input.assetId, usage: 'use' };
+  const { policy } = input;
+
+  if (!policy.masterEnabled) return result(true, GATE_REASONS.allowedOpen, identity);
+  if (policy.failClosed === true) return result(false, GATE_REASONS.deniedPolicyUnavailable, identity);
+  if (policy.assetGates.mcp !== true) return result(true, GATE_REASONS.allowedOpen, identity);
+
+  const snapshot = input.snapshot;
+  if (!snapshot) return result(false, GATE_REASONS.deniedNoSnapshot, identity);
+
+  const now = input.now ?? Date.now();
+  if (snapshotExpired(snapshot.staleAt, now)) {
+    return result(false, GATE_REASONS.deniedExpired, identity, snapshot.revision);
+  }
+
+  const entry = snapshot.assets.mcp.find(candidate => candidate.id === input.assetId);
+  if (!entry) return result(false, GATE_REASONS.deniedNotEntitled, identity, snapshot.revision);
+  // 没有 tools 或 tools 为空：该连接器未收窄，全部工具可用。
+  if (!entry.tools || entry.tools.length === 0) {
+    return result(true, GATE_REASONS.allowedEntitled, identity, snapshot.revision);
+  }
+  return entry.tools.includes(input.tool)
+    ? result(true, GATE_REASONS.allowedEntitled, identity, snapshot.revision)
+    : result(false, GATE_REASONS.deniedToolNotEntitled, identity, snapshot.revision);
 }

@@ -189,6 +189,10 @@ export const connectorCss = `${modalCss}
 .connector-detail-dialog .tool-list-head{color:var(--dsw-alias-label-secondary);font-weight:500}
 .connector-detail-dialog .tool-list-head .muted{color:var(--dsw-alias-label-tertiary);font-weight:400}
 .connector-detail-dialog .tool-item{padding:12px 0;border-top:1px solid var(--dsw-alias-border-l2)}
+/* 未授权工具：整条置灰但保留可读性，模型侧已隐藏，界面只做解释。 */
+.connector-detail-dialog .tool-item.is-denied{opacity:.55}
+.connector-detail-dialog .tool-item.is-denied code{color:var(--dsw-alias-label-tertiary)}
+.connector-detail-dialog .tool-tag.denied{background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-tertiary)}
 .connector-detail-dialog .tool-item:first-of-type{border-top:0}
 .connector-detail-dialog .tool-item-top{display:flex;align-items:baseline;gap:8px}
 /* 工具序号：与工具名同色（正文色），固定窄列宽，等宽数字避免工具名左右错位。 */

@@ -29,8 +29,6 @@ const MARKET_SCROLL_THRESHOLD = 160;
 const NOTICE_DURATION_MS = 3_000;
 /** 市场关键词防抖：关键词由服务端筛选，等输入停顿这么久再发请求，避免每敲一键打一次后台。 */
 const MARKET_QUERY_DEBOUNCE_MS = 250;
-/** 回到前台时 focus 与 visibilitychange 会连着触发：这个窗口内只重取一轮。 */
-const REVALIDATE_DEDUPE_MS = 1_000;
 /**
  * 本机安装任务的轮询间隔。依赖下载在 Host 侧后台执行，装多久由内网仓库和包体积决定，
  * 这里只负责定期取状态：装完刷新列表，失败把原因留在卡片上，不做时间上的失败判定。
@@ -169,27 +167,6 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
   useEffect(() => {
     if (!marketOn && tab === 'market') setTab('local');
   }, [marketOn, tab]);
-
-  // 窗口重新获得焦点/切回前台：只重取当前页签的数据。
-  // 市场请求会先走宿主侧触发式快照校验，后台刚授权/撤权的 MCP 立即可见。
-  const revalidateRef = useRef<() => void>(() => {});
-  revalidateRef.current = () => {
-    if (tab === 'market' && marketOn) void loadMarket(filter);
-    else void refresh();
-  };
-  /** 最近一次 focus/visibilitychange 重取的时间：同一次回到前台只触发一轮。 */
-  const lastRevalidateAtRef = useRef(0);
-  useEffect(() => {
-    const revalidate = () => {
-      if (document.visibilityState !== 'visible') return;
-      const now = Date.now();
-      if (now - lastRevalidateAtRef.current < REVALIDATE_DEDUPE_MS) return;
-      lastRevalidateAtRef.current = now;
-      revalidateRef.current();
-    };
-    window.addEventListener('focus', revalidate); document.addEventListener('visibilitychange', revalidate);
-    return () => { window.removeEventListener('focus', revalidate); document.removeEventListener('visibilitychange', revalidate); };
-  }, []);
 
   // 轮询器读 ref 里的最新任务快照：安装态自身的变化不该重置计时器。
   useEffect(() => {

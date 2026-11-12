@@ -30,9 +30,6 @@ function messageOf(cause: unknown): string {
   return cause instanceof Error ? cause.message : '操作失败，请重试。';
 }
 
-/** 回到前台时 focus 与 visibilitychange 会连着触发：这个窗口内只重取一轮。 */
-const REVALIDATE_DEDUPE_MS = 1_000;
-
 function codeOf(cause: unknown): string | undefined {
   return (cause as { code?: unknown } | undefined)?.code as string | undefined;
 }
@@ -118,24 +115,6 @@ export function RemoteExperts({ management, kind, keyword, onChanged, reloadKey 
   }, [management, kind, keyword, sceneKey]);
 
   useEffect(() => { void load(); }, [load, reloadKey]);
-
-  // 窗口重新获得焦点/切回前台时重取一次市场列表：宿主侧会先做一次授权快照校验，
-  // 后台刚上架或刚撤权的专家/专家团立即可见。focus 与 visibilitychange 会连着触发，
-  // 这里用时间窗去重，保证一次回到前台只发一轮请求。
-  const revalidateRef = useRef<() => void>(() => {});
-  revalidateRef.current = () => { void load(); };
-  const lastRevalidateAtRef = useRef(0);
-  useEffect(() => {
-    const revalidate = () => {
-      if (document.visibilityState !== 'visible') return;
-      const now = Date.now();
-      if (now - lastRevalidateAtRef.current < REVALIDATE_DEDUPE_MS) return;
-      lastRevalidateAtRef.current = now;
-      revalidateRef.current();
-    };
-    window.addEventListener('focus', revalidate); document.addEventListener('visibilitychange', revalidate);
-    return () => { window.removeEventListener('focus', revalidate); document.removeEventListener('visibilitychange', revalidate); };
-  }, []);
 
   const install = async (item: RemoteExpertSummary) => {
     setActing(item.remoteId); setError(''); setNotice(undefined);

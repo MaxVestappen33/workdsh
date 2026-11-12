@@ -18,17 +18,18 @@ import {
   GateAuditRecorder, type AuditReportResult, type DeniedAuditInput, type WriteAuditInput,
 } from './audit.js';
 import { AssetGateBackend, DEFAULT_ASSET_GATE_PATHS, type AssetGateChannel, type AssetGatePaths } from './backend.js';
-import { decide } from './decider.js';
+import { decide, decideTool } from './decider.js';
 import { failClosedPolicy, resolveEffectivePolicy, DEFAULT_LOCAL_GATE_CONFIG } from './policy.js';
 import { PolicyStore } from './policy-store.js';
 import { GATE_REASONS, gateReasonMessage, type GateReasonCode } from './reasons.js';
 import { RevocationLedger, reconcileRevocations, type RevocableAssetType } from './revocation.js';
-import { snapshotExpired } from './snapshot.js';
+import { isCompleteSnapshotRecord, snapshotExpired } from './snapshot.js';
 import { SnapshotStore } from './snapshot-store.js';
 import type {
   AssetUsage, EffectiveGatePolicy, GateAssetType, GateDecision, GatePolicy,
   LocalGateConfig, SnapshotRecord,
 } from './types.js';
+import { entitlementIds } from './types.js';
 
 /** 运行中 revision 比对周期：用户要求授权变更尽快可见，取 60 秒。 */
 const REFRESH_INTERVAL_MS = 60_000;
@@ -77,6 +78,16 @@ export interface AssetGateApi {
   snapshot(): SnapshotRecord | undefined;
   /** 判定单个资产；闸门关闭时同步放行，不触碰身份与快照。 */
   decide(request: GateRequest): Promise<GateDecision>;
+  /**
+   * 工具级判定：连接器级已放行后调用，`tool` 必须是后台记录的原始工具名。
+   * 闸门关闭时同步放行，不解析身份、不读快照。
+   */
+  decideTool(request: { readonly assetId: string; readonly tool: string }): Promise<GateDecision>;
+  /**
+   * 某连接器的工具白名单（只读内存，不触发网络或磁盘读取）。
+   * `restricted=false` 表示该连接器未收窄（或闸门未开启），此时 `tools` 为空数组。
+   */
+  mcpTools(assetId: string): { readonly restricted: boolean; readonly tools: readonly string[] };
   /**
    * 「未上架/未登记」的拒绝结果：数据层拿不到后台资产编号时复用它，
    * 保证原因码与文案只在 reasons.ts 维护一份。
@@ -309,6 +320,28 @@ export class AssetGateService extends Service implements AssetGateApi {
     return Promise.resolve(decide({ policy, snapshot, ...request }));
   }
 
+  decideTool(request: { readonly assetId: string; readonly tool: string }): Promise<GateDecision> {
+    const policy = this.effective;
+    // 零开销：主闸门或连接器子闸门关闭时直接放行，不解析身份、不读快照。
+    if (!policy.masterEnabled || policy.assetGates.mcp !== true) {
+      return Promise.resolve(decideTool({ policy, ...request }));
+    }
+    const account = this.account();
+    const snapshot = account ? this.store.peek(account.key) : undefined;
+    return Promise.resolve(decideTool({ policy, snapshot, ...request }));
+  }
+
+  mcpTools(assetId: string): { readonly restricted: boolean; readonly tools: readonly string[] } {
+    const unrestricted = { restricted: false, tools: [] as readonly string[] };
+    if (!this.enabled('mcp')) return unrestricted;
+    const account = this.account();
+    const snapshot = account ? this.store.peek(account.key) : undefined;
+    const entry = snapshot?.assets.mcp.find(candidate => candidate.id === assetId);
+    return entry?.tools?.length
+      ? { restricted: true, tools: entry.tools }
+      : unrestricted;
+  }
+
   unlisted(): { readonly reason: GateReasonCode; readonly message: string } {
     return { reason: GATE_REASONS.deniedNotListed, message: gateReasonMessage(GATE_REASONS.deniedNotListed) };
   }
@@ -375,7 +408,7 @@ export class AssetGateService extends Service implements AssetGateApi {
       const result = reconcileRevocations(
         this.ledger,
         assetType,
-        record.assets[assetType] ?? [],
+        entitlementIds(record.assets, assetType),
         rows.map(row => row.assetId),
       );
       // 只有「本次新标记」才记审计，避免同一份账本在每次 revision 变化时重复上报。
@@ -532,7 +565,13 @@ export class AssetGateService extends Service implements AssetGateApi {
     const secret = await this.sealSecret(signal);
     if (!secret) return { ok: false };
     if (!this.store.peek(account.key)) await this.store.load(account.key, secret);
-    const cached = this.store.peek(account.key);
+    let cached = this.store.peek(account.key);
+    // 结构不完整的本地缓存不能作为授权依据：既不参与判定，也不能进入求差，
+    // 直接丢弃后按「没有可用缓存」重新拉全量。
+    if (cached && !isCompleteSnapshotRecord(cached)) {
+      this.ctx.logger.warn('资产闸门：本地快照结构不完整，已忽略并按全量重新拉取。');
+      cached = undefined;
+    }
 
     try {
       let result = await this.backend.snapshot(cached?.revision, signal);
@@ -542,7 +581,7 @@ export class AssetGateService extends Service implements AssetGateApi {
           // 服务端确认修订未变也是一次成功拉取：刷新新鲜期，否则长期在线也会在 24 小时后被误判离线。
           const refreshed: SnapshotRecord = { ...cached, fetchedAt: new Date().toISOString() };
           await this.store.save(refreshed, secret);
-          await this.reconcileRevocations(refreshed);
+          await this.reconcileIfComplete(refreshed);
           return { ok: true, record: refreshed };
         }
         return { ok: true, record: cached };
@@ -556,12 +595,28 @@ export class AssetGateService extends Service implements AssetGateApi {
         fetchedAt: new Date().toISOString(),
       };
       await this.store.save(record, secret);
-      await this.reconcileRevocations(record);
+      await this.reconcileIfComplete(record);
       return { ok: true, record };
     } catch (error) {
-      this.ctx.logger.warn(`资产闸门：授权快照获取失败（${detail(error)}）。`);
+      // 回包不可识别、结构不全或请求失败：保留上一份快照与账本，不进入撤权对账。
+      this.ctx.logger.warn(`资产闸门：授权快照获取失败（${detail(error)}），已保留上一份快照。`);
       return { ok: false, record: cached };
     }
+  }
+
+  /**
+   * 撤权重算的前置条件。
+   *
+   * 只有本轮完整解析成功、且结构校验通过的快照才允许参与「已安装 − 快照」求差；
+   * 结构不完整的记录一律跳过对账——宁可保留旧账本，也不把「读不懂」当成「没有授权」，
+   * 否则会批量撤权、写账本、停进程。
+   */
+  private async reconcileIfComplete(record: SnapshotRecord): Promise<void> {
+    if (!isCompleteSnapshotRecord(record)) {
+      this.ctx.logger.warn('资产闸门：快照结构不完整，已跳过撤权重算。');
+      return;
+    }
+    await this.reconcileRevocations(record);
   }
 
   /** 下一次同步间隔：不晚于方案周期，也不晚于快照到期时间。 */
