@@ -1,9 +1,11 @@
 /**
- * 调试用 HTTP 日志（仅 `environment=dev`）。
+ * 出站 HTTP 日志（dev 全量，prod 只记失败）。
  *
- * 把 Host 进程的全部出站请求与响应写入 `<目录>/host-http-YYYY-MM-DD.log`，用于现场排查
- * （MCP 握手、市场/后台接口、模型调用都在这一层）。默认关闭：prod 下本模块不会被安装，
- * 一个字节都不落盘。正文一律截断，令牌类字段与头部打码，避免把凭据写进磁盘。
+ * 把 Host 进程的出站请求写入 `<目录>/host-http-YYYY-MM-DD.log`，用于现场排查
+ * （MCP 握手、市场/后台接口、模型调用都在这一层）。
+ * - dev（`WORKDSH_ENVIRONMENT=dev`）：记录全部请求与响应，正文截断、令牌与头部打码。
+ * - prod：只记录失败请求——响应 `status ≥ 400`，或网络/传输错误；不记录请求/响应头与正文，
+ *   响应体也不读取，避免占用磁盘、拖慢调用，降低敏感信息落盘的可能。
  *
  * 形态：一行请求、一行响应（同一个 `#序号` 便于并发请求配对），正文为原始 JSON-RPC / JSON。
  * 写文件失败、目录不可写、达到体积上限都静默降级，绝不影响请求本身。
@@ -172,7 +174,7 @@ async function describeResponse(id: number, response: Response, startedAt: numbe
  * 安装出站 HTTP 日志并返回卸载函数。`directory` 不存在时会被创建。
  * 已经安装过时返回空卸载函数：包装归第一个安装方所有。
  */
-export function installHttpLog(directory: string): () => void {
+export function installHttpLog(directory: string, { failuresOnly = false }: { failuresOnly?: boolean } = {}): () => void {
   const scope = globalThis as LogScope
   if (scope[INSTALLED]) return () => undefined
   const original = globalThis.fetch
@@ -183,11 +185,20 @@ export function installHttpLog(directory: string): () => void {
     const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase()
     const url = requestUrl(input)
     const startedAt = Date.now()
-    const lines = [`[${stamp()}] #${id} -> ${method} ${redactUrl(url)}`, `  headers: ${redactHeaders(requestHeaders(init))}`]
-    if (typeof init?.body === 'string' && init.body) lines.push(`  body: ${truncateBody(redactBody(init.body))}`)
-    write(`${lines.join('\n')}\n`)
+    if (!failuresOnly) {
+      const lines = [`[${stamp()}] #${id} -> ${method} ${redactUrl(url)}`, `  headers: ${redactHeaders(requestHeaders(init))}`]
+      if (typeof init?.body === 'string' && init.body) lines.push(`  body: ${truncateBody(redactBody(init.body))}`)
+      write(`${lines.join('\n')}\n`)
+    }
     try {
       const response = await original(input, init)
+      if (failuresOnly) {
+        // 生产环境只留失败请求：不读响应体，不给调用方增加任何延迟。
+        if (response.status >= 400) {
+          write(`[${stamp()}] #${id} <- ${String(response.status)} ${method} ${redactUrl(url)} · ${String(Date.now() - startedAt)}ms\n`)
+        }
+        return response
+      }
       // 不 await：响应体读取在后台上补记，不延迟调用方（尤其流式响应）。
       void describeResponse(id, response, startedAt, write).catch(() => undefined)
       return response
@@ -206,13 +217,20 @@ export function installHttpLog(directory: string): () => void {
 }
 
 /**
- * 从 Host 进程环境读取调试日志目录：只有 carrier 明确下发 `WORKDSH_ENVIRONMENT=dev`
- * 时才启用；缺日志目录时退回 `$DSH_HOME/logs`。
+ * 从 Host 进程环境读取日志目录：carrier 始终下发 `WORKDSH_LOG_DIR`，
+ * 缺日志目录时退回 `$DSH_HOME/logs`。是否记录全量由调用方按环境决定。
  */
-export function debugLogDirectory(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  if (env.WORKDSH_ENVIRONMENT !== 'dev') return undefined
+export function hostLogDirectory(env: NodeJS.ProcessEnv = process.env): string | undefined {
   const directory = env.WORKDSH_LOG_DIR?.trim()
   if (directory) return directory
   const home = env.DSH_HOME?.trim()
   return home ? join(home, 'logs') : undefined
+}
+
+/**
+ * 调试日志目录：只有 carrier 明确下发 `WORKDSH_ENVIRONMENT=dev` 时才启用全量日志。
+ */
+export function debugLogDirectory(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  if (env.WORKDSH_ENVIRONMENT !== 'dev') return undefined
+  return hostLogDirectory(env)
 }

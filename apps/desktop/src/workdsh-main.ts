@@ -17,7 +17,7 @@ import { connectionPartition, enterpriseConnection, type DesktopConnection } fro
 import { parseDeploymentConfig } from './deployment-config.ts'
 import { readModelCredentials } from './model-credentials.ts'
 import { readAppConfig, type AppEnvironment, type ResolvedAppConfig } from './app-config.ts'
-import { createDebugLog, type DebugLog } from './debug-log.ts'
+import { createDebugLog, pruneDebugLogs, type DebugLog } from './debug-log.ts'
 import { AccountLogin, AccountStore, restoreAccountLogin, startAccountAuthority, type AccountAuthority } from './member-auth.ts'
 import { EnterpriseLogin, startEnterpriseAuthority, type Authority } from './enterprise-auth.ts'
 import { desktopEnterprisePatch, desktopAccountPatch, desktopConnectorMarketPatch, desktopSkillMarketPatch, desktopPromptPatch, desktopModelMarketPatch, desktopExpertMarketPatch, desktopAssetGatePatch, accountSpace, accountModelStateDirectory, accountAssetGateStateDirectory, assetGatePolicyDirectory, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher, quarantineCredentialsResidue, type AccountActor } from './local-runtime.ts'
@@ -1398,9 +1398,13 @@ async function startRuntime(home: string, connection: DesktopConnection, patches
   markStartup('DSH Host 进程已拉起（等待就绪）')
   let ready = false
   let output = ''
-  // 调试开关打开时把 Host 的原始输出落到 userData/logs：打包应用没有终端，
-  // 官方插件记录的真实错误原因（例如 MCP 连接失败的 warn）原本完全看不到。
-  const hostOutputLog: DebugLog | undefined = debugEnvironment() === 'dev' ? createDebugLog(debugLogDirectory(), 'host-output') : undefined
+  // Host 的原始输出始终落到 userData/logs：打包应用没有终端，官方插件记录的真实错误原因
+  // （例如插件导入失败、MCP 连接失败的 warn）原本完全看不到。
+  // 原始输出里含启动令牌这类明文，落盘前按既有规则脱敏；redactor 按行缓冲，避免 token 被分片割裂。
+  const hostOutputLog: DebugLog | undefined = createDebugLog(debugLogDirectory(), 'host-output')
+  const writeHostOutput = (text: string): void => { hostOutputLog?.write(text) }
+  const stdoutFileRedactor = createRuntimeOutputRedactor(writeHostOutput)
+  const stderrFileRedactor = createRuntimeOutputRedactor(writeHostOutput)
   let diagnosticOutput = ''
   const recordOutput = (safe: string): void => {
     diagnosticOutput = `${diagnosticOutput}${safe}`.slice(-16_384)
@@ -1410,7 +1414,7 @@ async function startRuntime(home: string, connection: DesktopConnection, patches
   const stderrRedactor = createRuntimeOutputRedactor(recordOutput)
   const consume = (chunk: Buffer): void => {
     const text = chunk.toString('utf8')
-    hostOutputLog?.write(text)
+    stdoutFileRedactor.push(chunk)
     stdoutRedactor.push(chunk)
     if (ready || switching || runtime !== child) return
     output = `${output}${text}`.slice(-16_384)
@@ -1441,11 +1445,11 @@ async function startRuntime(home: string, connection: DesktopConnection, patches
   }
   child.stdout.on('data', consume)
   child.stderr.on('data', chunk => {
-    hostOutputLog?.write(chunk.toString())
+    stderrFileRedactor.push(chunk)
     stderrRedactor.push(chunk)
   })
-  child.stdout.once('end', () => stdoutRedactor.end())
-  child.stderr.once('end', () => stderrRedactor.end())
+  child.stdout.once('end', () => { stdoutFileRedactor.end(); stdoutRedactor.end() })
+  child.stderr.once('end', () => { stderrFileRedactor.end(); stderrRedactor.end() })
   child.once('error', cause => {
     if (!quitting && runtime === child) { dialog.showErrorBox('启动失败', redactRuntimeOutput(cause.message)); void returnToLogin() }
   })
@@ -1661,6 +1665,24 @@ function debugEnvironment(): AppEnvironment {
 /** 调试日志目录：与启动耗时日志同处 userData/logs，便于一次性收集。 */
 function debugLogDirectory(): string {
   return join(app.getPath('userData'), 'logs')
+}
+
+/** 日志保留清理周期：启动时清一次，运行期每 6 小时再清一次（24 小时保留期在 pruneDebugLogs 内）。 */
+const LOG_RETENTION_INTERVAL_MS = 6 * 60 * 60 * 1000
+
+/** 删除 24 小时前的按天日志；目录仍超 32 MB 时按最旧继续删。失败只记录，绝不阻断启动。 */
+function pruneDailyLogs(): void {
+  const { failed, remainingBytes, budgetExceeded } = pruneDebugLogs(debugLogDirectory())
+  for (const item of failed) recordCleanupFailure('日志过期清理', `${item.file}: ${item.error}`)
+  if (budgetExceeded) {
+    recordCleanupFailure('日志总量兜底', `清理后仍有 ${remainingBytes} 字节，超过 32 MB 预算（剩余为非受管文件）`)
+  }
+}
+
+function scheduleLogRetention(): void {
+  pruneDailyLogs()
+  const timer = setInterval(pruneDailyLogs, LOG_RETENTION_INTERVAL_MS)
+  timer.unref()
 }
 
 /** 客户端标识：配置读取失败时不下发，由后台按缺省处理，绝不影响启动。 */
@@ -2180,6 +2202,8 @@ if (!app.requestSingleInstanceLock()) {
     setTimeout(() => { void cleanProgressHelper() }, 60_000)
     startupLogFile = join(app.getPath('userData'), 'startup-timing.log')
     markStartup('app.whenReady 触发')
+    // 客户机上不累积历史诊断日志：启动清一次，之后每 6 小时一次（失败只记录，不影响启动）。
+    scheduleLogRetention()
     const deploymentFile = join(process.resourcesPath ?? '', 'workdsh-config.json')
     if (existsSync(deploymentFile)) {
       managedBackend = parseDeploymentConfig(JSON.parse(readFileSync(deploymentFile, 'utf8'))).enterprise?.backendUrl
