@@ -7,6 +7,7 @@
     {"name":"workdsh-plugin-connectors","directory":"packages/plugins/connectors"},
     {"name":"workdsh-plugin-asset-gate","directory":"packages/plugins/asset-gate"},
     {"name":"workdsh-plugin-brand","directory":"packages/plugins/brand"},
+    {"name":"workdsh-plugin-diagnostics","directory":"packages/plugins/diagnostics"},
     {"name":"workdsh-plugin-model-market","directory":"packages/plugins/model-market"},
     {"name":"workdsh-plugin-prompts","directory":"packages/plugins/prompts"},
     {"name":"workdsh-plugin-office","directory":"packages/plugins/office"},
