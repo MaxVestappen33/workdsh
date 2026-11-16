@@ -112,8 +112,8 @@ export interface PruneResult {
 /** 由本应用写出的按天轮转日志前缀；新增同类日志只在这里加一项。 */
 export const DAILY_LOG_PREFIXES = ['host-output', 'host-http', 'process-cleanup', 'update'] as const
 
-/** runtime-failure* 文件名形态（与诊断包采集同一正则）。 */
-const RUNTIME_FAILURE_NAME = /^runtime-failure(?:-retry-\d+)?\.log$/u
+/** runtime-failure* 文件名形态（与诊断包采集同一正则）：启动失败、句柄耗尽重试、运行中崩溃三种记录共用限额。 */
+const RUNTIME_FAILURE_NAME = /^runtime-failure(?:-(?:retry|crash)-\d+)?\.log$/u
 /** runtime-failure* 数量上限：失败证据只留最近这么多份，多出的按最旧优先删。 */
 const MAX_RUNTIME_FAILURE_FILES = 20
 

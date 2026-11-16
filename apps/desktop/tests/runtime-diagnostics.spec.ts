@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { createRuntimeOutputRedactor, isHandleExhaustion, redactRuntimeOutput, retryStartupAfterHandleExhaustion, runtimeFailureDetail, runtimeFailureLog, shouldRetryStartup, startupFailureLogName, officialCommandFailureDetail } from '../src/runtime-diagnostics.ts'
+import { createRuntimeOutputRedactor, isHandleExhaustion, isStackOverflow, planRuntimeRestart, RUNTIME_RESTART_LIMIT, RUNTIME_RESTART_STABLE_MS, redactRuntimeOutput, retryStartupAfterHandleExhaustion, runtimeCrashDetail, runtimeCrashLog, runtimeCrashLogName, runtimeFailureDetail, runtimeFailureLog, shouldRetryStartup, startupFailureLogName, officialCommandFailureDetail } from '../src/runtime-diagnostics.ts'
 
 const EMFILE_OUTPUT = "dsh: fatal uncaught exception: StartupError: 1 required plugin did not activate\nError: EMFILE: too many open files, open 'C:\\Users\\u\\AppData\\Roaming\\PoliceAssistant\\dsh-home\\.credentials.yaml'"
 
@@ -93,4 +93,44 @@ it('keeps the first failure and the retry result in separate records', () => {
   expect(runtimeFailureLog(false, 1, EMFILE_OUTPUT)).toContain('[首次启动]')
   expect(runtimeFailureLog(false, 1, EMFILE_OUTPUT, false, 1)).toContain('[第 2 次启动（句柄耗尽后重试）]')
   expect(runtimeFailureLog(false, 1, EMFILE_OUTPUT, false, 1)).toContain('EMFILE')
+})
+
+const STACK_OUTPUT = `[workdsh:probe] activated
+dsh web: http://127.0.0.1:3080/?token=[redacted]
+dsh: fatal load failure: RangeError: Maximum call stack size exceeded
+    at Reflect.set (<anonymous>)
+    at Object.set (file:///C:/Users/u/AppData/Local/Programs/PoliceAssistant/resources/workdsh-runtime/profiles/workdsh/node_modules/@deepseek-ai/cordis/lib/index.js:151:19)`
+
+it('records a running-time crash separately from startup failures', () => {
+  expect(runtimeCrashLogName(2)).toBe('runtime-failure-crash-2.log')
+  const log = runtimeCrashLog(1, STACK_OUTPUT, 2, 2, RUNTIME_RESTART_LIMIT)
+  expect(log).toContain('[运行中异常退出]')
+  expect(log).toContain('本机第 2 份崩溃记录')
+  expect(log).toContain('官方 DSH 进程已退出 (1)')
+  expect(log).toContain('自动重启：第 2 / 3 次')
+  // 现场证据必须原样留在本机记录里，弹窗才做归纳。
+  expect(log).toContain('cordis/lib/index.js:151')
+  expect(log).not.toContain('token=secret')
+})
+
+it('explains a stack overflow instead of blaming the installation', () => {
+  expect(isStackOverflow(STACK_OUTPUT)).toBe(true)
+  expect(isStackOverflow(EMFILE_OUTPUT)).toBe(false)
+  const detail = runtimeCrashDetail(1, STACK_OUTPUT, 'C:/logs/runtime-failure-crash-1.log')
+  expect(detail).toContain('已退出 (1)')
+  expect(detail).toContain('调用栈溢出')
+  expect(detail).toContain('runtime-failure-crash-1.log')
+  // 非栈溢出的崩溃不多说一句，避免把用户引到错误的处置方向。
+  expect(runtimeCrashDetail(1, 'Error: boom')).not.toContain('调用栈溢出')
+})
+
+it('restarts a crashed host within budget and gives up after repeated failures', () => {
+  expect(planRuntimeRestart(30_000, 0)).toEqual({ restart: 1, delayMs: 1_500 })
+  expect(planRuntimeRestart(30_000, 1)).toEqual({ restart: 2, delayMs: 3_000 })
+  expect(planRuntimeRestart(30_000, 2)).toEqual({ restart: 3, delayMs: 6_000 })
+  expect(planRuntimeRestart(30_000, 3)).toBe('give-up')
+  // 稳定运行过一段时间的进程只算一次意外：预算清零，长运行现场可以反复自愈。
+  expect(planRuntimeRestart(RUNTIME_RESTART_STABLE_MS, 3)).toEqual({ restart: 1, delayMs: 1_500 })
+  // 连续崩溃不会无限等待：延迟封顶在最后一个档位。
+  expect(planRuntimeRestart(0, 2, { limit: 9, delaysMs: [10, 20] })).toEqual({ restart: 3, delayMs: 20 })
 })

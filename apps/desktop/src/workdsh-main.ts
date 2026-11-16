@@ -23,9 +23,10 @@ import { EnterpriseLogin, startEnterpriseAuthority, type Authority } from './ent
 import { desktopEnterprisePatch, desktopAccountPatch, desktopConnectorMarketPatch, desktopSkillMarketPatch, desktopPromptPatch, desktopModelMarketPatch, desktopExpertMarketPatch, desktopAssetGatePatch, accountSpace, accountModelStateDirectory, accountAssetGateStateDirectory, assetGatePolicyDirectory, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher, quarantineCredentialsResidue, type AccountActor } from './local-runtime.ts'
 import { manageCommand } from './command-management.ts'
 import { ACCOUNT_ONLY } from './carrier-policy.ts'
-import { createRuntimeOutputRedactor, redactRuntimeOutput, retryStartupAfterHandleExhaustion, runtimeFailureDetail, runtimeFailureLog, startupFailureLogName } from './runtime-diagnostics.ts'
+import { createRuntimeOutputRedactor, planRuntimeRestart, RUNTIME_RESTART_LIMIT, redactRuntimeOutput, retryStartupAfterHandleExhaustion, runtimeCrashDetail, runtimeCrashLog, runtimeCrashLogName, runtimeFailureDetail, runtimeFailureLog, startupFailureLogName } from './runtime-diagnostics.ts'
 import { cleanOwnedProcessTree, reclaimOrphanedToolProcesses, stopOwnedProcess, terminateOwnedProcessImmediately, trackOwnedProcess } from './owned-process.ts'
 import { prepareRuntimePort, runtimePortConflict } from './runtime-port.ts'
+import { hostNodeArguments, runSessionPreflight, sessionPreflightEnabled, sessionPreflightSummary } from './session-preflight.ts'
 import { runOfficialCommand } from './official-command.ts'
 import { renderMarkdown } from './update-markdown.ts'
 import type { UpdateCandidate } from './update-release.ts'
@@ -42,6 +43,10 @@ const READY_PATTERN = /dsh web:\s+(http:\/\/127\.0\.0\.1:\d+\/?\?token=[^\s]+)/u
 
 let runtime: ChildProcess | undefined
 let runtimeStarting = false
+/** 运行中崩溃后已经自动重启的次数；Host 稳定运行一段时间后清零。 */
+let runtimeRestarts = 0
+/** 崩溃记录序号：只增不减，避免一次重启把上一次的现场覆盖掉。 */
+let crashRecords = 0
 let window: BrowserWindow | undefined
 let quitting = false
 let switching = false
@@ -1379,13 +1384,18 @@ async function startRuntime(home: string, connection: DesktopConnection, patches
   // 用户不必手工清 dsh-home，残留文件也不会一直堆积。
   const residue = quarantineCredentialsResidue(home)
   if (residue.length > 0) process.stderr.write(`[startup] 凭据目录残留已隔离：${residue.join('、')}\n`)
+  // 会话状态预检：超长会话/病态投影缓存会让官方 Host 在恢复时栈溢出并致命退出。
+  // 这里只搬可重建的缓存、只记录超长会话现场，绝不删除用户数据；失败也不阻断启动。
+  const preflight = runSessionPreflight(home, { relocate: sessionPreflightEnabled() })
+  const preflightLine = sessionPreflightSummary(preflight)
+  if (preflightLine !== undefined) process.stderr.write(`[startup] ${preflightLine}\n`)
   // upstream 的端口管理：把空闲端口作为补丁层交给官方 Web 内核，替代原来的 --port 0。
   const port = await prepareRuntimePort(home, [join(home, 'profiles', PROFILE_NAME, 'cordis.yml'), join(home, 'profiles', PROFILE_NAME, 'cordis.patch.yml'), join(home, 'cordis.yml'), join(home, 'cordis.patch.yml'), ...patches], { existingHome })
   if (quitRequested) throw new Error('启动已取消')
   const layers = [...(existsSync(basePatch) ? [basePatch] : []), ...patches, ...marketPatchLayers(home, modelStateDir, assetGateStateDir, assetGatePolicyDir), ...(port.managed ? [port.patch] : [])]
   const launcher = officialHostLauncher(bundledProfileDirectory(), home, executable, join(bundledPrimaryRuntime(), 'dependencies', 'pnpm', 'bin', 'pnpm.cjs'), layers)
   const hostSpawnedAt = Date.now()
-  const child = spawn(executable, [launcher, '--no-open'], {
+  const child = spawn(executable, hostNodeArguments(launcher), {
     env: runtimeEnvironment(home),
     cwd: enterprise ? join(enterprise.root, 'workspace') : home,
     detached: process.platform !== 'win32',
@@ -1463,7 +1473,38 @@ async function startRuntime(home: string, connection: DesktopConnection, patches
         dialog.showErrorBox('本机运行已停止', failureDetail(code, cleanupFailed))
         void returnToLogin()
       }
-      if (ready) return report()
+      if (ready) {
+        // 就绪后退出＝运行中崩溃（长会话恢复、代理/调用链过深导致的 RangeError 等）。
+        // 先把现场写成独立记录，再按预算自动重启：一次异步异常不该让整台机器停用，
+        // 重启后客户端会按官方会话状态恢复对话，用户只看到界面重新加载。
+        crashRecords += 1
+        let crashLogPath: string | undefined
+        const decision = planRuntimeRestart(Date.now() - hostSpawnedAt, runtimeRestarts)
+        try {
+          const directory = join(app.getPath('userData'), 'logs')
+          mkdirSync(directory, { recursive: true })
+          crashLogPath = join(directory, runtimeCrashLogName(crashRecords))
+          writeFileSync(crashLogPath, runtimeCrashLog(code, diagnosticOutput, crashRecords, decision === 'give-up' ? runtimeRestarts : decision.restart, RUNTIME_RESTART_LIMIT), { mode: 0o600 })
+        } catch { crashLogPath = undefined }
+        if (decision === 'give-up') {
+          process.stderr.write(`[runtime] 自动重启已达上限（${runtimeRestarts} 次），交回用户处理\n`)
+          dialog.showErrorBox('本机运行已停止', runtimeCrashDetail(code, diagnosticOutput, crashLogPath))
+          void returnToLogin()
+          return
+        }
+        runtimeRestarts = decision.restart
+        process.stderr.write(`[runtime] 官方 DSH 进程运行中异常退出，${decision.delayMs}ms 后自动重启（第 ${decision.restart} / ${RUNTIME_RESTART_LIMIT} 次）\n`)
+        setTimeout(() => {
+          if (quitting || switching || updaterInstalling) return
+          void startRuntime(home, connection, patches, existingHome, onReady, modelStateDir, assetGateStateDir, assetGatePolicyDir, 0).catch(error => {
+            process.stderr.write(`[runtime] 自动重启无法拉起 Host：${error instanceof Error ? error.message : String(error)}\n`)
+            if (quitting || switching || updaterInstalling) return
+            dialog.showErrorBox('本机运行已停止', runtimeCrashDetail(code, diagnosticOutput, crashLogPath))
+            void returnToLogin()
+          })
+        }, decision.delayMs)
+        return
+      }
       // 句柄耗尽多为系统级瞬时压力：首次失败等一小段时间再拉起一次，第二次仍失败才报错。
       // 重试动作自己兜住拉起异常，避免被误判成“进程回收未确认”。
       void retryStartupAfterHandleExhaustion(diagnosticOutput, attempt, () => startRuntime(home, connection, patches, existingHome, onReady, modelStateDir, assetGateStateDir, assetGatePolicyDir, attempt + 1).catch(error => {

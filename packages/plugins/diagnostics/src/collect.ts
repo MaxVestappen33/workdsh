@@ -6,8 +6,8 @@ export const WINDOW_MS = 24 * 60 * 60 * 1000
 
 /** 载体与 Host 写入的按日滚动日志。 */
 const DATED_LOG = /^(?:host-output|host-http|update|process-cleanup)-\d{4}-\d{2}-\d{2}\.log$/
-/** 启动失败记录（含按尝试编号的 retry 文件），不带日期。 */
-const RUNTIME_FAILURE = /^runtime-failure(?:-retry-\d+)?\.log$/
+/** 运行失败记录（启动失败、句柄耗尽重试、运行中崩溃），不带日期。 */
+const RUNTIME_FAILURE = /^runtime-failure(?:-(?:retry|crash)-\d+)?\.log$/
 /** 凭据类文件：永不出包，即便出现在日志目录里。 */
 export const CREDENTIAL_FILE = /^(?:account-session\.bin|account-auth\.json|Cookies|Local State)$/
 /** Profile 组合证据：版本、插件清单、实际生效的补丁。 */

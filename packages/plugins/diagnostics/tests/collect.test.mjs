@@ -26,6 +26,7 @@ async function fixture() {
   await write(logs, 'host-output-2026-11-13.log', 'y'.repeat(5), 0);
   await write(logs, 'runtime-failure.log', 'boom', 0);
   await write(logs, 'runtime-failure-retry-2.log', 'boom2', 0);
+  await write(logs, 'runtime-failure-crash-1.log', 'stack', 0);
   await write(logs, 'update-2026-11-10.log', 'old', 3 * DAY);
   await write(logs, 'account-session.bin', 'secret', 0);
   await write(logs, 'account-auth.json', 'secret', 0);
@@ -43,12 +44,13 @@ test('只收 24 小时窗口内的滚动日志与启动失败记录', async () =
     assert.deepEqual(names, [
       'diagnostics/logs/host-http-2026-11-13.log',
       'diagnostics/logs/host-output-2026-11-13.log',
+      'diagnostics/logs/runtime-failure-crash-1.log',
       'diagnostics/logs/runtime-failure-retry-2.log',
       'diagnostics/logs/runtime-failure.log',
       'diagnostics/profile/package.json',
       'diagnostics/profile/cordis.patch.yml',
     ]);
-    assert.equal(plan.totalBytes, 10 + 5 + 5 + 4 + 13 + 17);
+    assert.equal(plan.totalBytes, 10 + 5 + 5 + 5 + 4 + 13 + 17);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

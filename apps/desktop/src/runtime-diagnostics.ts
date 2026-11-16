@@ -60,6 +60,86 @@ export function runtimeFailureDetail(ready: boolean, code: number | null, output
     ...(cleanupFailed ? ['另外，本机工具进程停止尚未确认，请退出后检查。'] : [])].join('\n\n');
 }
 
+/**
+ * Host 就绪之后的异常退出与“启动失败”是两类事件：用户已经看到过界面，
+ * 现场需要的是崩溃前的运行输出，而不是启动原因。文件沿用 runtime-failure 前缀，
+ * 诊断包采集与按份数清理都能一并覆盖。
+ */
+export function runtimeCrashLogName(restart: number): string {
+  return `runtime-failure-crash-${restart}.log`
+}
+
+/**
+ * 栈溢出（RangeError）在长会话/长运行现场最典型：官方 Host 的调用链或代理链在
+ * 恢复历史时增长到超出 V8 栈上限。它可重试（重启后通常能继续工作），
+ * 所以提示要指向“重试 + 反馈日志”，而不是让用户以为数据坏了。
+ */
+export function isStackOverflow(output: string): boolean {
+  return /Maximum call stack size exceeded/u.test(output);
+}
+
+/** 崩溃提示：只在确实是栈溢出时补一句可执行的说明。 */
+export function runtimeCrashHint(output: string): string | undefined {
+  if (!isStackOverflow(output)) return undefined;
+  return '本机引擎在处理很长的会话或调用链时调用栈溢出（RangeError: Maximum call stack size exceeded）。'
+    + '这类退出可自动重启恢复；若反复出现，请把 logs 目录下的 runtime-failure-crash-*.log 与 host-output-*.log 一并反馈。';
+}
+
+/** 运行中崩溃的本地记录：保留脱敏后的尾部运行输出，供现场一次性收集。 */
+export function runtimeCrashLog(code: number | null, output: string, record: number, restart: number, limit: number): string {
+  return [
+    new Date().toISOString(),
+    `[运行中异常退出] 本机第 ${record} 份崩溃记录`,
+    `官方 DSH 进程已退出 (${code})`,
+    `自动重启：第 ${restart} / ${limit} 次`,
+    ...(runtimeCrashHint(output) ? ['', runtimeCrashHint(output)!] : []),
+    '',
+    '最近的运行输出：',
+    redactRuntimeOutput(output).trim().slice(-16_384),
+    '',
+  ].join('\n');
+}
+
+/**
+ * 崩溃后的弹窗文案：保留原有原因归纳，再追加栈溢出说明与本机记录路径。
+ * 自动重启全部失败时才会用到它，提示必须能直接交给运维/客服。
+ */
+export function runtimeCrashDetail(code: number | null, output: string, logPath?: string): string {
+  return [
+    runtimeFailureDetail(true, code, output),
+    ...(runtimeCrashHint(output) ? [runtimeCrashHint(output)!] : []),
+    ...(logPath ? [`错误记录：${logPath}`] : []),
+  ].join('\n\n');
+}
+
+/** 运行中崩溃的自动重启预算：一次异步异常不该让整个软件停用，连续失败才交回用户。 */
+export const RUNTIME_RESTART_LIMIT = 3
+/** 撑过这段时间就说明上一次重启已经稳定，重启预算重新计数（长运行现场会反复用到）。 */
+export const RUNTIME_RESTART_STABLE_MS = 5 * 60_000
+const RUNTIME_RESTART_DELAYS_MS = [1_500, 3_000, 6_000] as const
+
+export type RuntimeRestartDecision =
+  | { readonly restart: number, readonly delayMs: number }
+  | 'give-up'
+
+/**
+ * 决定崩溃后是否自动重启。`uptimeMs` 是刚退出的 Host 存活时长：
+ * 已经稳定运行过的进程只算一次意外，预算清零后再重启；连续崩溃才逐次加倍等待并最终放弃。
+ */
+export function planRuntimeRestart(
+  uptimeMs: number,
+  used: number,
+  options: { limit?: number, stableMs?: number, delaysMs?: readonly number[] } = {},
+): RuntimeRestartDecision {
+  const limit = options.limit ?? RUNTIME_RESTART_LIMIT
+  const stableMs = options.stableMs ?? RUNTIME_RESTART_STABLE_MS
+  const delays = options.delaysMs ?? RUNTIME_RESTART_DELAYS_MS
+  const effective = uptimeMs >= stableMs ? 0 : used
+  if (effective >= limit) return 'give-up'
+  const restart = effective + 1
+  return { restart, delayMs: delays[Math.min(restart - 1, delays.length - 1)] ?? 0 }
+}
+
 /** Preserve the bounded redacted trace in the local record, not in a giant alert. */
 export function runtimeFailureLog(ready: boolean, code: number | null, output: string, cleanupFailed = false, attempt = 0): string {
   const label = attempt === 0 ? '首次启动' : `第 ${attempt + 1} 次启动（句柄耗尽后重试）`
