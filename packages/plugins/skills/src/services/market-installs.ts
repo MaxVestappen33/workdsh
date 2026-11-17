@@ -11,6 +11,8 @@ export interface MarketInstallRecord {
   readonly name: string;
   /** 最后一次与技能市场同步的「是否内置」；从未同步过时为缺省。 */
   readonly builtin?: boolean;
+  /** 市场条目的中文名称（列表 skillName），用作本地技能的显示名兜底。 */
+  readonly title?: string;
 }
 
 /** 安装记录文件：与其它技能状态同放在 SkillManager 的状态根下。 */
@@ -43,7 +45,11 @@ export async function readMarketInstalls(file: string, warn: (message: string) =
     const record = value as Record<string, unknown>;
     const name = typeof record.name === 'string' ? record.name.trim() : '';
     if (!name) continue;
-    rows.set(id, { name, ...(typeof record.builtin === 'boolean' ? { builtin: record.builtin } : {}) });
+    rows.set(id, {
+      name,
+      ...(typeof record.builtin === 'boolean' ? { builtin: record.builtin } : {}),
+      ...(typeof record.title === 'string' && record.title.trim() ? { title: record.title.trim() } : {}),
+    });
   }
   return rows;
 }

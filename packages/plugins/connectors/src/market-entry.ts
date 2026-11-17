@@ -16,7 +16,7 @@ import type { ConnectorInstallState, ConnectorInstallTask, ConnectorSummary, Mar
  */
 const DEFAULT_MARKET_PATHS: MarketPaths = {
   list: '/desktop-client/mcptool/queryAuthorizedMcpToolList',
-  categories: '/desktop-client/mcptool/queryMcpToolBizSceneList',
+  categories: '/desktop-client/queryBizSceneList',
   report: ASSET_OPERATION_REPORT_PATH,
 };
 

@@ -18,6 +18,9 @@ export interface SkillScene {
   readonly color?: string;
 }
 
+/** 授权申请状态：与后台 applyStatus 同口径，缺省 none（未申请）。 */
+export type SkillApplyStatus = 'none' | 'pending' | 'approved' | 'rejected';
+
 /** 技能附件：后台 fjxxList 的第一条，既是安装要下载的文件，也是详情页说明的来源。 */
 export interface SkillMarketFile {
   readonly fileName: string;
@@ -67,6 +70,11 @@ export interface SkillMarketItem {
    * 是否内置：后台 isNzzc 字段（1 是、0 否）。缺省表示后台没给出该属性，界面不显示徽标。
    */
   readonly builtin?: boolean;
+  /**
+   * 是否客户端内置：后台 isClientBuiltin 字段（1 是、0 否）。
+   * 为真表示技能随客户端安装，技能市场不允许卸载。
+   */
+  readonly clientBuiltin?: boolean;
   /** 技能附件（fjxxList 的第一条）：为空表示后台没有上传说明文件，不能安装。 */
   readonly file?: SkillMarketFile;
   /**
@@ -75,6 +83,13 @@ export interface SkillMarketItem {
    */
   readonly installed?: boolean;
   readonly installedName?: string;
+  /**
+   * 后台下发的授权状态（isAuthorized：Y/N）。缺省、N 与其它取值一律按未授权处理；
+   * 界面只用它决定「安装 / 申请」按钮，真正的写操作仍由资产闸门判定。
+   */
+  readonly authorized: boolean;
+  /** 后台下发的授权申请状态（applyStatus）：缺省或未知取值按 none（未申请）。 */
+  readonly applyStatus: SkillApplyStatus;
 }
 
 /** 市场查询参数：业务场景与关键词都由服务端筛选。 */
@@ -93,6 +108,10 @@ export interface SkillMarketQuery {
    * 缺省表示不筛选；后台按该条件过滤。
    */
   readonly builtin?: boolean;
+  /** 授权状态：下发为 `authStatus`（Y 已授权、N 未授权）；缺省表示不筛选。 */
+  readonly authStatus?: 'Y' | 'N';
+  /** 授权申请状态：下发为 `applyStatus`；缺省表示不筛选。 */
+  readonly applyStatus?: SkillApplyStatus;
 }
 
 /** 一页市场列表：`page` 是后台返回的当前页码（缺省时回落到请求页码）。 */
@@ -112,8 +131,19 @@ export interface SkillMarketAuthorized {
   readonly slug: string;
   readonly title: string;
   readonly sceneLabels: readonly string[];
+  /** 图标：与市场列表同口径（后台下发的 http(s) URL），本地技能缺少自带图标时用它展示。 */
+  readonly icon?: string;
   /** 是否内置：本地技能的内置属性以它为准。 */
   readonly builtin?: boolean;
+  /**
+   * 是否客户端内置：后台 isClientBuiltin 字段（1 是、0 否）。
+   * 客户端按 id 优先、技能标识兜底关联，用于收紧本地技能与市场条目的卸载/停用入口。
+   */
+  readonly clientBuiltin?: boolean;
+  /** 后台授权状态：本地技能卡片据此显示「已授权 / 未授权」并决定是否给出申请入口。 */
+  readonly authorized?: boolean;
+  /** 后台申请状态：与市场卡片同一口径，用于本地技能卡片展示申请状态与取消申请。 */
+  readonly applyStatus?: SkillApplyStatus;
 }
 
 /** 市场接口路径：全部由宿主配置注入，不写死在业务逻辑里。 */
@@ -178,6 +208,13 @@ const builtinOf = (value: unknown): boolean | undefined => {
   const raw = text(value);
   return raw === '1' ? true : raw === '0' ? false : undefined;
 };
+/** isAuthorized 是后台的授权标记：只有 Y 视为已授权；缺省、N 与其它取值都按未授权处理。 */
+const authorizedOf = (value: unknown): boolean => text(value)?.toUpperCase() === 'Y';
+/** applyStatus：只接受四个已知取值，其它（含缺省）按 none（未申请）处理。 */
+const applyStatusOf = (value: unknown): SkillApplyStatus => {
+  const raw = text(value)?.toLowerCase();
+  return raw === 'pending' || raw === 'approved' || raw === 'rejected' ? raw : 'none';
+};
 /** bizScene 是多值字段（逗号分隔）：拆成去空、去重的值数组，供筛选取值与界面展示。 */
 const scenesOf = (value: unknown): readonly string[] => {
   const raw = text(value);
@@ -226,12 +263,16 @@ const itemOf = (value: unknown): SkillMarketItem | undefined => {
   const description = text(row.skillDescr);
   const icon = iconOf(row.icon); const color = text(row.color); const file = fileOf(row.fjxxList);
   const builtin = builtinOf(row.isNzzc);
+  const clientBuiltin = builtinOf(row.isClientBuiltin);
   return {
     id, title, slug, description: description ?? '',
     ...(version ? { version } : {}),
     scenes: scenesOf(row.bizScene), sceneLabels: sceneLabelsOf(row.bizSceneList),
     ...(icon ? { icon } : {}), ...(color ? { color } : {}), ...(file ? { file } : {}),
     ...(builtin === undefined ? {} : { builtin }),
+    ...(clientBuiltin === undefined ? {} : { clientBuiltin }),
+    authorized: authorizedOf(row.isAuthorized),
+    applyStatus: applyStatusOf(row.applyStatus),
   };
 };
 
@@ -392,6 +433,9 @@ export class SkillMarketClient {
     if (keyword) query.set('keyword', keyword);
     // 是否内置由后台过滤：1 是、0 否；缺省不下发，避免与「全部」混淆。
     if (input.builtin !== undefined) query.set('isNzzc', input.builtin ? '1' : '0');
+    // 授权状态与申请状态同样交给后台过滤；缺省不下发。
+    if (input.authStatus !== undefined) query.set('authStatus', input.authStatus);
+    if (input.applyStatus !== undefined) query.set('applyStatus', input.applyStatus);
     const result = record(await this.request('GET', this.paths.list, query, undefined, signal));
     if (!result || !Array.isArray(result.records))
       throw new SkillMarketRequestError('skill/market-response-invalid', '技能市场列表返回的数据无法识别，请稍后重试。');
@@ -431,7 +475,11 @@ export class SkillMarketClient {
         seen.add(item.id);
         rows.push({
           id: item.id, slug: item.slug, title: item.title, sceneLabels: item.sceneLabels,
+          ...(item.icon ? { icon: item.icon } : {}),
           ...(item.builtin === undefined ? {} : { builtin: item.builtin }),
+          ...(item.clientBuiltin === undefined ? {} : { clientBuiltin: item.clientBuiltin }),
+          authorized: item.authorized,
+          applyStatus: item.applyStatus,
         });
         added += 1;
       }

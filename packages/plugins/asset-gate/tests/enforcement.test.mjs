@@ -414,7 +414,10 @@ test('pre-step 完整性：被篡改技能从斜杠注入与目录中剔除，�
   assert.deepEqual(decision.messages.map(message => message.id), ['u1', 'i-good', 'i-builtin', 'c1'], '被篡改技能的注入必须剔除');
   const filtered = decision.messages.at(-1);
   assert.deepEqual(filtered.source.entries.map(entry => entry.name), ['good', 'builtin']);
-  assert.equal(filtered.content[0].text.includes('`bad`'), false);
+  assert.equal(filtered.content[0].text.includes('`bad`: 被篡改技能'), false, '目录条目行不得残留');
+  // 被拒技能改为在目录末尾说明原因：模型不会误以为技能不存在而去读文件。
+  assert.match(filtered.content[0].text, /已禁用的技能/);
+  assert.match(filtered.content[0].text, /- `bad`：/);
   assert.deepEqual(calls, ['good', 'bad'], '内置技能不做摘要校验');
   assert.deepEqual(audits, [{
     layer: 'call_skill_inject',
@@ -496,7 +499,61 @@ test('pre-step：技能目录按授权裁剪条目与正文行', async () => {
   assert.deepEqual(filtered.source.entries.map(entry => entry.name), ['good', 'standalone']);
   assert.match(filtered.content[0].text, /- `good`: 可用技能/);
   assert.match(filtered.content[0].text, /- `standalone`: 内置技能/);
-  assert.equal(filtered.content[0].text.includes('`bad`'), false, '正文不得残留未授权技能');
+  assert.equal(filtered.content[0].text.includes('- `bad`: 未授权技能'), false, '正文不得残留未授权技能的目录行');
+  assert.match(filtered.content[0].text, /已禁用的技能/);
+  assert.match(filtered.content[0].text, /- `bad`：/);
+});
+
+test('技能选择器列表：隐藏未授权与被篡改技能，内置与可用技能保留', async () => {
+  resetEnforcementState();
+  const gate = fakeGate(['skill']);
+  gate.signature = true;
+  gate.entitled.add('skill:s1');
+  gate.entitled.add('skill:s3');
+  const manifests = {
+    good: manifest('market', 's1'),
+    denied: manifest('market', 's2'),
+    builtin: manifest('builtin'),
+    tampered: manifest('market', 's3'),
+    local: manifest('local'),
+  };
+  const ctx = new Context();
+  ctx.provide('workdshAssetGate', gate);
+  ctx.provide('workdshSkills', {
+    async installManifest(name) { return manifests[name]; },
+    async verifyInstalledDigests(name) {
+      return name === 'tampered' ? { ok: false, reason: 'digest-mismatch' } : { ok: true };
+    },
+  });
+  ctx.provide('tools', { guard() { return () => {}; } });
+  const catalog = {
+    async list() {
+      return {
+        skills: [
+          { name: 'good', path: '/skills/good/SKILL.md' },
+          { name: 'denied', path: '/skills/denied/SKILL.md' },
+          { name: 'builtin', path: '/skills/builtin/SKILL.md' },
+          { name: 'local', path: '/skills/local/SKILL.md' },
+          { name: 'tampered', path: '/skills/tampered/SKILL.md' },
+          { name: 'virtual' },
+        ],
+      };
+    },
+  };
+  ctx.provide('sessionSkillCatalog', catalog);
+  const dispose = installAssetGateEnforcement(ctx);
+  await new Promise(resolve => setTimeout(resolve, 20));
+
+  const value = await catalog.list({ sessionId: 'session-1' }, signal);
+  assert.deepEqual(value.skills.map(skill => skill.name), ['good', 'builtin', 'virtual'], '只保留市场来源可用技能、随包内置与运行时技能');
+
+  // 关闸后恢复官方返回，不再做任何判定（fiber 注销是异步的）。
+  gate.types = new Set();
+  ctx.emit('workdsh/asset-gate/policy', {});
+  await new Promise(resolve => setTimeout(resolve, 20));
+  const restored = await catalog.list({ sessionId: 'session-1' }, signal);
+  assert.deepEqual(restored.skills.map(skill => skill.name), ['good', 'denied', 'builtin', 'local', 'tampered', 'virtual']);
+  dispose();
 });
 
 test('pre-step：过滤流程抛错时移除技能目录与斜杠注入，其余消息保留', async () => {

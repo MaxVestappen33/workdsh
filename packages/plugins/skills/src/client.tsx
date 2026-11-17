@@ -14,6 +14,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-session/client';
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client';
 import type {} from '@deepseek-ai/dsh-client-ui-slots';
 import { PendingSkillDraft, pendingDraftKey, skillManagementDraft, skillTaskDrafts, type SkillTaskKind } from './client/drafts.js';
+import { SkillDenialNotice } from './client/SkillDenialNotice.js';
 import { SkillsPanel } from './client/SkillsPanel.js';
 import { createSkillManagementClient } from './client/management.js';
 import { SkillNavigationIcon } from './client/SkillNavigationIcon.js';
@@ -97,4 +98,10 @@ export function apply(ctx: Context): void {
     name: 'sidebar.panellist', id: 'workdsh-skills', label: '专家 · 技能 · 连接器', order: 30,
   }, SkillNavigationIcon));
   ctx.slots.inject('conversation.input.overlay', () => ctx.slots.register({ name: 'conversation.input.overlay', id: 'workdsh-skill-draft' }, PendingSkillDraft));
+  // 技能被闸门拒绝后的红色提示条：渲染在对话区输入框上方（消息列表末尾），不占用输入框区域。
+  ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
+    name: 'conversation.input.dock',
+    id: 'workdsh-skill-denial',
+    inject: (sessionId: string) => ({ management, sessionId }),
+  }, SkillDenialNotice));
 }

@@ -24,7 +24,7 @@ import { marketInstallFile, readMarketInstalls, writeMarketInstalls, type Market
  */
 const DEFAULT_MARKET_PATHS: SkillMarketPaths = {
   list: '/desktop-client/skill/queryAuthorizedSkillList',
-  categories: '/desktop-client/skill/querySkillBizSceneList',
+  categories: '/desktop-client/queryBizSceneList',
   report: ASSET_OPERATION_REPORT_PATH,
 };
 
@@ -146,10 +146,14 @@ export class SkillMarketService extends Service implements SkillMarket {
     return readMarketInstalls(this.recordFile, message => this.ctx.logger.warn(message));
   }
 
-  /** 记下「市场条目 → 本机技能名 + 当前内置属性」。写失败只影响下次的兜底展示，不阻断安装。 */
-  private async rememberInstall(id: string, name: string, builtin?: boolean): Promise<void> {
+  /** 记下「市场条目 → 本机技能名 + 当前内置属性 + 中文名称」。写失败只影响下次的兜底展示，不阻断安装。 */
+  private async rememberInstall(id: string, name: string, builtin?: boolean, title?: string): Promise<void> {
     const records = await this.records();
-    records.set(id, { name, ...(builtin === undefined ? {} : { builtin }) });
+    records.set(id, {
+      name,
+      ...(builtin === undefined ? {} : { builtin }),
+      ...(title?.trim() ? { title: title.trim() } : {}),
+    });
     await writeMarketInstalls(this.recordFile, records, message => this.ctx.logger.warn(message));
   }
 
@@ -162,8 +166,12 @@ export class SkillMarketService extends Service implements SkillMarket {
     let changed = false;
     for (const row of rows) {
       const record = records.get(row.id);
-      if (!record || row.builtin === undefined || record.builtin === row.builtin) continue;
-      records.set(row.id, { ...record, builtin: row.builtin });
+      if (!record) continue;
+      // 内置属性与中文名称都随市场索引回写：已经装在本机的技能也能补齐显示名。
+      const builtin = row.builtin === undefined ? record.builtin : row.builtin;
+      const title = row.title?.trim() ? row.title.trim() : record.title;
+      if (builtin === record.builtin && title === record.title) continue;
+      records.set(row.id, { name: record.name, ...(builtin === undefined ? {} : { builtin }), ...(title ? { title } : {}) });
       changed = true;
     }
     if (changed) await writeMarketInstalls(this.recordFile, records, message => this.ctx.logger.warn(message));
@@ -262,7 +270,7 @@ export class SkillMarketService extends Service implements SkillMarket {
         // 不覆盖该技能的安装清单：同名技能可能是用户自建，不能因此被标成市场安装。
         // 这种情况不算一次新的安装，不上报 install，避免后台重复计数。
         if (cause instanceof Error && cause.message === ALREADY_INSTALLED) {
-          await this.rememberInstall(item.id, name, item.builtin);
+          await this.rememberInstall(item.id, name, item.builtin, item.title);
           return { name, state: 'existing' };
         }
         throw cause;
@@ -314,7 +322,7 @@ export class SkillMarketService extends Service implements SkillMarket {
         manifestFailure = cause;
         this.ctx.logger.warn(`技能：写入市场安装清单失败（${name}）：${describe(cause)}。`);
       }
-      await this.rememberInstall(item.id, name, item.builtin);
+      await this.rememberInstall(item.id, name, item.builtin, item.title);
       // 技能已可用，清单写入失败不回滚；但按后台约定如实上报 failed/manifest_failed 暴露该异常。
       if (manifestFailure) {
         await this.reportOperation(item, eventId, 'install', {

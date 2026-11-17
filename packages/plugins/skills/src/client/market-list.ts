@@ -1,4 +1,4 @@
-import type { SkillMarketItem, SkillMarketPage, SkillMarketQuery, SkillScene } from '../market.js';
+import type { SkillApplyStatus, SkillMarketItem, SkillMarketPage, SkillMarketQuery, SkillScene } from '../market.js';
 
 /** 市场每页条数：分页由服务端执行，界面滚动到接近底部再取下一页。 */
 export const SKILL_MARKET_PAGE_SIZE = 24;
@@ -14,12 +14,18 @@ export interface SkillMarketListState {
 
 export const emptySkillMarketList: SkillMarketListState = { items: [], total: 0, page: 0, hasMore: false };
 
-/** 当前生效的筛选条件：已选中的业务场景胶囊文案（多选，顺序即选择顺序）+ 搜索框关键词 + 是否内置。 */
+/** 当前生效的筛选条件：已选中的业务场景胶囊文案（多选，顺序即选择顺序）+ 搜索框关键词 + 是否内置 + 三个状态条件。 */
 export interface SkillMarketFilter {
   readonly scenes: readonly string[];
   readonly keyword: string;
   /** 是否内置：缺省表示「全部」；true 只看内置，false 只看非内置。 */
   readonly builtin?: boolean;
+  /** 安装状态：本机判定，只在客户端过滤；缺省表示「全部」。 */
+  readonly install?: 'installed' | 'uninstalled';
+  /** 授权状态：服务端参数 authStatus；缺省表示「全部」。 */
+  readonly auth?: 'Y' | 'N';
+  /** 授权申请状态：服务端参数 applyStatus；缺省表示「全部」。 */
+  readonly apply?: SkillApplyStatus;
 }
 
 /** 业务场景文案 → 字典 value；未命中字典的值直接跳过，全部未命中时返回空数组，表示不下发筛选。 */
@@ -31,7 +37,8 @@ export function skillSceneCodes(scenes: readonly string[], dictionary: readonly 
 }
 
 /**
- * 一页的请求参数：业务场景、关键词与是否内置都交给服务端，空值不下发。切换筛选时以 page = 1 重新取数。
+ * 一页的请求参数：业务场景、关键词、是否内置、授权状态与申请状态都交给服务端，空值不下发。
+ * 安装状态是本机判定，只在客户端过滤，因此不出现在请求参数里。切换筛选时以 page = 1 重新取数。
  * 多选时把各业务场景 value 用英文逗号连接后下发为单个 `bizScene`（如 `a,b`），语义为命中任一。
  */
 export function skillMarketQuery(filter: SkillMarketFilter, page: number, dictionary: readonly SkillScene[]): SkillMarketQuery {
@@ -43,12 +50,20 @@ export function skillMarketQuery(filter: SkillMarketFilter, page: number, dictio
     ...(scenes.length ? { scene: scenes.join(',') } : {}),
     ...(keyword ? { keyword } : {}),
     ...(filter.builtin === undefined ? {} : { builtin: filter.builtin }),
+    ...(filter.auth === undefined ? {} : { authStatus: filter.auth }),
+    ...(filter.apply === undefined ? {} : { applyStatus: filter.apply }),
   };
+}
+
+/** 安装状态过滤：只做客户端判定，缺省返回原列表。 */
+export function marketItemsByInstall(items: readonly SkillMarketItem[], install?: 'installed' | 'uninstalled'): readonly SkillMarketItem[] {
+  if (install === undefined) return items;
+  return items.filter(item => install === 'installed' ? item.installed === true : item.installed !== true);
 }
 
 /**
  * 是否还有下一页：只按后台原始分页判断（页码 × 每页条数 < 后台原始总数）。
- * `items` 已经被授权闸门二次过滤，不能参与翻页判断，否则某一页被过滤清空时会提前停止。
+ * 安装状态是客户端过滤，翻页判断始终用后台原始条目，不能用过滤后的数量。
  */
 function rawHasMore(page: SkillMarketPage, total: number): boolean {
   return page.page * SKILL_MARKET_PAGE_SIZE < total;

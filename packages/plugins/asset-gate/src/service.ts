@@ -74,6 +74,11 @@ export interface AssetGateApi {
    * 连续触发不会打出一串请求；主闸门关闭时为空操作，不请求接口、不读快照。
    */
   refreshNow(): Promise<void>;
+  /**
+   * 强制刷新快照：写操作被「快照里没有该资产」这类可刷新修复的原因拒绝后调用，
+   * 绕过节流与定时安排立即重拉一次；返回 true 表示本次刷新成功拿到可用快照。
+   */
+  refreshSnapshotForced(signal?: AbortSignal): Promise<boolean>;
   /** 当前账号的内存快照（不会触发网络或磁盘读取）。 */
   snapshot(): SnapshotRecord | undefined;
   /** 判定单个资产；闸门关闭时同步放行，不触碰身份与快照。 */
@@ -117,6 +122,13 @@ export interface AssetGateApi {
   auditDenied(input: DeniedAuditInput): void;
   /** 关键写操作入队（同步、不抛错）；闸门关闭时为空操作。 */
   auditWrite(input: WriteAuditInput): void;
+  /**
+   * 记录本步被拒绝注入的技能：界面在会话里给出红色提示，避免用户误以为技能不存在。
+   * 只保留内存里最近一条，闸门关闭时不记录。
+   */
+  noteSkillDenials(sessionId: string, turn: number, names: readonly string[]): void;
+  /** 最近一次被拒技能提示；没有时为空。 */
+  skillDenials(sessionId: string): { readonly turn: number; readonly names: readonly string[]; readonly at: number } | undefined;
 }
 
 declare module '@deepseek-ai/cordis' {
@@ -202,6 +214,8 @@ export class AssetGateService extends Service implements AssetGateApi {
   private lastSyncAt = 0;
   /** 已完成撤权重算的「账号 + revision」标记，避免同一份快照重复执行。 */
   private reconciled?: string;
+  /** 最近一次被闸门拒绝注入的技能（按会话，仅供界面提示；保留最近 32 个会话）。 */
+  private readonly skillDenialNotices = new Map<string, { readonly turn: number; readonly names: readonly string[]; readonly at: number }>();
   private disposed = false;
 
   constructor(ctx: Context, private readonly options: AssetGateOptions = {}) {
@@ -300,6 +314,22 @@ export class AssetGateService extends Service implements AssetGateApi {
     // 节流：刚校验过就跳过，避免连续切页签/重复刷新打出一串 revision 请求。
     if (Date.now() - this.lastSyncAt < TRIGGER_MIN_INTERVAL_MS) return;
     await this.sync();
+  }
+
+  /**
+   * 强制刷新一次快照：用于写操作刚被「未授权 / 快照过期」拒绝时的即时重试。
+   *
+   * 与 refreshNow 的区别是不受 15 秒节流约束（用户刚点过刷新或切过页签时，
+   * 节流会让重试仍然读旧快照）；单飞与后台请求的原子性仍由 running 保证。
+   */
+  async refreshSnapshotForced(signal?: AbortSignal): Promise<boolean> {
+    if (!this.effective.masterEnabled || this.disposed) return false;
+    if (this.running) {
+      await this.running;
+      return this.snapshot() !== undefined;
+    }
+    const { ok } = await this.pull(signal);
+    return ok;
   }
 
   snapshot(): SnapshotRecord | undefined {
@@ -485,6 +515,23 @@ export class AssetGateService extends Service implements AssetGateApi {
     } catch (error) {
       this.ctx.logger.warn(`资产闸门：拒绝审计入队失败（${detail(error)}）。`);
     }
+  }
+
+  /** 记录本步被拒技能：只保留内存里每个会话最近一条，界面读取它渲染红色提示。 */
+  noteSkillDenials(sessionId: string, turn: number, names: readonly string[]): void {
+    if (!this.effective.masterEnabled || names.length === 0) return;
+    this.skillDenialNotices.delete(sessionId);
+    this.skillDenialNotices.set(sessionId, { turn, names: [...names], at: Date.now() });
+    // 上限保护：只留最近 32 个会话，按插入顺序淘汰最早的。
+    while (this.skillDenialNotices.size > 32) {
+      const oldest = this.skillDenialNotices.keys().next().value;
+      if (oldest === undefined) break;
+      this.skillDenialNotices.delete(oldest);
+    }
+  }
+
+  skillDenials(sessionId: string): { readonly turn: number; readonly names: readonly string[]; readonly at: number } | undefined {
+    return this.skillDenialNotices.get(sessionId);
   }
 
   /** 关键写操作的审计入口：无论成功失败都记，异常同样吞掉。 */

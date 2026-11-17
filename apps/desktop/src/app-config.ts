@@ -32,12 +32,10 @@ export interface ServerConfig {
   syncIntervalSeconds: number
   /** MCP 市场：列表接口路径。 */
   mcpMarketListPath: string
-  /** MCP 市场：分类字典接口路径。 */
-  mcpMarketCategoriesPath: string
+  /** 市场业务场景字典：MCP 与技能市场共用（后台已合并为同一个接口）。 */
+  bizSceneListPath: string
   /** 技能市场：已授权技能列表接口路径。 */
   skillMarketListPath: string
-  /** 技能市场：业务场景字典接口路径。 */
-  skillMarketCategoriesPath: string
   /** 资产操作记录：安装/卸载完成后实时上报一条事件（技能与 MCP 共用）。 */
   assetOperationReportPath: string
   /** 技能上架申请：提交接口路径。 */
@@ -147,10 +145,10 @@ export const APP_CONFIG_DEFAULTS: AppConfig = {
     mePath: '/sys/pcClientVerifyUser',
     /** 市场接口都在 desktop-client 命名空间；安装不再从后台取连接配置（连接字段全部来自市场列表）。 */
     mcpMarketListPath: '/desktop-client/mcptool/queryAuthorizedMcpToolList',
-    mcpMarketCategoriesPath: '/desktop-client/mcptool/queryMcpToolBizSceneList',
+    /** 业务场景字典：MCP 市场与技能市场共用这一个接口（后台已合并 queryMcpToolBizSceneList / querySkillBizSceneList）。 */
+    bizSceneListPath: '/desktop-client/queryBizSceneList',
     /** 技能市场的查询接口与 MCP 市场同属 desktop-client 命名空间。 */
     skillMarketListPath: '/desktop-client/skill/queryAuthorizedSkillList',
-    skillMarketCategoriesPath: '/desktop-client/skill/querySkillBizSceneList',
     /** 资产操作记录：旧的安装/卸载上报接口已下线，技能与 MCP 统一实时上报到这一个接口。 */
     assetOperationReportPath: '/desktop-client/asset/operation/report',
     /** 技能上架申请与表单字典：同属 desktop-client 命名空间，上传接口免签。 */
@@ -203,8 +201,8 @@ type PartialAppConfig = {
 /** 所有相对接口路径字段：统一要求以单个 `/` 开头，避免协议相对地址或外站路径。 */
 export const SERVER_PATH_FIELDS = [
   'loginPath', 'logoutPath', 'mePath',
-  'mcpMarketListPath', 'mcpMarketCategoriesPath',
-  'skillMarketListPath', 'skillMarketCategoriesPath', 'assetOperationReportPath',
+  'mcpMarketListPath', 'bizSceneListPath',
+  'skillMarketListPath', 'assetOperationReportPath',
   'skillListingSubmitPath', 'skillListingListPath', 'skillListingNodePath', 'skillListingScenePath',
   'skillDictPath', 'skillUploadPath',
   'modelMarketListPath',

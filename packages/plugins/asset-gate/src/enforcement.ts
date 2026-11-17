@@ -39,6 +39,8 @@ interface GateLike {
   /** 连接器的工具白名单；`restricted=false` 表示未收窄。 */
   mcpTools?(assetId: string): { readonly restricted: boolean; readonly tools: readonly string[] };
   unlisted(): { readonly reason: string; readonly message: string };
+  /** 记录本步被拒技能：界面据此在会话里给出红色提示。 */
+  noteSkillDenials?(sessionId: string, turn: number, names: readonly string[]): void;
   /** 判定拒绝的审计入口；闸门关闭或上报异常都由实现自行吞掉。 */
   auditDenied?(input: {
     readonly layer: 'call_tool' | 'call_tool_item' | 'call_skill' | 'call_skill_inject' | 'call_model' | 'call_expert' | 'data_layer' | 'revocation' | 'write_action';
@@ -214,6 +216,29 @@ async function integrityDenial(
   return broken(verdict.reason === 'signature-missing' ? GATE_REASONS.deniedSignatureMissing : GATE_REASONS.deniedIntegrityBroken);
 }
 
+/**
+ * 单个技能的可用性判定：授权优先，其次内容完整性。
+ *
+ * 工具调用、选择器列表共用这一份口径，保证「列表里能选的」与「调用时能过的」一致。
+ */
+async function judgeSkillAsset(ctx: Context, gate: GateLike, name: string): Promise<GateDenial | undefined> {
+  const skills = ctx.reflect.get('workdshSkills') as SkillDirectoryLike | undefined;
+  // 目录形态读目录内清单、单文件形态读旁挂清单，摘要校验由技能服务完成。
+  let manifest: InstallManifestLike | undefined;
+  try {
+    manifest = await skills?.installManifest?.(name);
+  } catch (error) {
+    // 清单读取失败无法判定授权：与闸门整体一致按未登记拒绝，不能当作放行。
+    ctx.logger.warn(`资产闸门：技能清单读取失败（${name}）：${error instanceof Error ? error.message : String(error)}。`);
+    const denial = gate.unlisted();
+    return { reason: denial.message, code: denial.reason, assetType: 'skill' };
+  }
+  const denial = await judge(gate, 'skill', manifest);
+  // 授权优先：未授权的拒绝语义不变，也不额外读盘。
+  if (denial !== undefined) return denial;
+  return integrityDenial(ctx, gate, skills, name, manifest);
+}
+
 /** 解析一次工具调用对应的资产清单；返回 `undefined` 表示本模块不干预。 */
 async function judgeTool(ctx: Context, gate: GateLike, exec: Readonly<ToolExecution>): Promise<GateDenial | undefined> {
   // 边界 1：Host 内部调用没有 agent，不属于模型面，放行（理由见文件头）。
@@ -224,21 +249,7 @@ async function judgeTool(ctx: Context, gate: GateLike, exec: Readonly<ToolExecut
     const name = argumentName(exec.arguments);
     // 没有技能名时交给工具自身校验参数，本模块不猜。
     if (name === undefined) return undefined;
-    const skills = ctx.reflect.get('workdshSkills') as SkillDirectoryLike | undefined;
-    // 目录形态读目录内清单、单文件形态读旁挂清单，摘要校验由技能服务完成。
-    let manifest: InstallManifestLike | undefined;
-    try {
-      manifest = await skills?.installManifest?.(name);
-    } catch (error) {
-      // 清单读取失败无法判定授权：与闸门整体一致按未登记拒绝，不能当作放行。
-      ctx.logger.warn(`资产闸门：技能清单读取失败（${name}）：${error instanceof Error ? error.message : String(error)}。`);
-      const denial = gate.unlisted();
-      return { reason: denial.message, code: denial.reason, assetType: 'skill' };
-    }
-    const denial = await judge(gate, 'skill', manifest);
-    // 授权优先：未授权的拒绝语义不变，也不额外读盘。
-    if (denial !== undefined) return denial;
-    return integrityDenial(ctx, gate, skills, name, manifest);
+    return judgeSkillAsset(ctx, gate, name);
   }
 
   if (!exec.name.startsWith(MCP_TOOL_PREFIX)) return undefined;
@@ -469,7 +480,7 @@ function visibleCatalog(agent: Agent): CatalogEntry[] | undefined {
 }
 
 /** 过滤目录消息：同时裁剪 `source.entries` 与正文行，保证元数据与模型看到的内容一致。 */
-function filterCatalog(message: unknown, entries: readonly CatalogEntry[], kept: readonly CatalogEntry[]): unknown {
+function filterCatalog(message: unknown, entries: readonly CatalogEntry[], kept: readonly CatalogEntry[], denied: ReadonlyMap<string, GateDenial>): unknown {
   const keptNames = new Set(kept.map((entry) => entry.name));
   const deniedNames = new Set(entries.filter((entry) => !keptNames.has(entry.name)).map((entry) => entry.name));
   const content = ((message as MessageLike).content ?? []).map((block) => {
@@ -480,16 +491,33 @@ function filterCatalog(message: unknown, entries: readonly CatalogEntry[], kept:
     }).join('\n');
     return { ...block, text };
   });
+  const notice = blockedLines(denied);
+  if (notice) {
+    // 追加在目录正文末尾：模型能直接看到「这些技能为什么不在清单里」，不必再去文件系统翻找。
+    for (let index = content.length - 1; index >= 0; index -= 1) {
+      const block = content[index];
+      if (block?.type === 'text' && typeof block.text === 'string') { content[index] = { ...block, text: `${block.text}\n\n${notice}` }; break; }
+    }
+  }
   return { ...(message as Record<string, unknown>), content, source: { ...sourceOf(message), entries: kept } };
+}
+
+/** 被禁用技能的一行式说明；没有禁用项时返回 undefined。 */
+function blockedLines(denied: ReadonlyMap<string, GateDenial>): string | undefined {
+  if (denied.size === 0) return undefined;
+  const lines = [...denied.entries()].map(([name, denial]) => `- \`${name}\`：${denial.reason}`);
+  return '已禁用的技能（不要直接读取其文件内容代替调用，请提示用户重新从技能市场安装）：\n' + lines.join('\n');
 }
 
 /**
  * 过滤一步里的技能消息：未授权技能的斜杠注入直接移除，目录消息按授权裁剪。
  * 返回值 `undefined` 表示没有改动，调用方原样返回官方决策。
  */
-async function filterSkillMessages(ctx: Context, gate: GateLike, agent: Agent, messages: readonly unknown[]): Promise<unknown[] | undefined> {
+async function filterSkillMessages(ctx: Context, gate: GateLike, agent: Agent, turn: number, messages: readonly unknown[]): Promise<unknown[] | undefined> {
   const skills = ctx.reflect.get('workdshSkills') as SkillDirectoryLike | undefined;
   const cache = new Map<string, GateDenial | null>();
+  /** 本步被拒绝的技能及原因：写进目录正文，避免模型以为「技能不存在」而自行去文件系统找内容。 */
+  const denied = new Map<string, GateDenial>();
   const verdict = async (name: string): Promise<GateDenial | null> => {
     const hit = cache.get(name);
     if (hit !== undefined) return hit;
@@ -508,6 +536,7 @@ async function filterSkillMessages(ctx: Context, gate: GateLike, agent: Agent, m
     if (denial === null) denial = (await integrityDenial(ctx, gate, skills, name, manifest)) ?? null;
     cache.set(name, denial);
     if (denial !== null) {
+      denied.set(name, denial);
       // 注入阶段用独立层级，和工具管线「调用被拒」区分开。
       gate.auditDenied?.({
         layer: 'call_skill_inject',
@@ -523,11 +552,13 @@ async function filterSkillMessages(ctx: Context, gate: GateLike, agent: Agent, m
 
   const next: unknown[] = [];
   let changed = false;
+  /** 本步真正被用户斜杠调用、又被拒绝的技能：只有这些才要在界面上提示。 */
+  const invoked = new Set<string>();
   for (const message of messages) {
     const source = sourceOf(message);
     if (source?.kind === 'skill-invocation' && typeof source.name === 'string') {
       if (await allowed(source.name)) next.push(message);
-      else changed = true;
+      else { invoked.add(source.name); changed = true; }
       continue;
     }
     if (source?.kind === 'skill-catalog') {
@@ -539,14 +570,17 @@ async function filterSkillMessages(ctx: Context, gate: GateLike, agent: Agent, m
       changed = true;
       const published = visibleCatalog(agent);
       if (published !== undefined && sameEntries(published, kept)) continue;
-      next.push(filterCatalog(message, entries, kept));
+      next.push(filterCatalog(message, entries, kept, denied));
       continue;
     }
     next.push(message);
   }
+  if (invoked.size > 0) {
+    // 供界面渲染红色提示：只有用户主动斜杠调用被拒才提示，目录裁剪不打扰用户。
+    gate.noteSkillDenials?.(agent.session.id, turn, [...invoked]);
+  }
   return changed ? next : undefined;
 }
-
 /**
  * 过滤流程自身失败时的兜底：移除技能目录与斜杠注入，其余消息原样保留。
  *
@@ -573,7 +607,7 @@ function registerSkillMessageFilter(ctx: Context, gate: GateLike): () => void {
     if (!gate.enabled('skill')) return decision;
     try {
       payload.signal.throwIfAborted();
-      const messages = await filterSkillMessages(ctx, gate, payload.agent, decision.messages);
+      const messages = await filterSkillMessages(ctx, gate, payload.agent, payload.turn, decision.messages);
       return messages === undefined ? decision : { ...decision, messages: messages as typeof decision.messages };
     } catch (error) {
       // 过滤失败不能放行未过滤的技能消息：移除技能目录与斜杠注入，其余消息照常进入。
@@ -581,6 +615,69 @@ function registerSkillMessageFilter(ctx: Context, gate: GateLike): () => void {
       return { ...decision, messages: stripSkillMessages(decision.messages) as typeof decision.messages };
     }
   }, { prepend: true });
+}
+
+/**
+ * 会话技能目录（客户端 `/` 选择器背后的 `skills/list`）的最小结构面。
+ */
+interface SessionSkillCatalogLike {
+  list(request: { readonly sessionId: string }, signal: AbortSignal): Promise<{ readonly skills: readonly { readonly name: string; readonly path?: string }[] }>;
+}
+
+/**
+ * 选择器里是否保留某个技能。
+ *
+ * 闸门开启时只允许市场安装与随包内置：磁盘上的其它技能（用户手放、自建）调用期同样会被拒，
+ * 这里直接不展示；不带文件路径的插件运行时技能不在这里收窄。清单读取失败时保持可见，
+ * 避免把随包技能误藏起来（调用期仍会被拦）。
+ */
+async function skillSelectable(ctx: Context, gate: GateLike, name: string, path: string | undefined): Promise<boolean> {
+  const skills = ctx.reflect.get('workdshSkills') as SkillDirectoryLike | undefined;
+  let manifest: InstallManifestLike | undefined;
+  try { manifest = await skills?.installManifest?.(name); }
+  catch { return true; }
+  if (manifest?.source === 'builtin') return true;
+  if (manifest?.source !== 'market') return path === undefined;
+  if ((await judge(gate, 'skill', manifest)) !== undefined) return false;
+  return (await integrityDenial(ctx, gate, skills, name, manifest)) === undefined;
+}
+
+/**
+ * 从客户端技能选择器里隐藏不可用技能。
+ *
+ * `/` 列表由官方 `sessionSkillCatalog.list`（Remote `skills/list`）提供，和调用期闸门是
+ * 同一个问题：技能被篡改或未授权时列表仍会把它列出来。这里只包这一条 RPC 的返回，
+ * 用同一份判定口径过滤，**不动官方技能注册表**：
+ * - 模型侧目录仍由 `agent/pre-step` 过滤，并保留「已禁用技能」的说明；
+ * - 技能管理面板读的是 `workdshSkills` 自己的扫描结果，卡片上的「已修改 / 未授权」不受影响。
+ */
+function registerSkillCatalogFilter(ctx: Context, gate: GateLike): () => void {
+  const fiber = ctx.inject(['sessionSkillCatalog'], (inner: Context) => {
+    // 用 effect 登记注销：服务重载或关闸时把原方法换回去。
+    inner.effect(() => {
+      const catalog = inner.reflect.get('sessionSkillCatalog') as SessionSkillCatalogLike | undefined;
+      if (catalog === undefined || typeof catalog.list !== 'function') return () => {};
+      const original = catalog.list;
+      catalog.list = async function (this: SessionSkillCatalogLike, request, signal) {
+        const value = await original.call(this, request, signal);
+        if (value === undefined || !Array.isArray(value.skills)) return value;
+        const keep = await Promise.all(value.skills.map(async (skill) => {
+          try { return await skillSelectable(inner, gate, skill.name, skill.path); }
+          catch (error) {
+            // 判定异常按不可用处理：宁可不展示，也不让用户选中一个必然被拒绝的技能。
+            inner.logger.warn(`资产闸门：技能列表判定失败（${skill.name}）：${error instanceof Error ? error.message : String(error)}。`);
+            return false;
+          }
+        }));
+        if (keep.every(Boolean)) return value;
+        const hidden = value.skills.filter((_, index) => !keep[index]).map((skill) => skill.name);
+        inner.logger.info(`资产闸门：技能选择器隐藏了 ${hidden.length} 个不可用技能：${hidden.join('、')}。`);
+        return { ...value, skills: value.skills.filter((_, index) => keep[index]) };
+      };
+      return () => { catalog.list = original; };
+    }, 'workdsh.assetGate.skillCatalog');
+  });
+  return () => { void fiber.dispose(); };
 }
 
 /**
@@ -592,6 +689,7 @@ export function installAssetGateEnforcement(ctx: Context): () => void {
   let tools: (() => void) | undefined;
   let steps: (() => void) | undefined;
   let models: (() => void) | undefined;
+  let catalog: (() => void) | undefined;
 
   const sync = (): void => {
     const gate = ctx.reflect.get('workdshAssetGate') as GateLike | undefined;
@@ -602,6 +700,8 @@ export function installAssetGateEnforcement(ctx: Context): () => void {
     else if (!wantTools && tools !== undefined) { tools(); tools = undefined; }
     if (wantSteps && steps === undefined) steps = registerSkillMessageFilter(ctx, gate);
     else if (!wantSteps && steps !== undefined) { steps(); steps = undefined; }
+    if (wantSteps && catalog === undefined) catalog = registerSkillCatalogFilter(ctx, gate);
+    else if (!wantSteps && catalog !== undefined) { catalog(); catalog = undefined; }
     if (wantModels && models === undefined) models = registerModelRequestGuard(ctx, gate);
     else if (!wantModels && models !== undefined) { models(); models = undefined; }
   };
@@ -613,6 +713,7 @@ export function installAssetGateEnforcement(ctx: Context): () => void {
     tools?.(); tools = undefined;
     steps?.(); steps = undefined;
     models?.(); models = undefined;
+    catalog?.(); catalog = undefined;
   };
 }
 

@@ -1,7 +1,7 @@
 import {composeInstalledEnterprisePlugins,installedEnterprisePlugins} from './enterprise-plugins.ts'
 /** Minimal Electron carrier for the bundled WorkDSH release profile. */
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, net, powerMonitor, shell, Tray, type IpcMainInvokeEvent, type MenuItemConstructorOptions } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, net, powerMonitor, screen, shell, Tray, type IpcMainInvokeEvent, type MenuItemConstructorOptions } from 'electron'
 import { exec, spawn, type ChildProcess } from 'node:child_process'
 import {
   existsSync,
@@ -1130,14 +1130,38 @@ function openExternalWithFallback(target: string): void {
   })
 }
 
+/**
+ * 等待主界面的工作台真正挂载：官方前端在插件加载完成前会显示「Loading plugins…」过场页，
+ * 这里轮询该文案是否消失。检测失败或超时都直接返回，行为退回「加载完成即显示」。
+ */
+async function waitForWorkbenchMount(page: BrowserWindow, timeoutMs = 20_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline && !page.isDestroyed()) {
+    try {
+      const loading = await page.webContents.executeJavaScript(
+        "(() => { const body = document.body; return body ? body.innerText.includes('Loading plugins') : true; })()", true)
+      if (loading === false) return
+    } catch { return }
+    await new Promise(resolve => setTimeout(resolve, 120))
+  }
+}
+
 function openWindow(url: string, connection: DesktopConnection = { mode: 'personal' }, carrier = false, reveal = true, backgroundColor = '#111113'): void {
   const previous = window
+  // 上一个窗口若处于最大化，新窗口沿用最大化状态；首次启动（没有上一个窗口）同样默认最大化。
+  const wasMaximized = previous !== undefined && !previous.isDestroyed() && previous.isMaximized()
   const previousEntrySurface = entrySurface
   const icon = fileURLToPath(new URL('../build/app-icon.png', import.meta.url))
+  // 首次启动或上一个窗口是最大化时，新窗口直接铺满工作区：用工作区尺寸创建窗口，
+  // 比「先创建再 maximize」少一次可见的缩放刷新，避免过场后的白屏闪一下。
+  const firstWindow = previous === undefined || previous.isDestroyed()
+  const bounds = firstWindow || wasMaximized ? screen.getPrimaryDisplay().workArea : previous!.getBounds()
   window = new BrowserWindow({
     width: 1440,
     height: 960,
-    ...(previous && typeof previous.getBounds === 'function' ? previous.getBounds() : {}),
+    x: bounds.x,
+    y: bounds.y,
+    ...(firstWindow || wasMaximized ? { width: bounds.width, height: bounds.height } : {}),
     minWidth: 960,
     minHeight: 640,
     title: '警务助手',
@@ -1185,27 +1209,37 @@ function openWindow(url: string, connection: DesktopConnection = { mode: 'person
   }
   void page.loadURL(url).then(() => {
     if (page.isDestroyed()) return
-    if (reveal) {
-      if (carrier) markStartup('入口页面已显示')
-      else {
-        markStartup(loginStartedAt === undefined
-          ? '工作台窗口已显示（主界面就绪）'
-          : `工作台窗口已显示（登录到主界面总耗时 ${Date.now() - loginStartedAt}ms）`)
-        loginStartedAt = undefined
+    /** 显示新窗口并收尾（迁移更新窗口、销毁入口窗口）。 */
+    const revealPage = () => {
+      if (page.isDestroyed()) return
+      // 先收掉入口窗口再显示主界面：两个同屏窗口叠加时 macOS 会做一次焦点/层级切换，
+      // 看起来就是过场之后闪一下；先销毁旧窗口可以避免这次切换。
+      if (previous && !previous.isDestroyed()) {
+        // 强制更新窗口是入口窗口的模态子窗口：父窗口销毁会把它一并带走，用户就绕过了强制更新。
+        // 换主界面窗口之前先把父窗口迁移到新窗口，更新窗口与模态拦截都保留。
+        let migrated = true
+        if (updateWindow !== undefined && !updateWindow.isDestroyed() && updateWindow.getParentWindow() === previous) {
+          try { updateWindow.setParentWindow(page) } catch { migrated = false }
+        }
+        previous.destroy()
+        // 迁移失败时更新窗口会随父窗口一起销毁：按当前状态重建，不能让强制更新在换窗时消失。
+        if (!migrated && mandatoryUpdateBlocksEntry()) showUpdateWindow()
       }
-      page.show()
-    }
-    if (previous && !previous.isDestroyed()) {
-      // 强制更新窗口是入口窗口的模态子窗口：父窗口销毁会把它一并带走，用户就绕过了强制更新。
-      // 换主界面窗口之前先把父窗口迁移到新窗口，更新窗口与模态拦截都保留。
-      let migrated = true
-      if (updateWindow !== undefined && !updateWindow.isDestroyed() && updateWindow.getParentWindow() === previous) {
-        try { updateWindow.setParentWindow(page) } catch { migrated = false }
+      if (reveal) {
+        if (carrier) markStartup('入口页面已显示')
+        else {
+          markStartup(loginStartedAt === undefined
+            ? '工作台窗口已显示（主界面就绪）'
+            : `工作台窗口已显示（登录到主界面总耗时 ${Date.now() - loginStartedAt}ms）`)
+          loginStartedAt = undefined
+        }
+        page.show()
       }
-      previous.destroy()
-      // 迁移失败时更新窗口会随父窗口一起销毁：按当前状态重建，不能让强制更新在换窗时消失。
-      if (!migrated && mandatoryUpdateBlocksEntry()) showUpdateWindow()
     }
+    // 主界面在插件加载完成前会先显示官方的「Loading plugins…」过场页；入口窗口继续挡在前面，
+    // 等主界面的工作台真正挂载后再切，避免过场动画之后又闪一次加载页。
+    if (carrier) revealPage()
+    else void waitForWorkbenchMount(page).then(revealPage)
   }).catch((error: unknown) => {
     // 失败原因是区分「本地服务未就绪」「端口/进程冲突」「被安全软件拦截」的唯一线索，
     // 必须随提示一起给出。失败 URL 带一次性 token，展示前先抹掉。
@@ -1439,7 +1473,8 @@ async function startRuntime(home: string, connection: DesktopConnection, patches
       // 首次登录：过场页继续覆盖这段时间，等默认模型装好再换成主界面；日常启动标记已存在，直接放行。
       void waitModelDefaults(modelStateDir, () => quitRequested || switching || runtime !== child).then(() => {
         if (quitRequested || switching || runtime !== child) return
-        openWindow(url, connection)
+        // 工作台界面是浅色：窗口背景必须同为白色，否则首帧会先闪一下深色底。
+        openWindow(url, connection, false, true, LIGHT_ENTRY_BACKGROUND)
       })
     }
   }

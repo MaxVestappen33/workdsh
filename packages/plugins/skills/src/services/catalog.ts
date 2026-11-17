@@ -103,15 +103,16 @@ export class SkillCatalogStore {
   }
 
   /** Metadata for merging into managed summaries, keyed by skill name. */
-  async metadata(installed: ReadonlySet<string>): Promise<Map<string, { title: string; localizedDescription?: string; categories?: readonly string[]; iconUrl?: string }>> {
+  async metadata(installed: ReadonlySet<string>): Promise<Map<string, { title: string; localizedDescription?: string; categories?: readonly string[]; iconUrl?: string; version?: string }>> {
     const summary = await this.summary(installed);
-    const rows = new Map<string, { title: string; localizedDescription?: string; categories?: readonly string[]; iconUrl?: string }>();
+    const rows = new Map<string, { title: string; localizedDescription?: string; categories?: readonly string[]; iconUrl?: string; version?: string }>();
     for (const entry of summary.entries) {
       rows.set(entry.name, {
         title: entry.title,
         ...(entry.description ? { localizedDescription: entry.description } : {}),
         ...(entry.categories.length ? { categories: entry.categories } : {}),
         ...(entry.iconUrl ? { iconUrl: entry.iconUrl } : {}),
+        ...(entry.version ? { version: entry.version } : {}),
       });
     }
     // Product-owned labels; third-party names are never translated automatically.

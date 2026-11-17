@@ -166,6 +166,14 @@ function UpdateIcon() {
   );
 }
 
+function RefreshIcon() {
+  return (
+    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden focusable={false}>
+      <path d="M21 12a9 9 0 11-2.64-6.36M21 3v6h-6" />
+    </svg>
+  );
+}
+
 /** 桌面载体的窄通道：工作台里用一次 workdsh:// 导航触发检查更新，不往官方页面注入桥。 */
 const CHECK_UPDATE_PATH = 'workdsh://check-update';
 
@@ -177,6 +185,21 @@ function AccountLauncher({ wide, settingsShortcut, openSettings }: PropsRuntime<
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  /** 「刷新缓存」在途：避免连点重复拉取用户信息与授权快照。 */
+  const [cacheBusy, setCacheBusy] = useState(false);
+  /** 刷新结果：显示在「刷新缓存」这一行右侧（进行中为蓝色，成功绿色、失败红色），结束后 3 秒自动消失。 */
+  const [cacheResult, setCacheResult] = useState<'busy' | 'ok' | 'fail'>();
+  const cacheTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => { window.clearTimeout(cacheTimer.current); }, []);
+  const showCacheResult = (result: 'ok' | 'fail'): void => {
+    setCacheResult(result);
+    window.clearTimeout(cacheTimer.current);
+    cacheTimer.current = window.setTimeout(() => setCacheResult(undefined), 3_000);
+  };
+  const dismissCacheResult = (): void => {
+    window.clearTimeout(cacheTimer.current);
+    setCacheResult(undefined);
+  };
   // 连点保护：busy 状态要等下一次渲染才生效，双击/连点仍可能发出第二个退出请求；
   // 这里用 ref 在事件处理里同步上锁，请求失败后还保留一段冷却期。
   const signingOut = useRef(false);
@@ -195,6 +218,35 @@ function AccountLauncher({ wide, settingsShortcut, openSettings }: PropsRuntime<
       setPlazaReady(document.querySelector(PLAZA_TRIGGER_SELECTOR) !== null);
     }
     setOpen(!open);
+  };
+
+  /**
+   * 刷新缓存：重新拉取用户信息（/api/auth/me 每次都会回源后台），
+   * 并让宿主强制重拉一次资产授权快照，避免撤权/授权变更要等到下一轮轮询才生效。
+   * 结束时用一条短提示告知成功或失败。
+   */
+  const refreshCache = async (): Promise<void> => {
+    if (cacheBusy) return;
+    setCacheBusy(true);
+    // 行内先显示蓝色「正在刷新...」，结束后替换为成功/失败标签。
+    window.clearTimeout(cacheTimer.current);
+    setCacheResult('busy');
+    refresh();
+    let ok = false;
+    try {
+      const response = await fetch('/api/workdsh-skills', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ endpoint: 'refresh-cache', payload: {} }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      const result = response.ok ? await response.json() as { ok?: boolean; value?: { refreshed?: boolean } } : undefined;
+      ok = result?.ok === true && result.value?.refreshed !== false;
+    } catch { ok = false; }
+    finally { setCacheBusy(false); }
+    // 用户需要明确知道刷新有没有生效：成功/失败直接在菜单行内给一个状态标签。
+    showCacheResult(ok ? 'ok' : 'fail');
   };
 
   const signOut = async (): Promise<void> => {
@@ -293,6 +345,31 @@ function AccountLauncher({ wide, settingsShortcut, openSettings }: PropsRuntime<
             检查更新
           </MenuItemButton>
         )}
+        {profile && (
+          <MenuItemButton
+            icon={<RefreshIcon />}
+            disabled={cacheBusy}
+            onSelect={() => { void refreshCache(); }}
+          >
+            <span className="wd-account-cache-row">
+              <span>刷新缓存</span>
+              {cacheResult && (
+                <span
+                  role="status"
+                  className={`wd-account-cache-result ${cacheResult}`}
+                  title={cacheResult === 'busy' ? undefined : '点击关闭'}
+                  onClick={(event) => {
+                    // 行本身是菜单按钮：状态标签不能被当成「再次刷新」。
+                    event.stopPropagation();
+                    if (cacheResult !== 'busy') dismissCacheResult();
+                  }}
+                >
+                  {cacheResult === 'busy' ? '正在刷新...' : cacheResult === 'ok' ? '刷新成功' : '刷新失败'}
+                </span>
+              )}
+            </span>
+          </MenuItemButton>
+        )}
         {/* {plazaReady && (
           <MenuItemButton
             icon={<PlazaIcon />}
@@ -347,6 +424,15 @@ const accountCss = `
 .wd-account-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wd-account-avatar { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; border-radius: 50%; object-fit: cover; color: #fff; font-weight: 600; }
 .wd-account-menu { min-width: 208px; }
+/* 刷新缓存：行内状态标签，颜色对齐 ant-design 的 info / success / error。 */
+.wd-account-cache-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
+.wd-account-cache-result {
+  flex: 0 0 auto; padding: 1px 8px; border-radius: 6px;
+  border: 1px solid; font-size: 12px; line-height: 18px; cursor: pointer;
+}
+.wd-account-cache-result.busy { background: #e6f7ff; border-color: #91d5ff; color: #0958d9; cursor: default; }
+.wd-account-cache-result.ok { background: #f6ffed; border-color: #b7eb8f; color: #389e0d; }
+.wd-account-cache-result.fail { background: #fff2f0; border-color: #ffccc7; color: #cf1322; }
 .wd-account-header { display: flex; align-items: center; gap: 10px; padding: 8px 10px 10px; }
 .wd-account-header-text { display: grid; gap: 2px; min-width: 0; }
 .wd-account-header-name { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

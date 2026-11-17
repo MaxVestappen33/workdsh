@@ -10,6 +10,15 @@ const path = '/api/workdsh-skills';
 /** 后台管理系统的技能上架菜单与登录后动作；按业务固定，保存在客户端。 */
 export const SKILL_ADMIN_SSO = { menuId: '1990270000000000002', bizParams: { postLoginAction: 'addSkill' } } as const;
 
+/**
+ * 技能授权「申请 / 取消申请」的后台菜单与业务参数：与上架申请共用单点登录通道。
+ * menuId 为后台固定菜单 id，bizParams 里的 assetId 由调用方从当前技能条目注入。
+ */
+export const SKILL_AUTH_SSO: Record<'apply' | 'cancel', { menuId?: string; bizParams: Record<string, string> }> = {
+  apply: { menuId: '1990042000000000020', bizParams: { postLoginAction: 'assetApply', assetType: 'skill' } },
+  cancel: { menuId: '1990042000000000020', bizParams: { postLoginAction: 'assetApplyCancel', assetType: 'skill' } },
+};
+
 /** 单点跳转结果：degraded 时只拿到纯登录地址，界面据此提示。 */
 export interface AdminSsoTarget {
   readonly url: string;
@@ -53,12 +62,12 @@ async function call<T>(ctx: Context, endpoint: string, payload: unknown, signal?
 
 /**
  * 端点级超时：市场安装要下载技能包并完成官方导入，详情说明要下载并解包附件，
- * 都远超普通查询，单独放宽；其余查询与写入维持原有口径。
+ * 都远超普通查询，单独放宽；市场列表与 Host 后台请求保持一致，其余查询与写入维持原有口径。
  */
 function timeoutOf(endpoint: string): number {
   if (endpoint === 'listing-submit') return 180_000;
   if (endpoint === 'market-install' || endpoint === 'market-document' || endpoint === 'commit-import') return 120_000;
-  if (endpoint === 'install-catalog') return 60_000;
+  if (endpoint === 'market-list' || endpoint === 'install-catalog') return 60_000;
   return 30_000;
 }
 
@@ -67,6 +76,8 @@ export function createSkillManagementClient(ctx: Context, lifetime?: AbortSignal
   const invoke = <T>(endpoint: string, payload: unknown, signal?: AbortSignal) => call<T>(ctx, endpoint, payload, scoped(signal));
   return {
     list: () => invoke<readonly ManagedSkillSummary[]>('list', {}),
+    /** 技能根目录：工具栏「打开文件夹」用。 */
+    rootPath: () => invoke<string>('root-path', {}),
     catalog: () => invoke<SkillCatalogSummary>('catalog', {}),
     installFromCatalog: (name: string) => invoke<SkillMutationReceipt>('install-catalog', { name }),
     detail: (name: string) => invoke<ManagedSkillDetail>('detail', { name }),
@@ -89,6 +100,8 @@ export function createSkillManagementClient(ctx: Context, lifetime?: AbortSignal
     },
     commitImport: (id: string, scope: SkillInstallScope, signal?: AbortSignal) => invoke<SkillMutationReceipt>('commit-import', { id, scope }, signal),
     discardImport: (id: string) => invoke<null>('discard-import', { id }),
+    /** 最近一次被闸门拒绝注入的技能：界面据此在会话里渲染红色提示。 */
+    skillDenials: (sessionId: string) => invoke<{ readonly turn: number; readonly names: readonly string[]; readonly at: number } | undefined>('skill-denials', { sessionId }),
     marketAvailable: () => invoke<{ available: boolean }>('market-available', {}),
     marketList: (input: SkillMarketQuery) => invoke<SkillMarketPage>('market-list', input),
     marketCategories: () => invoke<readonly SkillScene[]>('market-categories', {}),
@@ -105,6 +118,8 @@ export function createSkillManagementClient(ctx: Context, lifetime?: AbortSignal
     submitListing: (input: SkillListingRequest, signal?: AbortSignal) => invoke<string>('listing-submit', input, signal),
     /** 后台管理系统单点地址：按技能上架业务固定参数生成。 */
     adminSso: (signal?: AbortSignal) => invoke<AdminSsoTarget>('listing-sso', SKILL_ADMIN_SSO, signal),
+    /** 按指定菜单生成单点地址：授权申请/取消申请复用同一通道，菜单与参数由调用方给出。 */
+    adminSsoFor: (menuId: string, bizParams: Record<string, string>, signal?: AbortSignal) => invoke<AdminSsoTarget>('listing-sso', { menuId, bizParams }, signal),
     /** 图标上传：图片原始字节交给宿主转发后台，返回可回填到表单的文件地址。 */
     uploadListingIcon: async (file: File, signal?: AbortSignal) => {
       return request<{ readonly url: string; readonly fileName: string; readonly size: number }>(`${path}/listing-upload`, {

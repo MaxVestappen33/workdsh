@@ -239,7 +239,8 @@ export function desktopEnterprisePatch(home: string, authority: Authority, actor
 export function desktopConnectorMarketPatch(home: string, server: ServerConfig, runtime: { node: string, pnpm: string }): string | undefined {
   const rows = ([
     ['list', server.mcpMarketListPath],
-    ['categories', server.mcpMarketCategoriesPath],
+    // 业务场景字典：MCP 与技能市场共用后台合并后的同一接口。
+    ['categories', server.bizSceneListPath],
     // 安装/卸载完成后统一实时上报到资产操作记录接口（旧安装上报接口已下线）。
     ['report', server.assetOperationReportPath],
   ] as const).flatMap(([name, value]) => (typeof value === 'string' && /^\//u.test(value) ? [[name, value] as const] : []))
@@ -264,7 +265,8 @@ export function desktopConnectorMarketPatch(home: string, server: ServerConfig, 
 export function desktopSkillMarketPatch(home: string, server: ServerConfig): string | undefined {
   const marketRows = ([
     ['list', server.skillMarketListPath],
-    ['categories', server.skillMarketCategoriesPath],
+    // 业务场景字典：与 MCP 市场共用后台合并后的同一接口。
+    ['categories', server.bizSceneListPath],
     // 安装/卸载完成后统一实时上报到资产操作记录接口（旧安装上报接口已下线）。
     ['report', server.assetOperationReportPath],
     // 技能安装必须先取签名并验签；签名接口与闸门策略同属 desktop-client/asset 命名空间。

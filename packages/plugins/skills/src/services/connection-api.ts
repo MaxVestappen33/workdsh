@@ -1,7 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type { ConnectionRpcResult, HostConnectionHandle } from '@deepseek-ai/dsh-client-connection';
 import { ASSET_SIGNATURE_REASONS, assetSignatureMessage } from 'workdsh-asset-signature';
-import { SkillMarketRequestError } from '../market.js';
+import { SkillMarketRequestError, type SkillApplyStatus } from '../market.js';
 import type { SkillMarket } from './market-entry.js';
 import { SkillListingRequestError, type SkillListing } from './listing-entry.js';
 import type { SkillBatchItemResult, SkillInstallScope, SkillManagementEndpoint, SkillManagementService } from '../shared.js';
@@ -43,6 +43,10 @@ interface AssetGateLike {
   signatureEnabled?(): boolean;
   /** 触发式校验：进市场页/刷新/写操作完成后做一次 revision 比对；旧版闸门没有该方法时跳过。 */
   refreshNow?(): Promise<void>;
+  /** 强制刷新快照（绕过节流）；旧版闸门没有该方法时不做授权变更重试。 */
+  refreshSnapshotForced?(signal?: AbortSignal): Promise<boolean>;
+  /** 最近一次被闸门拒绝注入的技能（按会话），界面据此渲染红色提示。 */
+  skillDenials?(sessionId: string): { readonly turn: number; readonly names: readonly string[]; readonly at: number } | undefined;
   decide(request: { assetType: GateAssetType; assetId: string; usage: 'read' | 'use' | 'write' }): Promise<{ allow: boolean; reason: string; message: string }>;
   /** 拿不到后台编号时的拒绝结果：原因码与文案由闸门统一维护。 */
   unlisted(): { reason: string; message: string };
@@ -75,28 +79,39 @@ class AssetGateDenied extends Error {
   }
 }
 
-/** 写操作（安装、启用）前判授权；闸门关闭时直接放行。 */
+/**
+ * 可被「刷新快照」修复的拒绝原因：授权刚在后台变更时，本地快照还没同步到，
+ * 强制刷新一次通常就能放行。签名、完整性、策略类拒绝不在其中，重试无意义。
+ */
+const REFRESHABLE_GATE_REASONS = new Set<string>([
+  'gate/denied-not-entitled',
+  'gate/denied-expired',
+  'gate/denied-snapshot-stale',
+  'gate/denied-no-snapshot',
+]);
+
+/**
+ * 写操作（安装、启用）前判授权；闸门关闭时直接放行。
+ *
+ * 命中「快照里没有该资产 / 快照过期」时先强制刷新一次快照再判定，把
+ * 「审批刚通过就点安装」的失败窗口消掉；刷新失败或刷新后仍无授权时给出区分文案，
+ * 不把后台故障说成「没有授权」。
+ */
 async function requireAsset(ctx: Context, assetType: GateAssetType, assetId: string): Promise<void> {
   const gate = assetGate(ctx);
   if (!gate?.enabled(assetType)) return;
-  const decision = await gate.decide({ assetType, assetId, usage: 'write' });
-  if (!decision.allow) throw new AssetGateDenied(decision.reason, decision.message);
-}
-
-/** 列表二次过滤：只保留授权命中的条目；闸门关闭时原样返回同一个数组。 */
-async function visibleAssets<T>(ctx: Context, assetType: GateAssetType, rows: readonly T[], idOf: (row: T) => string | undefined): Promise<readonly T[]> {
-  const gate = assetGate(ctx);
-  if (!gate?.enabled(assetType)) return rows;
-  // 进入市场页签/刷新/写操作后都会走到这里：先做一次 revision 校验（单飞 + 节流），
-  // 保证后台刚授权或刚撤权的条目立刻反映到列表上，而不是等下一个周期。
-  await gate.refreshNow?.();
-  const visible: T[] = [];
-  for (const row of rows) {
-    const id = idOf(row);
-    if (id === undefined) continue;
-    if ((await gate.decide({ assetType, assetId: id, usage: 'read' })).allow) visible.push(row);
-  }
-  return visible;
+  const request = { assetType, assetId, usage: 'write' as const };
+  const decision = await gate.decide(request);
+  if (decision.allow) return;
+  if (!gate.refreshSnapshotForced || !REFRESHABLE_GATE_REASONS.has(decision.reason))
+    throw new AssetGateDenied(decision.reason, decision.message);
+  const refreshed = await gate.refreshSnapshotForced();
+  if (!refreshed) throw new AssetGateDenied(decision.reason, '授权状态刷新失败，请稍后重试。');
+  const retried = await gate.decide(request);
+  if (retried.allow) return;
+  throw new AssetGateDenied(retried.reason, REFRESHABLE_GATE_REASONS.has(retried.reason)
+    ? '授权尚未生效，请稍后再试。'
+    : retried.message);
 }
 
 /**
@@ -283,6 +298,8 @@ const optionalCount = (value: unknown): number | undefined | null =>
   value === undefined ? undefined : typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : null;
 /** 市场文本参数：缺省表示不过滤，出现非字符串则拒绝请求。 */
 const optionalText = (value: unknown): string | undefined | null => value === undefined ? undefined : typeof value === 'string' ? value : null;
+/** 申请状态的合法取值：与后台 applyStatus 同口径。 */
+const APPLY_STATUSES: readonly SkillApplyStatus[] = ['none', 'pending', 'approved', 'rejected'];
 
 async function dispatch(ctx: Context, manager: SkillManagementService, marketService: () => SkillMarket | undefined, listingService: () => SkillListing | undefined, rawEndpoint: unknown, payload: unknown, signal: AbortSignal): Promise<ConnectionRpcResult<unknown>> {
   if (typeof rawEndpoint !== 'string') return fail('skill/invalid-request', '技能管理操作无效。');
@@ -299,6 +316,20 @@ async function dispatch(ctx: Context, manager: SkillManagementService, marketSer
   };
   try {
     if (endpoint === 'list') return ok(await manager.list(signal));
+    if (endpoint === 'root-path') return ok(manager.rootPath());
+    if (endpoint === 'refresh-cache') {
+      // 「刷新缓存」：强制重拉授权快照（绕开常规节流）；闸门关闭时快照不存在，按成功处理。
+      const gate = ctx.reflect.get('workdshAssetGate') as AssetGateLike | undefined;
+      const active = gate?.enabled('skill') === true;
+      const refreshed = active ? await gate?.refreshSnapshotForced?.() ?? false : true;
+      return ok({ refreshed });
+    }
+    if (endpoint === 'skill-denials') {
+      const sessionId = record(payload)?.sessionId;
+      if (typeof sessionId !== 'string') return fail('skill/invalid-request', '会话标识无效。');
+      const gate = ctx.reflect.get('workdshAssetGate') as AssetGateLike | undefined;
+      return ok(gate?.skillDenials?.(sessionId));
+    }
     if (endpoint === 'catalog') return ok(await manager.catalog(signal));
     if (endpoint === 'trash-list') return ok(await manager.listTrash());
     if (endpoint === 'restore') {
@@ -409,16 +440,26 @@ async function dispatch(ctx: Context, manager: SkillManagementService, marketSer
       const page = optionalCount(record(payload)?.page); const pageSize = optionalCount(record(payload)?.pageSize);
       const scene = optionalText(record(payload)?.scene); const keyword = optionalText(record(payload)?.keyword);
       const builtin = record(payload)?.builtin;
-      if (page === null || pageSize === null || scene === null || keyword === null || (builtin !== undefined && typeof builtin !== 'boolean')) return fail('skill/invalid-request', '技能市场查询参数无效。');
-      const result = await market().list({ page, pageSize, scene, keyword, ...(typeof builtin === 'boolean' ? { builtin } : {}) }, signal);
-      return ok({ ...result, items: await visibleAssets(ctx, 'skill', result.items, item => item.id) });
+      const authStatus = record(payload)?.authStatus;
+      const applyStatus = record(payload)?.applyStatus;
+      if (page === null || pageSize === null || scene === null || keyword === null || (builtin !== undefined && typeof builtin !== 'boolean')
+        || (authStatus !== undefined && authStatus !== 'Y' && authStatus !== 'N')
+        || (applyStatus !== undefined && !APPLY_STATUSES.includes(applyStatus as SkillApplyStatus))) {
+        return fail('skill/invalid-request', '技能市场查询参数无效。');
+      }
+      const result = await market().list({
+        page, pageSize, scene, keyword,
+        ...(typeof builtin === 'boolean' ? { builtin } : {}),
+        ...(authStatus === 'Y' || authStatus === 'N' ? { authStatus } : {}),
+        ...(applyStatus === undefined ? {} : { applyStatus: applyStatus as SkillApplyStatus }),
+      }, signal);
+      return ok(result);
     }
     if (endpoint === 'market-categories') return ok(await market().categories(signal));
     if (endpoint === 'market-index') {
       const refresh = record(payload)?.refresh;
       if (refresh !== undefined && typeof refresh !== 'boolean') return fail('skill/invalid-request', '技能市场索引请求参数无效。');
-      const rows = await market().index(signal, refresh === true);
-      return ok(await visibleAssets(ctx, 'skill', rows, row => row.id));
+      return ok(await market().index(signal, refresh === true));
     }
     if (endpoint === 'market-install' && typeof record(payload)?.id === 'string' && (record(payload)?.id as string).trim()) {
       const id = record(payload)?.id as string;

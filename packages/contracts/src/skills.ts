@@ -36,11 +36,23 @@ export interface ManagedSkillSummary {
   readonly localizedDescription?: string;
   readonly categories?: readonly string[];
   readonly iconUrl?: string;
+  /** 版本号：本地技能自身没有版本字段时，取自技能市场索引（如 `1.0.0`）。 */
+  readonly version?: string;
   /**
-   * 是否内置：取自技能市场安装记录的本地快照（从市场安装且市场标记为内置才为真）。
-   * 技能市场可用时界面以市场当前数据为准，该字段只用于市场不可用时的兜底。
+   * 是否内置：随包发布（provider source 为 `bundled`）或从市场安装且市场标记为内置。
+   * 技能市场可用且索引包含该技能时界面以市场当前数据为准，该字段用于索引缺少条目或市场不可用时兜底。
    */
   readonly builtin?: boolean;
+  /**
+   * 本机安装清单里的后台资产编号（仅市场来源技能有值）。
+   * 用于按后台 id 精确关联技能市场索引；缺失时才退回按标识/名称匹配。
+   */
+  readonly assetId?: string;
+  /**
+   * 随客户端内置（provider `source` 为 `bundled`，或安装清单来源为 `builtin`）。
+   * 技能市场可用且索引包含该技能时以索引的 `isClientBuiltin` 为准，该字段用于本地兜底。
+   */
+  readonly clientBuiltin?: boolean;
   /**
    * 授权状态（仅市场来源且闸门开启时有值）：
    * - `unauthorized`：当前账号未获得授权，但仍保留在本机；
@@ -51,6 +63,16 @@ export interface ManagedSkillSummary {
   readonly authState?: 'unauthorized' | 'revoked' | 'reinstall' | 'error';
   /** 与 `authState` 配套的中文原因文案，来自闸门 reasons.ts。 */
   readonly authReason?: string;
+  /**
+   * 完整性状态（仅从市场安装的技能有值）：磁盘内容与安装清单不一致时不可使用，
+   * 调用期闸门同样会拒绝。
+   * - `modified`：文件内容被修改或清单被改写，需重新从市场安装；
+   * - `missing`：技能文件或清单缺失，需重新安装；
+   * - `unreadable`：清单读取失败，暂时无法判定。
+   */
+  readonly integrityState?: 'modified' | 'missing' | 'unreadable';
+  /** 与 `integrityState` 配套的中文原因文案，直接展示在技能卡片上。 */
+  readonly integrityReason?: string;
 }
 
 export interface ManagedSkillDetail extends ManagedSkillSummary {
@@ -285,7 +307,7 @@ export interface SkillListingUpload {
   readonly size: number;
 }
 
-export type SkillManagementEndpoint = 'list' | 'detail' | 'update' | 'resource' | 'write-resource' | 'set-enabled' | 'dependency-impact' | 'uninstall' | 'batch' | 'trash-list' | 'restore' | 'commit-import' | 'discard-import' | 'catalog' | 'install-catalog' | 'market-available' | 'market-list' | 'market-categories' | 'market-index' | 'market-install' | 'market-uninstall' | 'market-document' | 'listing-options' | 'listing-list' | 'listing-submit' | 'listing-sso';
+export type SkillManagementEndpoint = 'list' | 'root-path' | 'refresh-cache' | 'skill-denials' | 'detail' | 'update' | 'resource' | 'write-resource' | 'set-enabled' | 'dependency-impact' | 'uninstall' | 'batch' | 'trash-list' | 'restore' | 'commit-import' | 'discard-import' | 'catalog' | 'install-catalog' | 'market-available' | 'market-list' | 'market-categories' | 'market-index' | 'market-install' | 'market-uninstall' | 'market-document' | 'listing-options' | 'listing-list' | 'listing-submit' | 'listing-sso';
 export interface SkillManagementFailure { readonly code: string; readonly message: string; }
 export type SkillManagementResult<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: SkillManagementFailure };
 
@@ -322,6 +344,8 @@ export type SkillDigestVerdict =
 export interface SkillManagementService extends SkillRevisionProvider {
   readonly contractVersion: 1;
   list(signal?: AbortSignal): Promise<readonly ManagedSkillSummary[]>;
+  /** 技能根目录（共享技能安装位置）：界面「打开文件夹」直接定位到这里。 */
+  rootPath(): string;
   detail(name: string, signal?: AbortSignal): Promise<ManagedSkillDetail | undefined>;
   readResource(name: string, path: string): Promise<ManagedSkillResource>;
   update(request: SkillWriteRequest): Promise<ManagedSkillDetail>;

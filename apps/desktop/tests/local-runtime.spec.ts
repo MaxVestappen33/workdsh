@@ -114,7 +114,7 @@ it('retries a failed version-policy installation after restart until official in
 const MARKET_PATHS = {
   appId: 'police-assistant',
   mcpMarketListPath: '/desktop-client/mcptool/queryAuthorizedMcpToolList',
-  mcpMarketCategoriesPath: '/desktop-client/mcptool/queryMcpToolBizSceneList',
+  bizSceneListPath: '/desktop-client/queryBizSceneList',
   assetOperationReportPath: '/desktop-client/asset/operation/report',
 }
 const asServer = (value: Record<string, unknown>) => value as unknown as ServerConfig
@@ -130,7 +130,7 @@ it('injects market paths and the offline package registry as one connectors patc
   expect(rows).toHaveLength(1)
   expect(rows[0]?.id).toBe('workdsh-connectors')
   expect(rows[0]?.config.clientId).toBe('police-assistant')
-  expect(rows[0]?.config.paths).toEqual({ list: MARKET_PATHS.mcpMarketListPath, categories: MARKET_PATHS.mcpMarketCategoriesPath, report: MARKET_PATHS.assetOperationReportPath })
+  expect(rows[0]?.config.paths).toEqual({ list: MARKET_PATHS.mcpMarketListPath, categories: MARKET_PATHS.bizSceneListPath, report: MARKET_PATHS.assetOperationReportPath })
   expect(rows[0]?.config.install).toEqual({ registry, node: '/opt/workdsh/node', pnpm: '/opt/workdsh/pnpm.cjs', root: join(home, 'mcp') })
 })
 
@@ -156,7 +156,7 @@ it('injects skill-market and skill-listing paths as one skills patch layer', () 
   const patch = desktopSkillMarketPatch(home, asServer({
     appId: 'police-assistant',
     skillMarketListPath: '/desktop-client/skill/queryAuthorizedSkillList',
-    skillMarketCategoriesPath: '/desktop-client/skill/querySkillBizSceneList',
+    bizSceneListPath: '/desktop-client/queryBizSceneList',
     assetOperationReportPath: '/desktop-client/asset/operation/report',
     assetGateSignaturePath: '/desktop-client/asset/queryAssetSignature',
     skillListingSubmitPath: '/desktop-client/skill/listingRequest',
@@ -173,7 +173,7 @@ it('injects skill-market and skill-listing paths as one skills patch layer', () 
   expect(rows[0]?.config.market.clientId).toBe('police-assistant')
   expect(rows[0]?.config.market.paths).toEqual({
     list: '/desktop-client/skill/queryAuthorizedSkillList',
-    categories: '/desktop-client/skill/querySkillBizSceneList',
+    categories: '/desktop-client/queryBizSceneList',
     report: '/desktop-client/asset/operation/report',
     signature: '/desktop-client/asset/queryAssetSignature',
   })

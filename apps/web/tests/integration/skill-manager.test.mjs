@@ -509,6 +509,20 @@ test('plugin display contributions preserve execution identity and release witho
   } finally { await ctx.fiber.dispose(); await rm(root, { recursive: true, force: true }); }
 });
 
+test('bundled skills carry the client-builtin flag in list summaries', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'workdsh-skill-client-builtin-'));
+  const ctx = new Context();
+  try {
+    await ctx.plugin(SkillRegistry);
+    new SkillManager(ctx, { dshHome: root, agentsHome: join(root, 'agents') });
+    ctx.skills.register({ name: 'office-docx', description: 'Docs', source: 'bundled', content: '# Instructions' });
+    const listed = (await ctx.workdshSkills.list()).find(item => item.name === 'office-docx');
+    assert.equal(listed.clientBuiltin, true);
+    assert.equal(listed.builtin, true);
+    assert.equal(listed.assetId, undefined);
+  } finally { await ctx.fiber.dispose(); await rm(root, { recursive: true, force: true }); }
+});
+
 test('catalog-owned titles take precedence over plugin display contributions', async () => {
   const root = await mkdtemp(join(tmpdir(), 'workdsh-skill-display-catalog-'));
   const ctx = new Context();

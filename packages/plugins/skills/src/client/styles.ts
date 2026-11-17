@@ -114,16 +114,23 @@ export const skillsMarketCss = `${modalCss}
 .wd-skills .source-tabs button:hover .count,.wd-skills .source-tabs button.active .count{color:var(--dsw-alias-label-primary)}
 
 /* 业务场景胶囊栏 + 「更多」浮层（与连接器页面同款交互）。 */
+/* 顶部工具条：搜索框与右侧操作按钮贴在一起并整体靠右；窄屏沿用原有整行布局。 */
+@media(min-width:901px){.wd-skills .search{margin-left:auto}.wd-skills .cap-header .refresh{margin-left:0}}
 /* 筛选行：左边「是否内置」、右边「业务场景」，两个胶囊栏各带一条前置说明，可同时生效。 */
-.wd-skills .skill-filters{display:flex;align-items:center;gap:18px;margin:0 0 18px;min-width:0}
-.wd-skills .filter-group{display:flex;align-items:center;gap:7px;min-width:0}
+/* 查询条件自适应：一行放不下就整体换行，禁止横向溢出；每组条件自身可收缩，由胶囊栏折叠成「更多」。 */
+.wd-skills .skill-filters{display:flex;flex-wrap:wrap;align-items:center;gap:10px 18px;margin:0 0 18px;min-width:0;max-width:100%}
+.wd-skills .filter-group{display:flex;align-items:center;gap:7px;min-width:0;max-width:100%;flex:0 1 auto}
 .wd-skills .filter-group.builtin-filter{flex:none}
-.wd-skills .filter-group.scenes-filter{flex:1;min-width:0}
-.wd-skills .filter-label{flex:none;font-size:13px;color:var(--dsw-alias-label-secondary)}
-.wd-skills .skill-filters .category-bar{margin:0;min-width:0}
+/* 业务场景项数不定：给它一个可增长的基础宽度，宽屏与其它条件同行，窄屏自动换到整行。 */
+.wd-skills .filter-group.scenes-filter{flex:1 1 260px;min-width:0}
+.wd-skills .filter-label{flex:none;font-size:13px;font-weight:600;color:var(--dsw-alias-label-secondary)}
+.wd-skills .skill-filters .category-bar{margin:0;min-width:0;gap:5px}
+/* 筛选胶囊整体缩小一档：更矮、更紧凑，但仍保持可点击高度。 */
+.wd-skills .skill-filters .category-tabs{gap:2px}
+.wd-skills .skill-filters .category-tabs button[data-category],.wd-skills .skill-filters .more-btn{min-height:28px;padding:3px 9px;font-size:13px;line-height:20px;border-radius:7px}
 .wd-skills .filter-group.scenes-filter .category-bar{flex:1}
 .wd-skills .category-bar{position:relative;display:flex;align-items:center;gap:7px;margin:0 0 18px;min-width:0}
-.wd-skills .category-tabs{display:flex;gap:4px;min-width:0}
+.wd-skills .category-tabs{display:flex;gap:4px;min-width:0;overflow:hidden}
 .wd-skills .category-tabs button[data-category],.wd-skills .more-btn{padding:6px 12px;border:0;border-radius:9px}
 .wd-skills .category-tabs button[data-category],.wd-skills .more-btn{background:transparent;color:var(--dsw-alias-label-secondary);white-space:nowrap}
 /* 选中＝与悬浮一致的浅灰圆角底 + 深色加粗；未选中＝无底色灰字。 */
@@ -166,6 +173,17 @@ export const skillsMarketCss = `${modalCss}
 .wd-skills .install:active:not(:disabled){background:#43454a;color:var(--dsw-alias-label-primary-inverted)}
 .wd-skills .install:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
 .wd-skills .install:disabled{opacity:.45}
+/* 市场卡片的次级操作按钮：卸载为红色主题（描边 + 红字，与详情页一致），其余动作沿用 .install 的黑色主按钮。 */
+.wd-skills .market-action{display:inline-flex;align-items:center;justify-content:center;flex:none;min-height:28px;height:28px;padding:0 12px;border-radius:6px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font-size:13px;line-height:26px;white-space:nowrap}
+.wd-skills .market-action:hover:not(:disabled){background:var(--dsw-alias-bg-layer-3)}
+.wd-skills .market-action:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
+.wd-skills .market-action:disabled{opacity:.45}
+/* 卸载按钮：maroon 红棕色调，比亮红柔和，仍能表达破坏性操作。 */
+.wd-skills .market-action.danger{border-color:#800000;background:#800000;color:#fff;font-weight:600}
+.wd-skills .market-action.danger:hover:not(:disabled){border-color:#800000;background:#800000;color:#fff;opacity:.88}
+/* 详情页的卸载按钮与列表卡片同款：maroon 底白字。 */
+.skill-detail-dialog .detail-actions .danger{border-color:#800000;background:#800000;color:#fff;font-weight:600}
+.skill-detail-dialog .detail-actions .danger:hover:not(:disabled){border-color:#800000;background:#800000;color:#fff;opacity:.88}
 /* 安装中：按钮位置换成转圈，卡片与详情页底部显示流式进度条；失败原因就地显示在卡片上。 */
 .wd-skills .plus{display:inline-flex;align-items:center;justify-content:center;flex:none;min-height:28px;height:28px;padding:0 12px;border-radius:6px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2)}
 .wd-skills .plus.installing{cursor:default}
@@ -185,25 +203,39 @@ export const skillsMarketCss = `${modalCss}
 /* 市场卡片：图标右侧的文本块上下两行（名称、标识）；底行左侧版本与内置状态，右侧安装按钮/状态固定右对齐。 */
 .wd-skills .market-card .card-open{flex:none;width:100%;align-items:flex-start}
 .wd-skills .market-card .card-title{flex:1}
-.wd-skills .market-card .card-title small.market-slug{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:16px;color:var(--dsw-alias-label-primary)}
+/* 技能标识统一口径：本地技能卡片与技能市场共用同一套字号与配色。 */
+.wd-skills .card-title small.market-slug{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:16px;color:var(--dsw-alias-label-primary)}
 /* 场景行缩进一个图标列（46px 图标 + 14px 间距），与图标右侧文本块左对齐。 */
 .wd-skills .market-card>.tag{display:block;overflow:hidden;margin:3px 0 0 60px;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;text-overflow:ellipsis;white-space:nowrap}
-.wd-skills .market-card-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:auto;padding-top:10px}
-.wd-skills .market-card-left{display:flex;align-items:center;gap:8px;min-width:0}
-.wd-skills .market-card-actions{display:flex;align-items:center;gap:8px;flex:none;margin-left:auto}
+/* 市场卡片底部分两行：第一行状态标签靠左，第二行操作按钮靠右。 */
+.wd-skills .market-card-foot{display:flex;flex-direction:column;align-items:stretch;gap:8px;margin-top:auto;padding-top:10px}
+.wd-skills .market-card-tags{display:flex;flex-wrap:nowrap;align-items:center;gap:6px;min-width:0;overflow:hidden}
+.wd-skills .market-card-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px}
+/* 本地技能卡片与市场同构：场景行缩进对齐图标右侧文本块，摘要用主文字色，底部同样是「标签行 + 操作行」。 */
+.wd-skills .local-card .skill-scene{display:block;overflow:hidden;margin:3px 0 0 60px;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;text-overflow:ellipsis;white-space:nowrap}
+.wd-skills .local-card .card-summary{color:var(--dsw-alias-label-primary)}
+/* 本地卡片的「去试试」沿用市场主按钮：黑底白字。 */
+.wd-skills .market-action.primary{border-color:var(--dsw-alias-border-l2);background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-inverted);font-weight:600}
+.wd-skills .market-action.primary:hover:not(:disabled){border-color:var(--dsw-alias-border-l2);background:#43454a;color:var(--dsw-alias-label-primary-inverted)}
 /* 状态标签：对齐 ant-design-vue 的 a-tag 观感（浅底 + 同系文字 + 1px 同系描边 + 4px 小圆角）。 */
-.wd-skills .builtin-pill,.wd-skills .external-pill,.wd-skills .installed-pill,.wd-skills .version-tag{display:inline-flex;align-items:center;flex:none;height:20px;padding:0 7px;border:1px solid transparent;border-radius:4px;font-size:12px;line-height:18px;font-weight:400;white-space:nowrap}
-/* 「内置」cyan、「非内置」blue、「已安装」green：与 antd 预设色板一致。 */
-.wd-skills .builtin-pill{background:#e6fffb;border-color:#87e8de;color:#08979c}
-.wd-skills .external-pill{background:#e6f4ff;border-color:#91caff;color:#0958d9}
+.wd-skills .builtin-pill,.wd-skills .external-pill,.wd-skills .installed-pill,.wd-skills .uninstalled-pill,.wd-skills .apply-pill,.wd-skills .version-tag{display:inline-flex;align-items:center;flex:none;height:20px;padding:0 5px;border:1px solid transparent;border-radius:4px;font-size:12px;line-height:18px;font-weight:400;white-space:nowrap}
+/* 版本号与「内置」统一为中性灰；「非内置」为 cyan；「已安装」green、「未安装」与版本号同灰。 */
+.wd-skills .version-tag,.wd-skills .builtin-pill,.wd-skills .uninstalled-pill{background:whitesmoke;border-color:white;color:#434343}
+.wd-skills .external-pill{background:#e6fffb;border-color:#87e8de;color:#08979c}
 .wd-skills .installed-pill{background:#f6ffed;border-color:#b7eb8f;color:#389e0d}
-/* 版本 tag：用户给定 #DCDCDC 作底与描边，文字取同系深灰保证对比度。 */
-.wd-skills .version-tag{background:#dcdcdc;border-color:#dcdcdc;color:#434343}
+/* 申请状态：gray 未授权、processing 申请中、success 已通过、error 未通过。 */
+.wd-skills .apply-pill.none{background:#f5f5f5;border-color:#d9d9d9;color:#434343}
+.wd-skills .apply-pill.pending{background:#e6f4ff;border-color:#91caff;color:#0958d9}
+.wd-skills .apply-pill.approved{background:#f6ffed;border-color:#b7eb8f;color:#389e0d}
+.wd-skills .apply-pill.rejected{background:#fff2f0;border-color:#ffccc7;color:#cf1322}
 .wd-skills .auth-pill{flex:none;padding:4px 10px;border-radius:999px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-state-warning-primary,var(--dsw-alias-brand-primary));font-size:12px;font-weight:500;white-space:nowrap}
 .wd-skills .auth-reason{display:block;margin-top:6px;color:var(--dsw-alias-label-tertiary);font-size:12px}
 .wd-skills .market-foot{display:flex;justify-content:center;padding:22px 0 6px;color:var(--dsw-alias-label-tertiary);font-size:12px}
-/* 查询覆盖层只包住列表/卡片区，顶部搜索框与按钮保持可点；覆盖层样式由 workdsh-ui 共用。 */
-.wd-skills .skill-content{position:relative;min-height:120px}
+/* 查询覆盖层样式由 workdsh-ui 共用；它相对面板定位，因此始终在可视区正中。 */
+/* 面板固定可视高度、自身不滚动：内容放进内层滚动容器，查询覆盖层才能稳定罩满可视区并居中。 */
+.wd-skills{position:relative;overflow:hidden}
+.wd-skills .skill-panel-scroll{height:100%;overflow:auto}
+.wd-skills .skill-content{position:relative;min-height:120px;padding-right:10px}
 .wd-skills p.error{margin:0 0 14px}
 .wd-skills p.error button{margin-left:10px}
 .wd-skills .notice{color:var(--dsw-alias-state-success-primary)}

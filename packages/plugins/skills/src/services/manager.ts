@@ -30,7 +30,13 @@ const skillNamePattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const trashIdPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*-\d{4}-\d{2}-\d{2}T[0-9-]+Z$/;
 const maximumDocumentBytes = 1024 * 1024;
 const draftIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-
+/** 列表阶段完整性判定失败时展示在技能卡片上的原因文案。 */
+const INTEGRITY_REASONS = {
+  modified: '技能文件已被修改，与安装记录不一致，已停止使用；请重新从市场安装。',
+  missing: '技能文件或安装清单缺失，无法使用；请重新从市场安装。',
+  unsigned: '缺少安装签名，无法校验内容；请重新从市场安装。',
+  unreadable: '无法读取安装清单，暂时无法判定技能内容是否被修改。',
+} as const;
 interface DisabledOrigin { readonly name: string; readonly originalEntry: string; readonly directoryBundle: boolean; }
 interface TrashReceipt extends TrashedSkillSummary { readonly originalEntry: string; readonly trashedEntry: string; readonly directoryBundle: boolean; }
 export type { SkillDependencyInspector } from '../shared.js';
@@ -48,6 +54,8 @@ interface AssetGateProbe {
   revocationReason(): { readonly reason: string; readonly message: string };
   /** 判定过程抛异常时的原因码与文案：列表标记复用同一份。 */
   evaluationError(): { readonly reason: string; readonly message: string };
+  /** 触发式快照校验（内部有节流）：进入技能面板时先做一次 revision 比对。 */
+  refreshNow?(): Promise<void>;
   decide(request: { readonly assetType: string; readonly assetId: string; readonly usage: string }):
     Promise<{ readonly allow: boolean; readonly message: string }>;
 }
@@ -255,13 +263,24 @@ export class SkillManager extends Service implements SkillManagementService {
     );
   }
 
+  /** 技能根目录：界面的「打开文件夹」直接定位到共享技能安装位置。 */
+  rootPath(): string {
+    return this.activeRoots[0] ?? this.disabledRoot;
+  }
+
   async list(signal?: AbortSignal): Promise<readonly ManagedSkillSummary[]> {
     signal?.throwIfAborted();
+    // 打开技能面板时先做一次 revision 比对：后台刚撤权/授权时列表要立刻变，而不是等 60 秒轮询。
+    const probe = this.gateProbe();
+    if (probe?.enabled('skill')) { try { await probe.refreshNow?.(); } catch { /* 刷新失败沿用现有快照 */ } }
     const skills = await this.ctx.skills.list({ signal });
     const rows: ManagedSkillSummary[] = [];
+    /** 文件形态的技能（磁盘目录/单文件）：闸门开启时这类技能必须来自技能市场。 */
+    const fileBacked = new Set<string>();
     const registeredFiles = new Set<string>();
     for (const skill of skills) {
       const manageable = this.isManagedSummary(skill);
+      if (skill.path !== undefined) fileBacked.add(skill.name);
       let title: string | undefined;
       if (manageable) {
         const definition = await this.ctx.skills.get(skill.name, { signal });
@@ -291,6 +310,7 @@ export class SkillManager extends Service implements SkillManagementService {
         const validation = this.validateDocument(document);
         const displayName = validation.valid ? validation.name ?? name : name;
         if (rows.some(row => row.name === displayName)) continue;
+        fileBacked.add(displayName);
         // 显示名可来自技能自己的 SKILL.md frontmatter(title)；本地目录元数据与内置硬编码随后仍会覆盖它。
         const title = frontmatterValue(document, 'title');
         rows.push({
@@ -310,7 +330,7 @@ export class SkillManager extends Service implements SkillManagementService {
       const name = entry.isDirectory() ? entry.name : entry.isFile() && entry.name.endsWith('.md') ? entry.name.slice(0, -3) : undefined;
       if (!name || rows.some(row => row.name === name)) continue;
       const disabled = await this.readDetail(name, signal);
-      if (disabled) rows.push(disabled);
+      if (disabled) { fileBacked.add(disabled.name); rows.push(disabled); }
     }
     const metadata = await this.catalogStore.metadata(new Set(rows.map(row => row.name)));
     // 内置属性以技能市场为准，这里只读安装记录里的最后一次同步结果作为兜底：
@@ -318,20 +338,80 @@ export class SkillManager extends Service implements SkillManagementService {
     const installs = await readMarketInstalls(marketInstallFile(this.stateRoot), message => this.ctx.logger.warn(message));
     const builtinNames = new Set([...installs.values()]
       .flatMap(record => (record.builtin ? [record.name.trim().toLowerCase()] : [])));
-    const merged = rows.map(row => {
+    // 随包发布的技能（官方 office 技能、WorkDSH 内置技能）不进市场安装记录，
+    // 由 provider 的 source 直接标记，避免市场索引缺少该条目时被显示成「非内置」。
+    const bundledNames = new Set<string>();
+    for (const skill of skills) {
+      if (skill.source === 'bundled') bundledNames.add(skill.name.trim().toLowerCase());
+    }
+    for (const name of bundledNames) builtinNames.add(name);
+    // 市场安装记录里的中文名称：市场索引取不到该技能时（已下架/未拉取），本地仍显示中文名而不是标识。
+    const installedTitles = new Map<string, string>();
+    for (const record of installs.values()) {
+      if (record.title) installedTitles.set(record.name.trim().toLowerCase(), record.title);
+    }
+    /** 从市场安装的技能：列表阶段也要比一次内容摘要，被改过的技能在卡片上直接标为不可用。 */
+    const marketInstalled = new Set<string>();
+    /** 闸门开启时不可显示的技能：磁盘上的市场外技能（用户手放/自建）一律不展示。 */
+    const externalLocal = new Set<string>();
+    const merged = await Promise.all(rows.map(async row => {
       const entry = metadata.get(row.name); const contribution = this.contributedDisplay(row.name);
+      const marketTitle = installedTitles.get(row.name.trim().toLowerCase());
+      const title = entry?.title && entry.title !== row.name
+        ? entry.title
+        : contribution?.title && contribution.title !== row.name
+          ? contribution.title
+          : marketTitle;
+      // 安装清单是「本地技能 → 后台资产」的唯一可靠来源：市场来源带 assetId（按 id 关联索引），
+      // 随包来源记为 builtin（市场索引缺失时的客户端内置兜底）。读不到清单按用户自建处理。
+      let manifest: (AssetManifest & { readonly assetType: 'skill' }) | undefined;
+      try { manifest = await this.installManifest(row.name); } catch { manifest = undefined; }
+      const assetId = manifest?.source === 'market' && manifest.assetId ? manifest.assetId : undefined;
+      if (manifest?.source === 'market') marketInstalled.add(row.name);
+      // 闸门开启时只允许市场安装与随包内置：磁盘上的其它技能（用户手放、自建）调用期同样会被拒。
+      if (manifest?.source !== 'market' && manifest?.source !== 'builtin' && fileBacked.has(row.name)) externalLocal.add(row.name);
+      const clientBuiltin = bundledNames.has(row.name.trim().toLowerCase()) || manifest?.source === 'builtin';
       return {
         ...row, ...contribution, ...entry,
         ...(builtinNames.has(row.name.trim().toLowerCase()) ? { builtin: true } : {}),
-        ...(entry?.title === row.name && contribution ? { title: contribution.title } : {}),
+        ...(assetId ? { assetId } : {}),
+        ...(clientBuiltin ? { clientBuiltin: true } : {}),
+        ...(title ? { title } : {}),
       };
-    });
+    }));
     // 闸门开启或验签开关开启时才为市场来源的技能补授权/重装标记；都关闭时不读清单、不做判定。
-    const gate = this.gateProbe();
-    const described = gate && (gate.enabled('skill') || gate.signatureEnabled?.() === true)
-      ? await Promise.all(merged.map(async row => ({ ...row, ...(await this.authStateOf(row.name, gate)) })))
+    const gate = probe;
+    // 闸门开启时市场外技能直接不显示（用户手放到技能目录、未从市场安装）。
+    const visible = gate?.enabled('skill') === true && externalLocal.size > 0
+      ? merged.filter(row => !externalLocal.has(row.name))
       : merged;
-    return described.sort((a, b) => a.name.localeCompare(b.name));
+    const described = gate && (gate.enabled('skill') || gate.signatureEnabled?.() === true)
+      ? await Promise.all(visible.map(async row => ({ ...row, ...(await this.authStateOf(row.name, gate)) })))
+      : visible;
+    // 市场来源技能每次都按缓存比对一次内容摘要：用户在本地改过文件后，卡片要立刻显示「不可用」
+    // 而不是等到真正调用时才被调用期闸门拒绝。授权问题优先展示，两者都有时不叠加两条文案。
+    const verified = marketInstalled.size === 0 ? described : await Promise.all(described.map(async row => (
+      marketInstalled.has(row.name) ? { ...row, ...(await this.integrityStateOf(row.name)) } : row
+    )));
+    return verified.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /**
+   * 完整性状态：市场来源技能的内容与安装清单不一致时，卡片/详情要立刻显示「不可用」，
+   * 而不是等到真正调用才被调用期闸门拒绝。结果复用 `verifyInstalledDigests` 的指纹缓存。
+   */
+  private async integrityStateOf(name: string): Promise<Pick<ManagedSkillSummary, 'integrityState' | 'integrityReason'>> {
+    let verdict: SkillDigestVerdict;
+    try { verdict = await this.verifyInstalledDigests(name); }
+    catch { return { integrityState: 'unreadable', integrityReason: INTEGRITY_REASONS.unreadable }; }
+    if (verdict.ok) return {};
+    const missing = verdict.reason === 'missing';
+    const unreadable = verdict.reason === 'unreadable';
+    const key = missing ? 'missing' : unreadable ? 'unreadable' : verdict.reason === 'signature-missing' ? 'unsigned' : 'modified';
+    return {
+      integrityState: missing ? 'missing' : unreadable ? 'unreadable' : 'modified',
+      integrityReason: INTEGRITY_REASONS[key],
+    };
   }
 
   registerDisplayMetadata(namespace: string, entries: readonly SkillDisplayMetadata[]): () => void {
@@ -365,7 +445,19 @@ export class SkillManager extends Service implements SkillManagementService {
     const metadata = await this.catalogStore.metadata(new Set([detail.name]));
     const entry = metadata.get(detail.name);
     const contribution = this.contributedDisplay(detail.name);
-    return { ...detail, ...contribution, ...entry, ...(entry?.title === detail.name && contribution ? { title: contribution.title } : {}) };
+    // 详情与列表同一套显示名优先级：市场索引 → 插件登记 → 安装记录里的中文名。
+    const installs = await readMarketInstalls(marketInstallFile(this.stateRoot), message => this.ctx.logger.warn(message));
+    const marketTitle = [...installs.values()].find(record => record.name.trim().toLowerCase() === detail.name.trim().toLowerCase())?.title;
+    const title = entry?.title && entry.title !== detail.name
+      ? entry.title
+      : contribution?.title && contribution.title !== detail.name
+        ? contribution.title
+        : marketTitle;
+    // 详情同样展示完整性状态：详情页的「去试试」与卡片保持一致的不可用判断。
+    let integrity: Pick<ManagedSkillSummary, 'integrityState' | 'integrityReason'> = {};
+    try { if ((await this.installManifest(detail.name))?.source === 'market') integrity = await this.integrityStateOf(detail.name); }
+    catch { integrity = {}; }
+    return { ...detail, ...contribution, ...entry, ...(title ? { title } : {}), ...integrity };
   }
 
   private async readDetail(name: string, signal?: AbortSignal): Promise<ManagedSkillDetail | undefined> {
@@ -691,7 +783,15 @@ export class SkillManager extends Service implements SkillManagementService {
   async installManifest(name: string): Promise<(AssetManifest & { readonly assetType: 'skill' }) | undefined> {
     this.assertName(name);
     const entry = (await this.activeEntry(name)) ?? (await this.disabledEntry(name));
-    if (!entry) return undefined;
+    if (!entry) {
+      // 随包技能不在受管目录里（落在 Profile 资源中）：按 provider 给出的路径读同目录清单。
+      // 不在这里兜底会把 office 系列当成「未登记」，闸门会在目录与调用两处全部拒绝。
+      let path: string | undefined;
+      try { path = (await this.ctx.skills.get(name))?.path; } catch { path = undefined; }
+      if (!path) return undefined;
+      const bundled = await readAssetManifest(dirname(path));
+      return bundled && bundled.assetType === 'skill' ? { ...bundled, assetType: 'skill' } : undefined;
+    }
     if (entry.directoryBundle) {
       const manifest = await readAssetManifest(dirname(entry.file));
       // 类型不符的清单按「没有清单」处理：宁可当作自建，也不误认成别的资产。
@@ -1087,10 +1187,16 @@ export class SkillManager extends Service implements SkillManagementService {
     // 官方 provider 的 content/metadata 已剥离 frontmatter，显示名由我们自己读取 SKILL.md 解析。
     const source = definition.path ? await readFile(definition.path, 'utf8').catch(() => undefined) : undefined;
     const title = source === undefined ? undefined : frontmatterValue(source, 'title');
+    // 虚拟 provider（如随包 office 技能）只给 resourceBase 目录、不给指令文件路径，
+    // 两者都可用于「打开文件夹」；写操作仍由 manageable/state 拦截。
+    const sourceDirectory = definition.path
+      ? dirname(definition.path)
+      : definition.resourceBase?.kind === 'directory' ? definition.resourceBase.path : undefined;
     const readonlyDetail: ManagedSkillDetail = {
       name: definition.name, description: definition.description, whenToUse: definition.whenToUse,
       ...(title ? { title } : {}),
       modelInvocable: definition.invocation.modelInvocable, state: 'readonly', manageable: false, resources: [],
+      ...(sourceDirectory ? { directoryPath: sourceDirectory } : {}),
     };
     if (!definition.path) return readonlyDetail;
     const active = await this.managedEntryForPath(definition.path);

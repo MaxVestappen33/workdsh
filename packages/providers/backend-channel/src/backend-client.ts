@@ -78,7 +78,7 @@ export interface BackendClientOptions {
   readonly timeoutMs?: number;
 }
 
-const defaultTimeoutMs = 10_000;
+const defaultTimeoutMs = 60_000;
 /** spec §0.2：Accept 固定，tenant 与 version 为固定值；后台不校验 X-Sign，因此本层不发该头。 */
 const accept = 'application/json, text/plain, */*';
 const tenantId = '0';
