@@ -1265,6 +1265,36 @@ function openWindow(url: string, connection: DesktopConnection = { mode: 'person
   })
 }
 
+/**
+ * 载体之外注入的 Node 预加载钩子（例如沙箱运行时的 broker shim）不能进宿主：
+ * 它会接管 fs，把每次 open/readdir 转成 IPC 请求，扫描会话目录时就会 EMFILE /
+ * 队列打满，`@deepseek-ai/dsh-workspace` 激活失败，依赖它的 session-controller、
+ * workspace-controller 全部停在 pending —— 前端拿不到会话就是「暂无会话」。
+ */
+const FOREIGN_NODE_PRELOAD = /sandbox-center-runtime-kit|node-language-shim|brokered-fs-shim|codebuddy/iu
+
+/** 宿主可用的 NODE_OPTIONS：保留证书信任等常规开关，剔除上面那类外部预加载。 */
+function hostNodeOptions(): string {
+  const inherited = (process.env.NODE_OPTIONS ?? '').split(/\s+/).filter(Boolean)
+  const kept = inherited.filter(token => !FOREIGN_NODE_PRELOAD.test(token))
+  if (kept.length !== inherited.length) {
+    process.stderr.write('[startup] 已剔除宿主 NODE_OPTIONS 中的外部 Node 预加载钩子\n')
+  }
+  return ['--use-system-ca', ...kept].join(' ')
+}
+
+/**
+ * 宿主启动命令：macOS / Linux 下先用 sh 抬一次 fd 软上限再 `exec` 原进程。
+ * 打包应用从 Finder 启动时继承的是 launchd 的 maxfiles 软限制（常见 256），
+ * 而启动阶段要并发扫描所有会话目录，fd 不够会 EMFILE 直接打断 workspace 激活；
+ * `exec` 之后 pid 不变，进程跟踪与信号处理都不受影响。Windows 保持原样。
+ */
+function hostLaunchCommand(executable: string, args: readonly string[]): { command: string, args: string[] } {
+  if (process.platform === 'win32') return { command: executable, args: [...args] }
+  const script = 'if [ "$(ulimit -n)" -lt 65535 ] 2>/dev/null; then ulimit -n 65535 2>/dev/null || true; fi; exec "$0" "$@"'
+  return { command: '/bin/sh', args: ['-c', script, executable, ...args] }
+}
+
 function runtimeEnvironment(home: string): NodeJS.ProcessEnv {
   const inherited = enterprise ? enterpriseEnvironment(enterprise.root, bundledNodeExecutable(), process.env) : process.env
   return {
@@ -1305,8 +1335,8 @@ function runtimeEnvironment(home: string): NodeJS.ProcessEnv {
     // WorkDSH 定制：让载体打包的 Node 信任系统证书库（--use-system-ca）。
     // 环境对 GitHub 系域名做 TLS 拦截，Node 默认只信内置 CA 导致安装插件时
     // fetch 报 UNABLE_TO_VERIFY_LEAF_SIGNATURE（前端只见 "fetch failed"）。
-    // 与已有 NODE_OPTIONS 合并，不覆盖启动环境显式注入的其他选项。
-    NODE_OPTIONS: ['--use-system-ca', process.env.NODE_OPTIONS].filter(Boolean).join(' '),
+    // 其余继承选项原样保留，但外部预加载钩子会被剔除（见 hostNodeOptions）。
+    NODE_OPTIONS: hostNodeOptions(),
   }
 }
 
@@ -1429,7 +1459,8 @@ async function startRuntime(home: string, connection: DesktopConnection, patches
   const layers = [...(existsSync(basePatch) ? [basePatch] : []), ...patches, ...marketPatchLayers(home, modelStateDir, assetGateStateDir, assetGatePolicyDir), ...(port.managed ? [port.patch] : [])]
   const launcher = officialHostLauncher(bundledProfileDirectory(), home, executable, join(bundledPrimaryRuntime(), 'dependencies', 'pnpm', 'bin', 'pnpm.cjs'), layers)
   const hostSpawnedAt = Date.now()
-  const child = spawn(executable, hostNodeArguments(launcher), {
+  const host = hostLaunchCommand(executable, hostNodeArguments(launcher))
+  const child = spawn(host.command, host.args, {
     env: runtimeEnvironment(home),
     cwd: enterprise ? join(enterprise.root, 'workspace') : home,
     detached: process.platform !== 'win32',
