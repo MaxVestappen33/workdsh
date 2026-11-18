@@ -1,7 +1,10 @@
-import type { MarketCategory, MarketItem, MarketPage, MarketQuery } from '../market.js';
+import type { ConnectorApplyStatus, MarketCategory, MarketItem, MarketPage, MarketQuery } from '../market.js';
 
 /** 市场每页条数：分页由服务端执行，界面滚动到接近底部再取下一页。 */
 export const MARKET_PAGE_SIZE = 24;
+
+/** 连续补拉页数上限：客户端过滤把一页筛空时继续向后取，避免异常后台拖住首屏。 */
+export const MARKET_FILL_MAX_PAGES = 10;
 
 /** 界面侧的市场列表状态：逐页累积，`hasMore` 决定是否继续加载。 */
 export interface MarketListState {
@@ -14,14 +17,24 @@ export interface MarketListState {
 
 export const emptyMarketList: MarketListState = { items: [], total: 0, page: 0, hasMore: false };
 
-/** 当前生效的筛选条件：已选中的分类胶囊文案（多选，顺序即选择顺序）+ 搜索框关键词。 */
+/**
+ * 当前生效的筛选条件：已选中的分类胶囊文案（多选，顺序即选择顺序）+ 搜索框关键词，
+ * 以及四个状态条件（缺省均表示「全部」）。
+ */
 export interface MarketListFilter {
   readonly categories: readonly string[];
   readonly keyword: string;
+  /** 是否内置：后台未下发该属性时界面不展示这一项，取值为 undefined。 */
+  readonly builtin?: boolean;
+  /** 安装状态：本机判定，只在客户端过滤；其它条件不变。 */
+  readonly install?: 'installed' | 'uninstalled';
+  /** 授权状态：服务端参数 authStatus。 */
+  readonly auth?: 'Y' | 'N';
+  /** 授权申请状态：服务端参数 applyStatus。 */
+  readonly apply?: ConnectorApplyStatus;
 }
 
-/** 分类文案 → 分类字典 value；未命中字典的值直接跳过，全部未命中时返回空数组，表示不下发筛选。 */
-export function marketSceneOf(categories: readonly string[], dictionary: readonly MarketCategory[]): readonly string[] {
+function marketSceneOf(categories: readonly string[], dictionary: readonly MarketCategory[]): readonly string[] {
   return categories.flatMap(category => {
     const value = dictionary.find(item => item.text === category)?.value;
     return value ? [value] : [];
@@ -29,9 +42,9 @@ export function marketSceneOf(categories: readonly string[], dictionary: readonl
 }
 
 /**
- * 一页的请求参数：分类与关键词都交给服务端，空值不下发。切换筛选时以 page = 1 重新取数。
- * 多选时把各分类 value 用英文逗号连接后下发为单个 `bizScene`（如 `a,b`），语义为命中任一；
- * 单选时下发结果与旧契约完全一致（如 `a`）。
+ * 一页的请求参数：分类、关键词、授权状态与申请状态交给服务端，空值不下发。
+ * 是否内置与安装状态都在客户端过滤，不进入请求参数——后台暂未确认支持 isNzzc 过滤，
+ * 直接下发未知参数可能让后台查询报错。切换筛选时以 page = 1 重新取数。
  */
 export function marketListQuery(filter: MarketListFilter, page: number, dictionary: readonly MarketCategory[]): MarketQuery {
   const scenes = marketSceneOf(filter.categories, dictionary);
@@ -41,12 +54,30 @@ export function marketListQuery(filter: MarketListFilter, page: number, dictiona
     pageSize: MARKET_PAGE_SIZE,
     ...(scenes.length ? { scene: scenes.join(',') } : {}),
     ...(keyword ? { keyword } : {}),
+    ...(filter.auth === undefined ? {} : { authStatus: filter.auth }),
+    ...(filter.apply === undefined ? {} : { applyStatus: filter.apply }),
   };
+}
+
+/** 客户端过滤：是否内置与安装状态。缺省条件返回原列表。 */
+export function marketItemsByFilter(items: readonly MarketItem[], filter: MarketListFilter, installed: (item: MarketItem) => boolean): readonly MarketItem[] {
+  return items.filter(item => {
+    if (filter.builtin !== undefined && item.builtin !== filter.builtin) return false;
+    if (filter.install === 'installed' && !installed(item)) return false;
+    if (filter.install === 'uninstalled' && installed(item)) return false;
+    return true;
+  });
+}
+
+/** 客户端过滤下可见条目是否还不满一页：为真时需要继续向后补拉，直到凑满或后台到底。 */
+export function needsFill(items: readonly MarketItem[], filter: MarketListFilter, installed: (item: MarketItem) => boolean): boolean {
+  if (filter.builtin === undefined && filter.install === undefined) return false;
+  return marketItemsByFilter(items, filter, installed).length < MARKET_PAGE_SIZE;
 }
 
 /**
  * 是否还有下一页：只按后台原始分页判断（页码 × 每页条数 < 后台原始总数）。
- * `items` 已经被授权闸门二次过滤，不能参与翻页判断，否则某一页被过滤清空时会提前停止。
+ * `items` 可能已被客户端过滤，不能参与翻页判断，否则某页被筛空时会提前停止。
  */
 function rawHasMore(page: MarketPage, total: number): boolean {
   return page.page * MARKET_PAGE_SIZE < total;
@@ -71,7 +102,7 @@ export function appendMarketList(state: MarketListState, page: MarketPage): Mark
 }
 
 /** 分类字典 value → 界面文案；无法映射的 value 直接跳过，不把原始编码显示给用户。 */
-export function marketCategoryLabels(categories: readonly string[], dictionary: readonly MarketCategory[]): readonly string[] {
+function marketCategoryLabels(categories: readonly string[], dictionary: readonly MarketCategory[]): readonly string[] {
   return categories.flatMap(code => {
     const label = dictionary.find(item => item.value === code)?.text;
     return label ? [label] : [];

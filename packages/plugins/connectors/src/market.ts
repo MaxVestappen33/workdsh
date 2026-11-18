@@ -8,6 +8,9 @@ export interface MarketCategory {
   readonly color?: string;
 }
 
+/** 授权申请状态：与后台 applyStatus 同口径，缺省 none（未申请）。 */
+export type ConnectorApplyStatus = 'none' | 'pending' | 'approved' | 'rejected';
+
 /** 市场工具：结构见 mcp-market-api-spec.md §3。真实数据里没有 kind 字段，不做类型标签假设。 */
 export interface MarketTool {
   readonly name: string;
@@ -57,10 +60,37 @@ export interface MarketItem {
    * 安装时写入官方凭据服务，连接器定义里只保留引用，连接器列表与详情都不回传值。
    */
   readonly requestHeaders: readonly ConnectorRequestHeader[];
+  /** 条目版本：后台下发时展示版本徽标，缺失则不展示。 */
+  readonly version?: string;
+  /** 是否内置：后台 `builtin` 字段（1 是、0 否，与技能市场的 isNzzc 同口径）；缺省时界面不显示徽标。 */
+  readonly builtin?: boolean;
+  /** 是否客户端内置（后台 isClientBuiltin）：为真表示随客户端安装，市场侧不提供卸载入口。 */
+  readonly clientBuiltin?: boolean;
+  /** 授权状态（后台 isAuthorized：Y/N）；旧后台不下发该字段时按已授权兜底。 */
+  readonly authorized: boolean;
+  /** 授权申请状态（后台 applyStatus）；缺省或未知取值按 none（未申请）处理。 */
+  readonly applyStatus: ConnectorApplyStatus;
   readonly subscribers: number;
   readonly downloads: number;
   readonly stars: number;
   readonly tools: readonly MarketTool[];
+}
+
+/**
+ * 全量授权索引项：本地 MCP 卡片按后台编号 / 市场条目 id / 服务标识匹配它，
+ * 补齐授权、申请与内置属性。索引必须覆盖未授权条目，否则被撤权的实例拿不到申请入口。
+ */
+export interface MarketIndexItem {
+  readonly originId: string;
+  readonly serverName: string;
+  readonly title: string;
+  readonly categoryLabels: readonly string[];
+  readonly icon?: string;
+  readonly color?: string;
+  readonly builtin?: boolean;
+  readonly clientBuiltin?: boolean;
+  readonly authorized: boolean;
+  readonly applyStatus: ConnectorApplyStatus;
 }
 
 /** 市场查询参数：分类与关键词都由服务端筛选（后台按实体字段直查）。 */
@@ -74,6 +104,10 @@ export interface MarketQuery {
   readonly scene?: string;
   /** 关键词：下发为列表接口的 `keyword` 参数；为空表示不筛选。 */
   readonly keyword?: string;
+  /** 授权状态：下发为 `authStatus`（Y 已授权、N 未授权）；缺省表示不筛选。 */
+  readonly authStatus?: 'Y' | 'N';
+  /** 授权申请状态：下发为 `applyStatus`；缺省表示不筛选。 */
+  readonly applyStatus?: ConnectorApplyStatus;
 }
 
 /** 一页市场列表：`page` 是后台返回的当前页码（缺省时回落到请求页码）。 */
@@ -92,6 +126,8 @@ export interface MarketPaths {
    * 未配置时用内置默认路径（见 market-entry 的 DEFAULT_MARKET_PATHS）。
    */
   readonly report?: string;
+  /** 单点登录参数接口：申请/取消申请时由宿主生成后台登录参数。 */
+  readonly ssoParams?: string;
 }
 
 export interface Config {
@@ -102,6 +138,10 @@ export interface Config {
 
 /** 列表默认每页条数：真实分页由服务端执行，界面滚动到接近底部再取下一页。 */
 const MARKET_LIST_PAGE_SIZE = 24;
+/** 索引翻页的每页条数：索引是一次性取全，用大页减少请求次数。 */
+const INDEX_PAGE_SIZE = 200;
+/** 索引翻页上限：防止后台异常返回永远取不完的数据。 */
+const INDEX_MAX_PAGES = 25;
 
 /** 市场请求错误：code 为宿主侧错误码，message 为可直接展示的中文文案。 */
 export class MarketRequestError extends Error {
@@ -121,6 +161,23 @@ const transportOf = (value: unknown): 'stdio' | 'streamable-http' => text(value)
 const iconOf = (value: unknown): string | undefined => {
   const icon = text(value);
   return icon && /^https?:\/\//iu.test(icon) ? icon : undefined;
+};
+/** builtin / isClientBuiltin：1 是、0 否（兼容布尔与数字），其它取值视为未知，不展示徽标也不参与判定。 */
+const builtinOf = (value: unknown): boolean | undefined => {
+  if (value === true || value === 1) return true;
+  if (value === false || value === 0) return false;
+  const raw = text(value);
+  return raw === '1' ? true : raw === '0' ? false : undefined;
+};
+/** isAuthorized：Y 已授权、N 未授权；字段缺失返回 undefined，由调用方决定兜底口径。 */
+const authorizedOf = (value: unknown): boolean | undefined => {
+  const raw = text(value)?.toUpperCase();
+  return raw === 'Y' ? true : raw === 'N' ? false : undefined;
+};
+/** applyStatus：只接受四个已知取值，其它（含缺省）按 none（未申请）处理。 */
+const applyStatusOf = (value: unknown): ConnectorApplyStatus => {
+  const raw = text(value)?.toLowerCase();
+  return raw === 'pending' || raw === 'approved' || raw === 'rejected' ? raw : 'none';
 };
 /**
  * 市场条目的请求头：只认 `requestHeaders`（可按名称自定义多个）。
@@ -211,11 +268,21 @@ const itemOf = (value: unknown): MarketItem | undefined => {
   const launch = packageLaunchOf(transport, command, args);
   // 请求头按名称自定义：sample 里的 requestHeaders 是 JSON 字符串，解析后逐个附加到 HTTP 请求。
   const requestHeaders = requestHeadersFor(row);
+  // 后台的「是否内置」字段是 builtin（取值 1/0，与技能市场的 isNzzc 同口径）；保留 isNzzc 兼容旧响应。
+  const version = text(row.version) ?? text(row.serviceVersion);
+  const builtin = builtinOf(row.builtin) ?? builtinOf(row.isNzzc);
+  const clientBuiltin = builtinOf(row.isClientBuiltin);
   return { originId, serverName, title, description: text(row.description) ?? '', categories: categoriesOf(row.bizScene),
     categoryLabels: categoryLabelsOf(row.bizSceneList),
     transport, ...(url ? { url } : {}), ...(command ? { command } : {}), ...(args ? { args } : {}),
     ...(launch ? { launch: 'package' as const, packageSpec: launch.spec, packageArgs: launch.args } : { launch: 'direct' as const }),
     ...(icon ? { icon } : {}), ...(color ? { color } : {}), requestHeaders,
+    ...(version ? { version } : {}),
+    ...(builtin === undefined ? {} : { builtin }),
+    ...(clientBuiltin === undefined ? {} : { clientBuiltin }),
+    // 旧后台没有 isAuthorized 时按「已授权」兜底，保持升级前的安装能力；
+    // 明确下发 N 时才按未授权处理（展示申请入口、隐藏安装按钮）。
+    authorized: authorizedOf(row.isAuthorized) ?? true, applyStatus: applyStatusOf(row.applyStatus),
     subscribers: count(row.subscribers), downloads: count(row.downloadCount), stars: count(row.starCount),
     tools: toolsOf(row.tools) };
 };
@@ -296,6 +363,9 @@ export class ConnectorMarketClient {
     if (scene) query.set('bizScene', scene);
     const keyword = text(input.keyword);
     if (keyword) query.set('keyword', keyword);
+    // 授权状态与申请状态同样交给后台过滤；缺省不下发，避免与「全部」混淆。
+    if (input.authStatus !== undefined) query.set('authStatus', input.authStatus);
+    if (input.applyStatus !== undefined) query.set('applyStatus', input.applyStatus);
     const result = record(await this.request('GET', this.paths.list, query, undefined, signal));
     if (!result || !Array.isArray(result.records))
       throw new MarketRequestError('connector/market-response-invalid', '市场列表返回的数据无法识别，请稍后重试。');
@@ -304,6 +374,37 @@ export class ConnectorMarketClient {
     const total = typeof result.total === 'number' ? count(result.total) : items.length;
     const current = typeof result.current === 'number' && result.current > 0 ? Math.trunc(result.current) : page;
     return { items, total, page: current };
+  }
+
+  /**
+   * 全量授权索引：本地 MCP 卡片按后台编号、市场条目 id、服务标识匹配授权/申请/内置属性。
+   * 与列表同源（大页翻页 + 去重），但不受当前筛选影响，且必须包含未授权条目。
+   */
+  async index(signal?: AbortSignal): Promise<readonly MarketIndexItem[]> {
+    const rows: MarketIndexItem[] = [];
+    const seen = new Set<string>();
+    let page = 1;
+    for (;;) {
+      const listed = await this.list({ page, pageSize: INDEX_PAGE_SIZE }, signal);
+      let added = 0;
+      for (const item of listed.items) {
+        if (seen.has(item.originId)) continue;
+        seen.add(item.originId);
+        rows.push({
+          originId: item.originId, serverName: item.serverName, title: item.title,
+          categoryLabels: item.categoryLabels,
+          ...(item.icon ? { icon: item.icon } : {}),
+          ...(item.color ? { color: item.color } : {}),
+          ...(item.builtin === undefined ? {} : { builtin: item.builtin }),
+          ...(item.clientBuiltin === undefined ? {} : { clientBuiltin: item.clientBuiltin }),
+          authorized: item.authorized, applyStatus: item.applyStatus,
+        });
+        added += 1;
+      }
+      if (!added || rows.length >= listed.total || page >= INDEX_MAX_PAGES) break;
+      page += 1;
+    }
+    return rows;
   }
 
   async categories(signal?: AbortSignal): Promise<readonly MarketCategory[]> {

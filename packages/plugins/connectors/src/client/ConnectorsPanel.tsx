@@ -1,17 +1,17 @@
 import { Button, CardSkeleton, cardSkeletonCss, Icon, Input, Modal, QueryOverlay, queryOverlayCss } from 'workdsh-ui';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots';
-import type { MarketCategory, MarketItem } from '../market.js';
+import type { ConnectorApplyStatus, MarketCategory, MarketIndexItem, MarketItem } from '../market.js';
 import type { ConnectorInstallTask, ConnectorSummary } from '../shared.js';
-import type { ConnectorManagementClient } from './management.js';
+import { MCP_AUTH_SSO, type ConnectorManagementClient } from './management.js';
 import { connectorCss } from './styles.js';
 import {
-  appendMarketList, emptyMarketList, marketCategoryText, marketListQuery, startMarketList,
-  type MarketListFilter, type MarketListState,
+  appendMarketList, emptyMarketList, MARKET_FILL_MAX_PAGES, marketCategoryText, marketItemsByFilter, marketListQuery,
+  needsFill, startMarketList, type MarketListFilter, type MarketListState,
 } from './market-list.js';
+import { APPLY_LABEL, LocalMcpCard, MarketMcpCard } from './components/McpCard.js';
 import { BatchBar } from './components/BatchBar.js';
 import { CategoryBar } from './components/CategoryBar.js';
-import { LocalMcpCard, MarketMcpCard } from './components/McpCard.js';
 import { LocalMcpDetailModal, MarketMcpDetailModal } from './components/McpDetailModal.js';
 import { McpFormModal, blankDraft, draftFromConfig, type ConnectorDraft } from './components/McpFormModal.js';
 
@@ -20,6 +20,8 @@ type Injected = {
   management: ConnectorManagementClient;
   openCapability: (key: string) => void;
   hasCapability: (key: string) => boolean;
+  /** 「去试试」：新建会话、预选该 MCP 并预填提示词（宿主侧实现，见 client.tsx）。 */
+  startConnectorTrial: (connectorId: string, title: string) => Promise<void>;
 };
 type Props = PropsRuntime<'main'> & InjectFace<Injected>;
 
@@ -36,13 +38,40 @@ const MARKET_QUERY_DEBOUNCE_MS = 250;
 const MARKET_INSTALL_POLL_MS = 5_000;
 const capabilityTabs = [['experts', '专家'], ['skills', '技能'], ['connectors', '连接器']] as const;
 const capabilityKey: Record<string, string> = { experts: 'workdsh-experts', skills: 'workdsh-skills', connectors: 'workdsh-connectors' };
+/** 是否内置筛选：与业务场景胶囊同款，单选，都不选即「全部」。 */
+const BUILTIN_OPTIONS = ['内置', '非内置'] as const;
+const BUILTIN_YES = BUILTIN_OPTIONS[0];
+/** 安装状态是本机判定，只在客户端过滤；授权/申请状态交给服务端。 */
+const INSTALL_OPTIONS = ['已安装', '未安装'] as const;
+const AUTH_OPTIONS = ['已授权', '未授权'] as const;
+const APPLY_OPTIONS: readonly { readonly label: string; readonly value: ConnectorApplyStatus }[] = [
+  { label: '未申请', value: 'none' },
+  { label: '申请中', value: 'pending' },
+  { label: '已通过', value: 'approved' },
+  { label: '未通过', value: 'rejected' },
+];
 
-export function ConnectorsPanel({ toggleNavigation, management, openCapability, hasCapability }: Props) {
+/**
+ * 打开后台管理系统：Desktop 的 window.open 由主进程转交系统浏览器，
+ * Web 预览被拦截时退回当前页跳转。
+ */
+function openAdminSso(url: string): void {
+  const popup = window.open(url, '_blank', 'noopener');
+  if (!popup && !/Electron/iu.test(navigator.userAgent)) window.location.assign(url);
+}
+
+export function ConnectorsPanel({ toggleNavigation, management, openCapability, hasCapability, startConnectorTrial }: Props) {
   const [rows, setRows] = useState<readonly ConnectorSummary[]>([]);
   const [tab, setTab] = useState<'local' | 'market'>('local');
   /** 已选分类（多选，数组顺序即用户选择顺序）；空数组等价于「全部」。 */
   const [categories, setCategories] = useState<readonly string[]>([]);
   const [query, setQuery] = useState('');
+  /** 是否内置（单选）；undefined 等价于「全部」。 */
+  const [builtinFilter, setBuiltinFilter] = useState<boolean>();
+  /** 安装状态在本机判定、客户端过滤；授权状态与申请状态下发给服务端。undefined 均等价于「全部」。 */
+  const [installFilter, setInstallFilter] = useState<'installed' | 'uninstalled'>();
+  const [authFilter, setAuthFilter] = useState<'Y' | 'N'>();
+  const [applyFilter, setApplyFilter] = useState<ConnectorApplyStatus>();
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -64,12 +93,26 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
   const [marketMoreError, setMarketMoreError] = useState('');
   /** 市场条目的本机安装任务：驱动卡片/详情弹窗的安装中、失败与重试，由固定间隔轮询推进。 */
   const [installs, setInstalls] = useState<Record<string, ConnectorInstallTask>>({});
+  /**
+   * 同步安装（一次请求内完成）的失败原因，按条目 id 就地展示。
+   * 授权刚通过但快照未同步、仓库不可达这类失败不产生后台任务，只靠列表上方的横幅很容易被忽略，
+   * 因此与技能市场一致：把原因留在条目上，按钮变「重试安装」，用户点一下就是重试。
+   */
+  const [installFailures, setInstallFailures] = useState<Record<string, string>>({});
   /** 正在等待 market-install 首次响应的条目：任务态回来之前先让卡片进入安装中。 */
   const [installPending, setInstallPending] = useState<string>();
   /** 轮询读取的安装任务快照：轮询器读 ref，避免把 installs 放进依赖数组后每次状态更新都重置计时器。 */
   const installsRef = useRef<Record<string, ConnectorInstallTask>>({});
   /** 正在启停的本地实例 id：启停要拉起或断开 MCP 进程，同样需要逐行加载态。 */
   const [togglingId, setTogglingId] = useState<string>();
+  /** 全量授权索引：本地实例按后台编号/市场标识匹配授权与申请状态。 */
+  const [marketIndex, setMarketIndex] = useState<readonly MarketIndexItem[]>([]);
+  /** 单点跳转请求占用：申请/取消申请期间禁用按钮。 */
+  const [ssoBusy, setSsoBusy] = useState(false);
+  /** 绑定不可用时待确认打开的单点地址，非空即弹出提醒。 */
+  const [ssoPromptUrl, setSsoPromptUrl] = useState<string>();
+  /** 市场条目卸载确认：先定位本机实例，再走市场卸载并上报。 */
+  const [marketConfirm, setMarketConfirm] = useState<MarketItem>();
   /** 分类字典的同步快照：发请求时立即读取，避免等待 state 更新。 */
   const dictionaryRef = useRef<readonly MarketCategory[]>([]);
   /** 请求代号：筛选变化时递增，用于丢弃过期响应，避免旧结果覆盖新筛选。 */
@@ -84,20 +127,26 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
 
   const marketCategories = useMemo(() => marketDict.map(item => item.text), [marketDict]);
   /**
-   * 业务场景栏恒为字典全量：本地 MCP 页签同样完整展示所有业务场景，
-   * 本机没有实例用到某个场景时也照样显示（点它落到空列表），不因为没有数据就只剩「全部」。
-   * 字典里缺失、但本机实例实际带有的分类追加在后面，避免出现无法筛选的分类。
+   * 业务场景栏只展示后台字典项：字典是筛选的唯一口径（文案要映射回 value 才能下发 bizScene），
+   * 不再追加本地实例里出现、但字典没有的分类，避免出现「选中了却筛不出来」的胶囊。
    */
-  const options = useMemo(() => {
-    const extra = [...new Set(rows.flatMap(row => row.categories ?? []))].filter(text => !marketCategories.includes(text));
-    return [...marketCategories, ...extra];
-  }, [rows, marketCategories]);
+  const options = marketCategories;
   /** 只保留当前页签仍存在的选中项：切页签或分类字典变化后，失效的选择自动丢弃。 */
   const activeCategories = useMemo(() => categories.filter(name => options.includes(name)), [categories, options]);
-  const filter: MarketListFilter = { categories: activeCategories, keyword: query };
+  /** 本地实例的 row 快照：安装判定要读最新列表，但不能把它放进回调依赖里反复重建请求。 */
+  const rowsRef = useRef(rows);
+  useEffect(() => { rowsRef.current = rows; }, [rows]);
+  /** 已安装判定：本机实例的 originId（市场条目 id）或 serverName（市场 serviceId）。 */
+  const isInstalled = useCallback((entry: MarketItem) => rowsRef.current.some(row =>
+    row.originId === entry.originId || row.serverName === entry.originId || row.serverName === entry.serverName), []);
+  const filter: MarketListFilter = useMemo(() => ({
+    categories: activeCategories, keyword: query,
+    builtin: builtinFilter, install: installFilter, auth: authFilter, apply: applyFilter,
+  }), [activeCategories, query, builtinFilter, installFilter, authFilter, applyFilter]);
 
-  const refresh = useCallback(async () => {
-    setBusy(true);
+  /** `silent`：后台重拉（如回到窗口），不切到骨架屏，避免列表闪一下。 */
+  const refresh = useCallback(async (silent = false) => {
+    if (!silent) setBusy(true);
     setError('');
     try {
       setRows(await management.list());
@@ -106,7 +155,7 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
       setError(cause instanceof Error ? cause.message : '读取连接器失败。');
       return false;
     } finally {
-      setBusy(false);
+      if (!silent) setBusy(false);
     }
   }, [management]);
   useEffect(() => {
@@ -121,6 +170,22 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
   // 面板卸载时取消还没发出的关键词请求。
   useEffect(() => () => window.clearTimeout(queryTimerRef.current), []);
 
+  /**
+   * 用户经常在外部改动 MCP 配置或安装目录：回到应用窗口时静默重拉本地列表，
+   * 让「文件已被修改 / 已缺失」这类状态立即显示在卡片上。5 秒内的连续聚焦只刷新一次。
+   */
+  useEffect(() => {
+    let last = 0;
+    const reload = () => {
+      if (document.visibilityState === 'hidden' || Date.now() - last < 5_000) return;
+      last = Date.now();
+      void refresh(true);
+    };
+    window.addEventListener('focus', reload);
+    document.addEventListener('visibilitychange', reload);
+    return () => { window.removeEventListener('focus', reload); document.removeEventListener('visibilitychange', reload); };
+  }, [refresh]);
+
   /** 首屏与筛选变化：分类与关键词都交给服务端，一律从第 1 页重新取，并用新结果替换旧列表。 */
   const loadMarket = useCallback(async (next: MarketListFilter) => {
     const generation = ++generationRef.current;
@@ -132,20 +197,25 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
     try {
       // 分类字典是静态参考数据：首次取到后常驻，后续刷新与筛选不再重复请求。
       const dictionary = dictionaryRef.current.length ? dictionaryRef.current : await management.marketCategories();
-      const listed = await management.marketList(marketListQuery(next, 1, dictionary));
+      let listed = startMarketList(await management.marketList(marketListQuery(next, 1, dictionary)));
+      // 是否内置与安装状态是客户端过滤：可见条目不足一页时继续向后取，避免结果只剩零星几条或空白。
+      for (let fetched = 1; needsFill(listed.items, next, isInstalled) && listed.hasMore && fetched < MARKET_FILL_MAX_PAGES; fetched++) {
+        if (generationRef.current !== generation) return;
+        listed = appendMarketList(listed, await management.marketList(marketListQuery(next, listed.page + 1, dictionary)));
+      }
       if (generationRef.current !== generation) return;
       if (!dictionaryRef.current.length) {
         dictionaryRef.current = dictionary;
         setMarketDict(dictionary);
       }
-      setMarket(startMarketList(listed));
+      setMarket(listed);
     } catch (cause) {
       if (generationRef.current !== generation) return;
       setMarketError(cause instanceof Error ? cause.message : '读取 MCP 市场失败。');
     } finally {
       if (generationRef.current === generation) setMarketBusy(false);
     }
-  }, [management]);
+  }, [management, isInstalled]);
 
   useEffect(() => {
     let active = true;
@@ -167,6 +237,17 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
   useEffect(() => {
     if (!marketOn && tab === 'market') setTab('local');
   }, [marketOn, tab]);
+
+  /**
+   * 全量授权索引：本地实例的授权/申请状态只能来自后台索引；
+   * 取不到时保持为空，界面退回只显示本机闸门给出的 authState，不伪造授权状态。
+   */
+  const loadIndex = useCallback(async (force = false) => {
+    if (!marketOn) { setMarketIndex([]); return; }
+    try { setMarketIndex(await management.marketIndex(force)); }
+    catch (cause) { console.error('[workdsh:connectors:market-index]', cause); setMarketIndex([]); }
+  }, [management, marketOn]);
+  useEffect(() => { void loadIndex(); }, [loadIndex]);
 
   // 轮询器读 ref 里的最新任务快照：安装态自身的变化不该重置计时器。
   useEffect(() => {
@@ -194,10 +275,11 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
       }
     }
     if (finished) {
+      // 安装完成只同步本机实例；市场卡片由「已安装」推导就地变化，不重拉市场列表。
       await refresh();
-      if (marketOn) await loadMarket(filter);
+      await loadIndex(true);
     }
-  }, [management, refresh, marketOn, loadMarket, filter]);
+  }, [management, refresh, loadIndex]);
   const pollRef = useRef(pollInstalls);
   useEffect(() => {
     pollRef.current = pollInstalls;
@@ -216,17 +298,26 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
   const installStateOf = (originId: string): { installing: boolean; failure?: string } => {
     const task = installs[originId];
     if (installPending === originId || task?.state === 'installing') return { installing: true };
-    return task?.state === 'failed' ? { installing: false, failure: task.message ?? '安装失败，请重试。' } : { installing: false };
+    if (task?.state === 'failed') return { installing: false, failure: task.message ?? '安装失败，请重试。' };
+    const failure = installFailures[originId];
+    return failure === undefined ? { installing: false } : { installing: false, failure };
   };
 
-  /** 清掉某条目留在界面上的安装态（任务已是 ready，或条目被卸载）。 */
-  const clearInstall = (originId: string) =>
+  /** 清掉某条目留在界面上的安装态与失败原因（任务已是 ready，或条目被卸载）。 */
+  const clearInstall = (originId: string) => {
     setInstalls(current => {
       if (!(originId in current)) return current;
       const next = { ...current };
       delete next[originId];
       return next;
     });
+    setInstallFailures(current => {
+      if (!(originId in current)) return current;
+      const next = { ...current };
+      delete next[originId];
+      return next;
+    });
+  };
 
   // 加载更多：滚动接近底部时按当前筛选追加下一页；失败只影响加载更多，不清空已有列表。
   const loadMoreMarket = async () => {
@@ -235,9 +326,14 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
     setMarketMore(true);
     setMarketMoreError('');
     try {
-      const listed = await management.marketList(marketListQuery(filter, market.page + 1, dictionaryRef.current));
+      let next = appendMarketList(market, await management.marketList(marketListQuery(filter, market.page + 1, dictionaryRef.current)));
+      // 客户端过滤下追加一页仍不满一页时继续补拉，保持滚动加载的连贯。
+      for (let fetched = 1; needsFill(next.items, filter, isInstalled) && next.hasMore && fetched < MARKET_FILL_MAX_PAGES; fetched++) {
+        if (generationRef.current !== generation) return;
+        next = appendMarketList(next, await management.marketList(marketListQuery(filter, next.page + 1, dictionaryRef.current)));
+      }
       if (generationRef.current !== generation) return;
-      setMarket(appendMarketList(market, listed));
+      setMarket(next);
     } catch (cause) {
       if (generationRef.current !== generation) return;
       setMarketMoreError(cause instanceof Error ? cause.message : '加载更多 MCP 失败。');
@@ -264,6 +360,16 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
       await refresh();
       setTogglingId(undefined);
     }
+  };
+  /**
+   * 「去试试」：新建一个会话，把该 MCP 勾选进去，并预填一句提示词后打开。
+   * 与技能试用同一交互（技能预填的是 `/技能名`，MCP 没有斜杠命令，因此预填自然语言）。
+   */
+  const trial = async (row: ConnectorSummary) => {
+    setError('');
+    setNotice('');
+    try { await startConnectorTrial(row.id, row.title); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : '打开试用会话失败，请重试。'); }
   };
   const edit = async (row: ConnectorSummary) => {
     setError('');
@@ -316,7 +422,7 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
     setNotice('');
     const { row, mode } = confirm;
     try {
-      // 卸载走市场接口：先向后台上报卸载，再由宿主移除本机实例。
+      // 卸载走市场接口：先移除本机实例，成功后再上报后台，避免上报成功但本机卸载失败。
       let reported = true;
       if (mode === 'uninstall') reported = (await management.marketUninstall({ originId: row.originId, id: row.id })).reported;
       else await management.remove(row.id);
@@ -326,7 +432,7 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
       setDetailId(undefined);
       setSelected(current => current.filter(value => value !== row.id));
       await refresh();
-      if (mode === 'uninstall' && marketOn) await loadMarket(filter);
+      if (mode === 'uninstall') await loadIndex(true);
       if (mode !== 'uninstall') setNotice(`已删除「${row.title}」。`);
       else if (reported) setNotice(`已卸载「${row.title}」并从本机移除。`);
       else setNotice(`已从本机移除「${row.title}」，但市场卸载上报失败，后台记录可能未同步。`);
@@ -365,15 +471,25 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
     setError('');
     setNotice('');
     setInstallPending(entry.originId);
+    // 重试时就地清掉上一次的失败原因：成功与否都会在随后重新写入。
+    setInstallFailures(current => {
+      if (!(entry.originId in current)) return current;
+      const next = { ...current };
+      delete next[entry.originId];
+      return next;
+    });
     try {
       const result = await management.marketInstall(entry.originId);
-      if (result.state === 'ready') {
+      if (result.state === 'ready' || result.state === 'existing') {
         clearInstall(entry.originId);
-        setNotice(`已从市场安装「${result.title}」。`);
+        setNotice(result.state === 'existing'
+          ? `本机已有「${result.title}」，已标记为「已安装」。`
+          : `已从市场安装「${result.title}」。`);
         setMarketDetailId(undefined);
-        // 保持加载态直到状态同步完成，避免卡片先闪回加号再变成「已安装」。
+        // 只刷新本机列表：市场条目本身不变，「已安装」状态由本机实例推导，
+        // 就地更新卡片即可，不整页重拉市场列表（避免列表闪空、丢失滚动位置）。
         await refresh();
-        if (marketOn) await loadMarket(filter);
+        await loadIndex(true);
       } else {
         // 先落一个安装中态让卡片立刻有反馈；真实状态从下一次轮询开始覆盖它。
         setInstalls(current => ({
@@ -387,32 +503,151 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
     } catch (cause) {
       // 安装是「后台上报 + 本机建连」两段串联：超时或中断时本机可能已经装好，
       // 因此失败提示之外还要同步一次真实状态，避免界面显示"失败"但实例其实已存在。
-      setError(cause instanceof Error ? cause.message : '从市场安装失败。');
+      // 原因留在该条目上（卡片与详情弹窗都能就地重试），不再只挂列表上方的横幅。
+      setInstallFailures(current => ({ ...current, [entry.originId]: cause instanceof Error ? cause.message : '从市场安装失败。' }));
       await refresh();
     } finally {
       setInstallPending(undefined);
     }
   };
 
+  /** 市场页签的刷新入口：重取当前筛选的第一页，并绕过索引缓存。 */
+  const handleMarketRefresh = async () => {
+    setNotice('');
+    await loadMarket(filter);
+    await loadIndex(true);
+    setNotice('已刷新 MCP 市场。');
+  };
+  /** 市场卡片上的卸载：按条目 id 定位本机实例，走市场卸载并在本机移除后上报。 */
+  const removeMarketEntry = async () => {
+    if (!marketConfirm) return;
+    const entry = marketConfirm;
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const { reported } = await management.marketUninstall({ originId: entry.originId });
+      clearInstall(entry.originId);
+      setMarketConfirm(undefined);
+      setMarketDetailId(undefined);
+      await refresh();
+      await loadIndex(true);
+      setNotice(reported
+        ? `已卸载「${entry.title}」并从本机移除。`
+        : `已从本机移除「${entry.title}」，但市场卸载上报失败，后台记录可能未同步。`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '卸载 MCP 失败。');
+    } finally {
+      setBusy(false);
+    }
+  };
+  /**
+   * 授权申请 / 取消申请：与技能资产走同一个后台菜单（同入口、同参数），差异只有 assetType=mcp。
+   *
+   * `assetId` 必须是连接器记录里那个后台编号（市场安装时写入的 installManifest.assetId）：
+   * 后台按它定位待授权资产，用本地 id、serverName 或市场 serviceId 代替都会申请到错误的对象，
+   * 因此取不到编号时直接给出说明，不发请求。
+   */
+  const openAuthSso = async (action: 'apply' | 'cancel', assetId: string | undefined) => {
+    if (ssoBusy) return;
+    if (!assetId) {
+      setError('该 MCP 没有后台资产编号，无法发起授权申请；请从 MCP 市场重新安装后再试。');
+      return;
+    }
+    setSsoBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const target = MCP_AUTH_SSO[action];
+      if (!target.menuId) { setNotice('MCP 授权申请跳转地址待配置，请联系管理员。'); return; }
+      const result = await management.marketSso(target.menuId, { ...target.bizParams, assetId });
+      if (result.degraded) setSsoPromptUrl(result.url);
+      else openAdminSso(result.url);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '申请授权失败，请重试。');
+    } finally {
+      setSsoBusy(false);
+    }
+  };
+  /** 本地实例对应的市场授权条目：后台编号优先，其次市场条目 id、serviceId。 */
+  const marketRefOf = (row: ConnectorSummary): MarketIndexItem | undefined => {
+    const assetId = row.installManifest?.assetId?.trim();
+    if (assetId) {
+      const byId = marketIndex.find(item => item.originId.trim() === assetId);
+      if (byId) return byId;
+    }
+    const originId = row.originId?.trim();
+    if (originId) {
+      const byOrigin = marketIndex.find(item => item.originId === originId);
+      if (byOrigin) return byOrigin;
+    }
+    return marketIndex.find(item => item.serverName === row.serverName || item.serverName === row.marketServiceId);
+  };
+  /** 本地实例的「是否内置」：索引里有就以索引为准，否则按「没有市场来源」判定。 */
+  const builtinOf = (row: ConnectorSummary): boolean => marketRefOf(row)?.builtin ?? !row.originId;
+  /**
+   * 授权申请用的资产编号：只认后台资产编号。
+   *
+   * 优先取安装清单里市场安装写入的 `assetId`；旧记录可能只有来源 id（`originId`），
+   * 再退回授权索引里的同一个值。本地 id、serverName、marketServiceId 都不是后台编号，
+   * 一律不参与，避免把申请投到错误的资产上。
+   */
+  const authAssetIdOf = (row: ConnectorSummary): string | undefined =>
+    row.installManifest?.assetId?.trim() || row.originId?.trim() || marketRefOf(row)?.originId?.trim() || undefined;
   const switchTab = (next: 'local' | 'market') => {
     setTab(next);
-    setQuery('');
-    setCategories([]);
     setBatch(false);
     setSelected([]);
     // 提示属于上一个页签的操作结果，切页签时一并清掉，否则出错信息会跟到另一个页签上。
     setError('');
     setNotice('');
     window.clearTimeout(queryTimerRef.current);
-    // 进入市场：清空筛选后按服务端最新数据重新取第一页。
-    if (next === 'market' && marketOn) void loadMarket({ categories: [], keyword: '' });
+    // 用户主动点页签：保留已选业务场景/内置/状态条件，按当前筛选重新取数。
+    if (next === 'market' && marketOn) void loadMarket(filter);
   };
   const changeCategory = (next: readonly string[]) => {
     setCategories(next);
     // 分类是明确的一次点击，立即取数；同时作废还在等待中的关键词请求，避免重复请求。
     window.clearTimeout(queryTimerRef.current);
     if (tab !== 'market' || !marketOn) return;
-    void loadMarket({ categories: next, keyword: query });
+    void loadMarket({ ...filter, categories: next });
+  };
+  /** 是否内置是单选：胶囊栏只在「选中一个」与「全部」之间切换。 */
+  const changeBuiltin = (next: readonly string[]) => {
+    const value = next.length ? next[next.length - 1] === BUILTIN_YES : undefined;
+    setBuiltinFilter(value);
+    window.clearTimeout(queryTimerRef.current);
+    if (tab !== 'market' || !marketOn) return;
+    // 内置属性是客户端过滤：只有已加载数据不足一页时才需要重新取数。
+    if (!needsFill(market.items, { ...filter, builtin: value }, isInstalled) || !market.hasMore) return;
+    void loadMarket({ ...filter, builtin: value });
+  };
+  /** 安装状态：本机判定，只改客户端过滤条件；数据不足一页时补拉。 */
+  const changeInstall = (next: readonly string[]) => {
+    const label = next[next.length - 1];
+    const value = next.length ? (label === INSTALL_OPTIONS[0] ? 'installed' as const : 'uninstalled' as const) : undefined;
+    setInstallFilter(value);
+    window.clearTimeout(queryTimerRef.current);
+    if (tab !== 'market' || !marketOn) return;
+    if (!needsFill(market.items, { ...filter, install: value }, isInstalled) || !market.hasMore) return;
+    void loadMarket({ ...filter, install: value });
+  };
+  /** 授权状态是服务端条件：明确的一次点击，立即从第 1 页重新取数。 */
+  const changeAuth = (next: readonly string[]) => {
+    const label = next[next.length - 1];
+    const value = next.length ? (label === AUTH_OPTIONS[0] ? 'Y' as const : 'N' as const) : undefined;
+    setAuthFilter(value);
+    window.clearTimeout(queryTimerRef.current);
+    if (tab !== 'market' || !marketOn) return;
+    void loadMarket({ ...filter, auth: value });
+  };
+  /** 申请状态是服务端条件：与授权状态同口径，点击即重新取数。 */
+  const changeApply = (next: readonly string[]) => {
+    const option = next.length ? APPLY_OPTIONS.find(item => item.label === next[next.length - 1]) : undefined;
+    setApplyFilter(option?.value);
+    window.clearTimeout(queryTimerRef.current);
+    if (tab !== 'market' || !marketOn) return;
+    void loadMarket({ ...filter, apply: option?.value });
   };
   const changeQuery = (next: string) => {
     setQuery(next);
@@ -420,7 +655,7 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
     if (tab !== 'market' || !marketOn) return;
     window.clearTimeout(queryTimerRef.current);
     queryTimerRef.current = window.setTimeout(() => {
-      void loadMarket({ categories: activeCategories, keyword: next });
+      void loadMarket({ ...filter, keyword: next });
     }, MARKET_QUERY_DEBOUNCE_MS);
   };
   const toggleBatch = () => {
@@ -433,19 +668,29 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
   const normalized = query.trim().toLowerCase();
   const matchText = (text: string) => !normalized || text.toLowerCase().includes(normalized);
   const visibleLocal = rows.filter(row =>
-    matchText(searchTextOf(row))
+    (builtinFilter === undefined || builtinOf(row) === builtinFilter)
+    && matchText(searchTextOf(row))
     && (!activeCategories.length || (row.categories ?? []).some(label => activeCategories.includes(label))));
-  // 市场不做任何本地过滤：分类与关键词都由服务端筛选，界面只负责拼接分页结果。
-  // 展示数量一律取授权二次过滤后的真实条数，后台 total 只用于分页判断，不参与展示。
-  // 已安装判定：本机实例的 originId（市场条目 id）或 serverName（市场 serviceId）。
-  const localOrigins = new Set(rows.flatMap(row => [row.originId, row.serverName]).filter((value): value is string => Boolean(value)));
-  const isInstalled = (entry: MarketItem) => localOrigins.has(entry.originId) || localOrigins.has(entry.serverName);
+  // 市场不做任何本地过滤，只有「是否内置 / 安装状态」是客户端条件（后台暂未支持 isNzzc 过滤）。
+  // 展示数量一律取客户端二次过滤后的真实条数，后台 total 只用于分页判断。
+  const marketVisibleItems = marketItemsByFilter(market.items, filter, isInstalled);
   const connected = rows.filter(row => row.enabled && row.state === 'ready').length;
   const detail = rows.find(row => row.id === detailId);
   const marketDetail = marketDetailId ? market.items.find(entry => entry.originId === marketDetailId) : undefined;
   const selectedTitles = rows.filter(row => selected.includes(row.id)).map(row => row.title);
   const searchPlaceholder = '请输入MCP名称搜索...';
-  const empty = tab === 'local' ? !busy && !visibleLocal.length : !marketBusy && !marketError && !market.items.length;
+  const empty = tab === 'local'
+    ? !busy && !visibleLocal.length
+    : !marketBusy && !marketError && !marketVisibleItems.length;
+  /** 是否内置筛选只在后台真的下发了该属性时展示，避免一个永远筛不出结果的胶囊。 */
+  const builtinFilterAvailable = tab === 'local' || market.items.some(item => item.builtin !== undefined);
+  /** 当前页签的条目统计：与技能市场同款计数行，避免「已加载条数」被误当成总数。 */
+  const counts = tab === 'local'
+    ? `共 ${rows.length} 个已安装 MCP · 当前显示 ${visibleLocal.length} 个`
+    : `共 ${market.total} 个 MCP · 当前显示 ${marketVisibleItems.length} 个`;
+  const countsLine = <div className="muted counts" role="status" aria-live="polite">
+    {tab === 'local' ? (busy ? '正在读取…' : counts) : (marketBusy ? '正在读取…' : counts)}
+  </div>;
   /**
    * 首屏骨架：只有当前页签还没有任何数据且正在加载时才用；
    * 已有数据刷新时保留卡片，改用覆盖层，避免把正在看的内容换成占位卡。
@@ -497,8 +742,10 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
             value={query}
             onChange={event => changeQuery(event.currentTarget.value)}
           />
-          {/* 刷新状态只作用于本机实例的连接检测，因此在市场页签下不出现。 */}
-          {tab === 'local' ? <Button className="secondary" disabled={busy} onClick={() => void handleRefresh()}>刷新状态</Button> : null}
+          {/* 本地页签刷新本机连接状态；市场页签重取当前筛选的第一页，两个入口都保留。 */}
+          {tab === 'local'
+            ? <Button className="secondary" disabled={busy} onClick={() => void handleRefresh()}>刷新状态</Button>
+            : <Button className="secondary" disabled={marketBusy} onClick={() => void handleMarketRefresh()}>刷新列表</Button>}
           {/* {tab === 'local' ? (
             <Button className={batch ? 'secondary active' : 'secondary'} onClick={toggleBatch}>{batch ? '退出批量' : '批量删除'}</Button>
           ) : null}
@@ -524,13 +771,59 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
         </button>
         {marketOn ? (
           <button type="button" className={tab === 'market' ? 'active' : ''} aria-current={tab === 'market' ? 'page' : undefined} onClick={() => switchTab('market')}>
-            MCP市场{/* 数量取授权过滤后的条数；首次加载完成前不显示 0，避免与「正在加载市场…」冲突 */}
-            {marketBusy && !market.items.length ? null : <i className="count" title="当前可见的市场 MCP 数量">{market.items.length}</i>}
+            MCP市场{/* 数量取后台返回的筛选后总数，首次加载完成前不显示 0 */}
+            {marketBusy && !market.items.length ? null : <i className="count" title="MCP 总数">{market.total}</i>}
           </button>
         ) : null}
       </nav>
 
-      <CategoryBar categories={options} values={activeCategories} onChange={changeCategory} />
+      {/* 筛选栏与技能市场一致：每个条件带前置说明，各自独立、可同时生效。 */}
+      <div className="skill-filters">
+        {builtinFilterAvailable ? (
+          <div className="filter-group builtin-filter">
+            <span className="filter-label">是否内置：</span>
+            <CategoryBar
+              categories={BUILTIN_OPTIONS}
+              values={builtinFilter === undefined ? [] : [builtinFilter ? BUILTIN_YES : BUILTIN_OPTIONS[1]]}
+              onChange={changeBuiltin}
+            />
+          </div>
+        ) : null}
+        {/* 三个状态条件只作用于市场；本地实例没有「安装状态」的概念，业务场景与内置条件仍然可用。 */}
+        {tab === 'market' ? (
+          <>
+            <div className="filter-group">
+              <span className="filter-label">安装状态：</span>
+              <CategoryBar
+                categories={INSTALL_OPTIONS}
+                values={installFilter === undefined ? [] : [installFilter === 'installed' ? INSTALL_OPTIONS[0] : INSTALL_OPTIONS[1]]}
+                onChange={changeInstall}
+              />
+            </div>
+            <div className="filter-group">
+              <span className="filter-label">授权状态：</span>
+              <CategoryBar
+                categories={AUTH_OPTIONS}
+                values={authFilter === undefined ? [] : [authFilter === 'Y' ? AUTH_OPTIONS[0] : AUTH_OPTIONS[1]]}
+                onChange={changeAuth}
+              />
+            </div>
+            <div className="filter-group">
+              <span className="filter-label">申请状态：</span>
+              <CategoryBar
+                categories={APPLY_OPTIONS.map(item => item.label)}
+                values={applyFilter === undefined ? [] : [APPLY_LABEL[applyFilter]]}
+                onChange={changeApply}
+              />
+            </div>
+          </>
+        ) : null}
+        <div className="filter-group scenes-filter">
+          <span className="filter-label">业务场景：</span>
+          <CategoryBar categories={options} values={activeCategories} onChange={changeCategory} />
+        </div>
+      </div>
+      {countsLine}
 
       {tab === 'local' && batch ? (
         <BatchBar count={selected.length} busy={busy} onDelete={() => setBatchConfirm(true)} onExit={toggleBatch} />
@@ -559,14 +852,21 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
                 row={row}
                 category={categoryOf(row)}
                 market={market.items}
+                marketRef={marketRefOf(row)}
                 busy={busy}
                 toggling={togglingId === row.id}
+                ssoBusy={ssoBusy}
                 batchMode={batch}
                 selected={selected.includes(row.id)}
                 onOpen={setDetailId}
                 onToggle={(target, enabled) => void toggle(target, enabled)}
-                onRemove={target => setConfirm({ row: target, mode: 'remove' })}
+                /* 危险按钮统一叫「卸载」：市场来源走市场卸载并上报，自建/内置只在本机移除。 */
+                onUninstall={target => setConfirm({ row: target, mode: target.originId ? 'uninstall' : 'remove' })}
                 onSelect={toggleSelected}
+                onApply={target => void openAuthSso('apply', authAssetIdOf(target))}
+                onCancelApply={target => void openAuthSso('cancel', authAssetIdOf(target))}
+                builtin={builtinOf(row)}
+                onTrial={target => void trial(target)}
               />
             ))}
           </div>
@@ -574,9 +874,9 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
         {localSkeleton ? (
           <div className="grid" role="status" aria-label="正在读取本地 MCP…"><CardSkeleton variant="tile" count={12} /></div>
         ) : null}
-        {tab === 'market' && !marketError && market.items.length ? (
+        {tab === 'market' && !marketError && marketVisibleItems.length ? (
           <div className="grid">
-            {market.items.map(entry => (
+            {marketVisibleItems.map(entry => (
               <MarketMcpCard
                 key={entry.originId}
                 entry={entry}
@@ -584,8 +884,12 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
                 installed={isInstalled(entry)}
                 {...installStateOf(entry.originId)}
                 busy={busy}
+                ssoBusy={ssoBusy}
                 onOpen={setMarketDetailId}
                 onInstall={entry => void installMarket(entry)}
+                onUninstall={entry => setMarketConfirm(entry)}
+                onApply={entry => void openAuthSso('apply', entry.originId)}
+                onCancelApply={entry => void openAuthSso('cancel', entry.originId)}
               />
             ))}
           </div>
@@ -593,18 +897,25 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
         {marketSkeleton ? (
           <div className="grid" role="status" aria-label="正在加载 MCP 市场…"><CardSkeleton variant="tile" count={12} /></div>
         ) : null}
-        {tab === 'market' && !marketError && market.items.length ? (
+        {tab === 'market' && !marketError && marketVisibleItems.length ? (
           <div className="market-foot" role="status">
             {marketMore
               ? <span className="muted">正在加载更多…</span>
               : market.hasMore
                 ? <span className="muted">继续向下滚动加载更多</span>
-                : <span className="muted">已加载全部 {market.items.length} 个 MCP</span>}
+                : <span className="muted">已加载全部 {marketVisibleItems.length} 个 MCP</span>}
           </div>
         ) : null}
         {empty ? (
           <div className="empty">
-            <strong>未查询到数据</strong>
+            <strong>{tab === 'local' ? '暂无已安装的 MCP' : '暂无 MCP'}</strong>
+            <span className="muted">
+              {tab === 'local'
+                ? '去「MCP市场」安装，或在设置里添加自定义 MCP。'
+                : (query.trim() || activeCategories.length || builtinFilter !== undefined || installFilter || authFilter || applyFilter
+                  ? '换个关键词或调整筛选条件再试。'
+                  : '后台暂无可用的 MCP。')}
+            </span>
           </div>
         ) : null}
         {overlayVisible ? <QueryOverlay /> : null}
@@ -641,17 +952,19 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
       />
       <Modal
         open={Boolean(confirm)}
-        label={confirm?.mode === 'uninstall' ? '卸载 MCP' : '删除 MCP'}
+        label="卸载 MCP"
         className="connector-confirm-dialog"
         onClose={() => setConfirm(undefined)}
       >
         {confirm ? (
           <>
-            <h2>{confirm.mode === 'uninstall' ? `卸载「${confirm.row.title}」？` : `删除「${confirm.row.title}」？`}</h2>
-            <p>{confirm.mode === 'uninstall' ? '卸载后立即断开该服务，并从本机移除这个市场实例及其全部工具。' : '删除后会立即断开该服务，并从 AI 工具目录移除它的工具和资源。'}</p>
+            <h2>{`卸载「${confirm.row.title}」？`}</h2>
+            <p>{confirm.mode === 'uninstall'
+              ? '卸载后立即断开该服务，并从本机移除这个市场实例及其全部工具。'
+              : '该实例由本机添加，不在市场记录中：卸载后立即断开该服务，并从 AI 工具目录移除它的工具和资源。'}</p>
             <div className="form-actions">
               <Button className="secondary" onClick={() => setConfirm(undefined)}>取消</Button>
-              <Button tone="danger" className="danger" disabled={busy} onClick={() => void remove()}>{confirm.mode === 'uninstall' ? '卸载' : '删除'}</Button>
+              <Button tone="danger" className="danger" disabled={busy} onClick={() => void remove()}>卸载</Button>
             </div>
           </>
         ) : null}
@@ -667,6 +980,33 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
         <div className="form-actions">
           <Button className="secondary" onClick={() => setBatchConfirm(false)}>取消</Button>
           <Button tone="danger" className="danger" disabled={busy} onClick={() => void runBatchRemove()}>全部删除</Button>
+        </div>
+      </Modal>
+      {/* 市场侧卸载：先在本机移除，成功后再上报后台，避免上报成功但本机卸载失败。 */}
+      <Modal
+        open={Boolean(marketConfirm)}
+        label="卸载 MCP"
+        className="connector-confirm-dialog"
+        onClose={() => setMarketConfirm(undefined)}
+      >
+        {marketConfirm ? (
+          <>
+            <h2>卸载「{marketConfirm.title}」？</h2>
+            <p>卸载后立即断开该服务，并从本机移除这个市场实例及其全部工具；市场记录随后同步上报。</p>
+            <div className="form-actions">
+              <Button className="secondary" onClick={() => setMarketConfirm(undefined)}>取消</Button>
+              <Button tone="danger" className="danger" disabled={busy} onClick={() => void removeMarketEntry()}>卸载</Button>
+            </div>
+          </>
+        ) : null}
+      </Modal>
+      {/* 后台绑定不可用时的降级确认：只拿到纯登录地址，需用户确认后再打开。 */}
+      <Modal open={Boolean(ssoPromptUrl)} label="绑定后台管理系统" className="connector-confirm-dialog" onClose={() => setSsoPromptUrl(undefined)}>
+        <h2>无法自动完成登录授权</h2>
+        <p>当前环境没有绑定后台管理系统账号，打开后需要先登录，再手动完成申请。是否继续打开？</p>
+        <div className="form-actions">
+          <Button className="secondary" onClick={() => setSsoPromptUrl(undefined)}>取消</Button>
+          <Button className="primary" onClick={() => { const url = ssoPromptUrl; setSsoPromptUrl(undefined); if (url) openAdminSso(url); }}>继续打开</Button>
         </div>
       </Modal>
     </section>

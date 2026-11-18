@@ -6,7 +6,7 @@ import {
   ASSET_OPERATION_REPORT_PATH, AssetOperationReporter, assetOperationEventId, clientIdOf, isPermissionFailure,
   type AssetOperationFailReason, type AssetOperationResult,
 } from 'workdsh-contracts/asset-operation';
-import { ConnectorMarketClient, MarketRequestError, type MarketCategory, type MarketItem, type MarketPage, type MarketPaths, type MarketQuery } from './market.js';
+import { ConnectorMarketClient, MarketRequestError, type MarketCategory, type MarketIndexItem, type MarketItem, type MarketPage, type MarketPaths, type MarketQuery } from './market.js';
 import { installNodePackage, removeNodePackage, type ConnectorInstallOptions } from './install-package.js';
 import type { ConnectorInstallState, ConnectorInstallTask, ConnectorSummary, MarketInstallResult } from './shared.js';
 
@@ -18,7 +18,20 @@ const DEFAULT_MARKET_PATHS: MarketPaths = {
   list: '/desktop-client/mcptool/queryAuthorizedMcpToolList',
   categories: '/desktop-client/queryBizSceneList',
   report: ASSET_OPERATION_REPORT_PATH,
+  ssoParams: '/sys/generateCasLoginParams',
 };
+
+/** 本地开发默认的后台管理系统单点入口；打包时由 workdsh-app.json 覆盖。 */
+const DEFAULT_ADMIN_SSO_URL = 'http://localhost:3100/clientSSO';
+
+/** 单点跳转结果：degraded 为 true 时只拿到纯登录地址。 */
+export interface ConnectorAdminSsoTarget {
+  readonly url: string;
+  readonly degraded: boolean;
+}
+
+/** 索引缓存时长：本地 MCP 卡片按它展示授权/申请状态，短时间内重复进页不重复取全量。 */
+const INDEX_CACHE_MS = 60_000;
 
 export interface ConnectorMarketOptions {
   /**
@@ -33,6 +46,11 @@ export interface ConnectorMarketOptions {
   readonly install?: ConnectorInstallOptions;
   /** 客户端应用标识：由宿主（Desktop）从 ServerConfig.appId 注入，用于资产操作记录。 */
   readonly clientId?: string;
+  /**
+   * 后台管理系统单点入口（不含 `?params=`）：由宿主从 ServerConfig.adminSsoUrl 注入，
+   * 未配置时回退本地开发地址。申请/取消申请只拿登录参数，真正跳转由界面完成。
+   */
+  readonly ssoUrl?: string;
 }
 
 export interface ConnectorMarketUninstall {
@@ -75,6 +93,10 @@ export interface ConnectorMarket {
   available(): Promise<boolean>;
   list(input?: MarketQuery, signal?: AbortSignal): Promise<MarketPage>;
   categories(signal?: AbortSignal): Promise<readonly MarketCategory[]>;
+  /** 全量授权索引：本地实例按后台编号/市场标识匹配授权与申请状态。 */
+  index(signal?: AbortSignal, refresh?: boolean): Promise<readonly MarketIndexItem[]>;
+  /** 后台管理系统单点地址：绑定不可用或参数生成失败时返回 degraded 纯登录地址。 */
+  adminSsoTarget(menuId: string, bizParams: Readonly<Record<string, string>>, signal?: AbortSignal): Promise<ConnectorAdminSsoTarget>;
   /** 安装市场条目：直接执行的条目同步建连；需要下载依赖的条目返回 installing 并转入后台任务。 */
   install(originId: string, signal?: AbortSignal): Promise<MarketInstallResult>;
   /** 查询某条目的本机安装任务；没有任务（未安装过或已清理）时返回 null。 */
@@ -93,6 +115,8 @@ export class ConnectorMarketService extends Service implements ConnectorMarket {
    * 界面也随页面重载回到「未安装」，重试时会先清空目标目录再装，不会留下半装状态。
    */
   private readonly tasks = new Map<string, ConnectorInstallTask>();
+  /** 全量授权索引缓存：避免每次进页/切页签都拉一遍全量。 */
+  private indexCache?: { readonly at: number; readonly rows: readonly MarketIndexItem[] };
 
   constructor(ctx: Context, private readonly options: ConnectorMarketOptions = {}) { super(ctx, 'workdshConnectorMarket'); }
 
@@ -111,6 +135,46 @@ export class ConnectorMarketService extends Service implements ConnectorMarket {
   }
 
   /**
+   * 全量授权索引：进页、刷新、安装/卸载后由界面取一次，用于本地卡片的授权/申请状态。
+   * 缓存只减少重复请求；`refresh` 用于用户主动刷新时绕过缓存。
+   */
+  async index(signal?: AbortSignal, refresh = false): Promise<readonly MarketIndexItem[]> {
+    if (!refresh && this.indexCache && Date.now() - this.indexCache.at < INDEX_CACHE_MS) return this.indexCache.rows;
+    const rows = await (await this.client_()).index(signal);
+    this.indexCache = { at: Date.now(), rows };
+    return rows;
+  }
+
+  /**
+   * 后台管理系统单点地址：用通用后台通道生成加密参数后拼到配置的入口地址上。
+   * 通道缺失、不可用或参数生成失败时退回纯地址并标记 degraded，由界面提示用户手动登录。
+   */
+  async adminSsoTarget(menuId: string, bizParams: Readonly<Record<string, string>>, signal?: AbortSignal): Promise<ConnectorAdminSsoTarget> {
+    const fallback: ConnectorAdminSsoTarget = { url: this.ssoUrl(), degraded: true };
+    const channel = this.channel();
+    if (!channel) return fallback;
+    try {
+      if (!(await channel.available())) return fallback;
+    } catch {
+      return fallback;
+    }
+    const path = this.options.paths?.ssoParams?.trim() || DEFAULT_MARKET_PATHS.ssoParams || '';
+    try {
+      const result = await channel.post(path, { menuId, bizParams }, undefined, signal);
+      if (typeof result !== 'string' || !result.trim()) return fallback;
+      return { url: `${this.ssoUrl()}?params=${encodeURIComponent(result.trim())}`, degraded: false };
+    } catch {
+      return fallback;
+    }
+  }
+
+  /** 后台管理系统入口地址：只接受 http(s)，去掉末尾斜杠；非法取值回退默认地址。 */
+  private ssoUrl(): string {
+    const url = typeof this.options.ssoUrl === 'string' ? this.options.ssoUrl.trim() : '';
+    return /^https?:\/\//u.test(url) ? url.replace(/\/+$/u, '') : DEFAULT_ADMIN_SSO_URL;
+  }
+
+  /**
    * 从市场安装：先按条目描述的启动方式在本机建连，成功后再上报一次 install。
    * 启动方式有两种：直接执行（node/python/绝对路径，本机自备）同步完成；
    * 依赖 npm 包（command 是 npx/npm/pnpm…）则先从内网仓库装包，安装期间返回 installing 由界面轮询。
@@ -123,6 +187,9 @@ export class ConnectorMarketService extends Service implements ConnectorMarket {
     // 同一条目重复点击时复用正在跑的安装任务：不能让两份 pnpm 同时装同一个目录。
     if (this.tasks.get(item.originId)?.state === 'installing')
       return { originId: item.originId, title: item.title, state: 'installing' };
+    // 本机已有同一市场条目的实例：直接按「已安装」返回，不重复建连、也不再写一遍安装记录。
+    const existingLocal = (await this.ctx.workdshConnectors.list()).find(row => row.originId === item.originId);
+    if (existingLocal) return { originId: item.originId, title: item.title, state: 'existing' };
     // 事件标识在流程开始时生成一次：同一条安装流程的成功与失败上报共用它，后台据此幂等。
     const eventId = assetOperationEventId();
     // 市场 serviceId 可能超出官方 serverName 约束，这里换算成本机标识后再落盘。

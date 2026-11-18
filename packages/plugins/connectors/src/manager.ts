@@ -7,7 +7,7 @@ import * as McpClient from '@deepseek-ai/dsh-mcp-client';
 import type { KvTable } from '@deepseek-ai/dsh-storage-domain';
 import type { ConnectorAssetLookup, ConnectorConfigView, ConnectorInput, ConnectorManagementService, ConnectorState, ConnectorSummary, ConnectorTool } from './shared.js';
 import { requestHeadersOf } from './shared.js';
-import { installEmptyCursorCompat } from './mcp-compat.js';
+import { forceLegacyProtocol, installMcpCompat, isProtocolEraMismatch } from './mcp-compat.js';
 import { connectorDefinitionSchema, connectorSelectionsDomainSpec, connectorsDomainSpec, type ConnectorDefinition, type ConnectorSelection } from './storage.js';
 
 declare module '@deepseek-ai/cordis' { interface Context { workdshConnectors: ConnectorManagementService; } }
@@ -39,6 +39,8 @@ interface AssetGateProbe {
   revocationReason(): { readonly reason: string; readonly message: string };
   decide(request: { readonly assetType: string; readonly assetId: string; readonly usage: string }):
     Promise<{ readonly allow: boolean; readonly message: string }>;
+  /** 拿不到后台编号时的拒绝结果（原因码与文案由闸门统一维护）；旧版闸门没有该方法时按其文案缺省处理。 */
+  unlisted?(): { readonly reason: string; readonly message: string };
   /** 工具级白名单；旧版闸门没有该方法时按未收窄处理。 */
   mcpTools?(assetId: string): { readonly restricted: boolean; readonly tools: readonly string[] };
 }
@@ -149,11 +151,16 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
   constructor(ctx: Context, private readonly options: ConnectorManagerOptions = {}) { super(ctx, 'workdshConnectors'); }
 
   async [Service.init](): Promise<void> {
-    // 必须早于任何 MCP 建连：服务端在没有下一页时下发空 nextCursor 会让官方客户端多翻一页、
-    // 取到重复工具并判重失败，这里装一层最小兼容（详见 mcp-compat.ts）。
-    this.ctx.effect(() => installEmptyCursorCompat(detail => {
-      this.ctx.logger.warn(`连接器：${detail.url} 的 ${detail.method} 返回了空 nextCursor，已在本机兼容处理。`);
-    }), 'workdshConnectors.emptyCursorCompat');
+    // 必须早于任何 MCP 建连：兼容层负责两件事——空 nextCursor、以及 discover 谎报现代协议时代时的降级
+    // （详见 mcp-compat.ts）。
+    this.ctx.effect(() => installMcpCompat({
+      onEmptyCursor: detail => {
+        this.ctx.logger.warn(`连接器：${detail.url} 的 ${detail.method} 返回了空 nextCursor，已在本机兼容处理。`);
+      },
+      onLegacyProtocol: detail => {
+        this.ctx.logger.warn(`连接器：${detail.url} 只服务握手协议时代，后续探测已回退为 initialize 握手。`);
+      },
+    }), 'workdshConnectors.mcpCompat');
     const domain = await this.ctx.storageDomain.open(connectorsDomainSpec);
     this.ctx.effect(() => () => domain.close(), 'workdshConnectors.domainClose');
     this.definitions = domain.table('definitions');
@@ -411,10 +418,30 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
     const transportConfig = definition.transport === 'stdio'
       ? { serverName: definition.serverName, transport: 'stdio' as const, ...connectorProcess(definition), env: {} }
       : { serverName: definition.serverName, transport: 'streamable-http' as const, url: definition.url!, headers };
-    const fiber = this.ctx.plugin(McpClient, { ...transportConfig, failOnStartupError: true, toolCallTimeoutMs: 10_000, maxInstructionBytes: 8_192,
-      reconnect: { enabled: true, initialDelayMs: 250, maxDelayMs: 5_000, maxAttempts: 4 } }) as ChildFiber & PromiseLike<unknown>;
-    try { await fiber; runtime.child = fiber; runtime.state = 'ready'; }
-    catch (cause) { await fiber.dispose().catch(() => undefined); runtime.state = 'offline'; runtime.diagnostic = failureText(cause); throw cause; }
+    /** 拉起一次官方客户端：失败时立即回收 fiber，运行时状态由调用方决定。 */
+    const open = async (): Promise<ChildFiber> => {
+      const fiber = this.ctx.plugin(McpClient, { ...transportConfig, failOnStartupError: true, toolCallTimeoutMs: 10_000, maxInstructionBytes: 8_192,
+        reconnect: { enabled: true, initialDelayMs: 250, maxDelayMs: 5_000, maxAttempts: 4 } }) as ChildFiber & PromiseLike<unknown>;
+      const handle: ChildFiber = fiber;
+      try { await fiber; return handle; }
+      catch (cause) { await handle.dispose().catch(() => undefined); throw cause; }
+    };
+    try {
+      try { runtime.child = await open(); }
+      catch (cause) {
+        /**
+         * 协议时代不匹配时自动降级重试一次：客户端按 discover 的声明走了现代信封，但服务端数据面只服务
+         * 握手时代（见 mcp-compat.ts）。把该地址标记为握手时代后，discover 探测会被判「方法不存在」，
+         * SDK 自然回退 initialize；这里只重试一次，仍失败就按普通建连失败上报。
+         */
+        const url = definition.url;
+        if (definition.transport !== 'streamable-http' || !url || !isProtocolEraMismatch(cause) || !forceLegacyProtocol(url)) throw cause;
+        this.ctx.logger.warn(`连接器 ${definition.serverName}：服务端拒绝现代协议信封，已回退握手时代重试。`);
+        runtime.child = await open();
+      }
+      runtime.state = 'ready';
+    }
+    catch (cause) { runtime.child = undefined; runtime.state = 'offline'; runtime.diagnostic = failureText(cause); throw cause; }
     // 工具集合在 start 期间才注册完成：这里重算限制，让未显式选择过的会话立刻带上新可用的连接器。
     finally { this.reapplyRestrictions(); }
   }
@@ -429,14 +456,23 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
     const gate = this.gateProbe();
     let authState: 'unauthorized' | 'revoked' | undefined;
     let authReason: string | undefined;
-    if (gate?.enabled('mcp') && definition.installManifest?.source === 'market' && definition.installManifest.assetId) {
-      const assetId = definition.installManifest.assetId;
+    const manifest = definition.installManifest;
+    if (gate?.enabled('mcp') && manifest?.source === 'market' && manifest.assetId) {
+      const assetId = manifest.assetId;
       if (gate.revoked('mcp', assetId)) {
         authState = 'revoked'; authReason = gate.revocationReason().message;
       } else {
         const decision = await gate.decide({ assetType: 'mcp', assetId, usage: 'use' });
         if (!decision.allow) { authState = 'unauthorized'; authReason = decision.message; }
       }
+    } else if (gate?.enabled('mcp') && manifest?.source !== 'builtin' && !isBundledConnector(definition)) {
+      /**
+       * 自建/导入的 MCP 没有后台编号：启用时 requireAsset 会判 `denied-not-listed`，工具调用同样被拒。
+       * 列表里把它标成「未授权」并给出闸门原文，避免卡片显示「已连接」却用不了；
+       * 它没有可申请的资产编号，界面因此也不给申请入口。
+       */
+      const denial = gate?.unlisted?.();
+      if (denial) { authState = 'unauthorized'; authReason = denial.message; }
     }
     // 被撤权的连接器对外表现为停用（运行时已在 applyGateState 中停掉），
     // 但不改写记录里的用户启用位，恢复授权后可自动还原。

@@ -1,7 +1,9 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type { ConnectionRpcResult, HostConnectionHandle } from '@deepseek-ai/dsh-client-connection';
-import { MarketRequestError } from './market.js';
+import { MarketRequestError, type ConnectorApplyStatus } from './market.js';
 import type { ConnectorMarket, ConnectorMarketUninstall } from './market-entry.js';
+
+const APPLY_STATUSES: readonly ConnectorApplyStatus[] = ['none', 'pending', 'approved', 'rejected'];
 
 export const connectorManagementPath = '/api/workdsh-connectors';
 const noStore = { headers: { 'cache-control': 'no-store' } };
@@ -25,6 +27,8 @@ interface AssetGateLike {
   enabled(assetType: GateAssetType): boolean;
   /** 触发式校验：进市场页/刷新/写操作完成后做一次 revision 比对；旧版闸门没有该方法时跳过。 */
   refreshNow?(): Promise<void>;
+  /** 强制刷新快照（绕过节流）；旧版闸门没有该方法时不做授权变更重试。 */
+  refreshSnapshotForced?(signal?: AbortSignal): Promise<boolean>;
   decide(request: { assetType: GateAssetType; assetId: string; usage: 'read' | 'use' | 'write' }): Promise<{ allow: boolean; reason: string; message: string }>;
   /** 拿不到后台编号时的拒绝结果：原因码与文案由闸门统一维护。 */
   unlisted(): { reason: string; message: string };
@@ -101,25 +105,38 @@ async function auditedWrite<T>(ctx: Context, meta: WriteAuditMeta, run: () => Pr
   }
 }
 
+/**
+ * 可被「刷新快照」修复的拒绝原因：授权刚在后台变更（审批通过 / 撤销恢复）时本地快照还没同步到，
+ * 强制刷新一次通常就能放行。签名、完整性、策略类拒绝不在其中，重试无意义。
+ */
+const REFRESHABLE_GATE_REASONS = new Set<string>([
+  'gate/denied-not-entitled',
+  'gate/denied-expired',
+  'gate/denied-snapshot-stale',
+  'gate/denied-no-snapshot',
+]);
+
+/**
+ * 写操作（安装、启用）前判授权；闸门关闭时直接放行。
+ *
+ * 命中「快照里没有该资产 / 快照过期」时先强制刷新一次快照再判定，把「审批刚通过就点安装」的失败窗口
+ * 消掉（与技能市场同一策略）；刷新失败或刷新后仍无授权时给出区分文案，不把后台同步延迟说成「没有授权」。
+ */
 async function requireAsset(ctx: Context, assetType: GateAssetType, assetId: string): Promise<void> {
   const gate = assetGate(ctx);
   if (!gate?.enabled(assetType)) return;
-  const decision = await gate.decide({ assetType, assetId, usage: 'write' });
-  if (!decision.allow) throw new AssetGateDenied(decision.reason, decision.message);
-}
-
-async function visibleAssets<T>(ctx: Context, assetType: GateAssetType, rows: readonly T[], idOf: (row: T) => string | undefined): Promise<readonly T[]> {
-  const gate = assetGate(ctx);
-  if (!gate?.enabled(assetType)) return rows;
-  // 进市场页签/刷新/写操作后都会走到这里：先做一次 revision 校验（单飞 + 节流）。
-  await gate.refreshNow?.();
-  const visible: T[] = [];
-  for (const row of rows) {
-    const id = idOf(row);
-    if (id === undefined) continue;
-    if ((await gate.decide({ assetType, assetId: id, usage: 'read' })).allow) visible.push(row);
-  }
-  return visible;
+  const request = { assetType, assetId, usage: 'write' as const };
+  const decision = await gate.decide(request);
+  if (decision.allow) return;
+  if (!gate.refreshSnapshotForced || !REFRESHABLE_GATE_REASONS.has(decision.reason))
+    throw new AssetGateDenied(decision.reason, decision.message);
+  const refreshed = await gate.refreshSnapshotForced();
+  if (!refreshed) throw new AssetGateDenied(decision.reason, '授权状态刷新失败，请稍后重试。');
+  const retried = await gate.decide(request);
+  if (retried.allow) return;
+  throw new AssetGateDenied(retried.reason, REFRESHABLE_GATE_REASONS.has(retried.reason)
+    ? '授权尚未生效，请稍后重试。'
+    : retried.message);
 }
 
 export function registerConnectorManagementConnection(ctx: Context): void {
@@ -192,11 +209,40 @@ export function registerConnectorManagementConnection(ctx: Context): void {
         if (endpoint === 'market-list') {
           const page = optionalCount(payload.page); const pageSize = optionalCount(payload.pageSize);
           const scene = optionalText(payload.scene); const keyword = optionalText(payload.keyword);
-          if (page === null || pageSize === null || scene === null || keyword === null) return invalidRequest();
-          const result = await market().list({ page, pageSize, scene, keyword }, request.signal);
-          return Response.json(ok({ ...result, items: await visibleAssets(ctx, 'mcp', result.items, item => item.originId) }), noStore);
+          const authStatus = payload.authStatus;
+          const applyStatus = payload.applyStatus;
+          if (page === null || pageSize === null || scene === null || keyword === null
+            || (authStatus !== undefined && authStatus !== 'Y' && authStatus !== 'N')
+            || (applyStatus !== undefined && !APPLY_STATUSES.includes(applyStatus as ConnectorApplyStatus))) {
+            return invalidRequest();
+          }
+          // 市场列表不再按闸门过滤：授权状态由后台 isAuthorized 下发并由界面展示，
+          // 未授权条目必须留在列表里，才能筛出「未授权」并给出申请入口；安装仍由闸门拦截。
+          const result = await market().list({
+            page, pageSize, scene, keyword,
+            ...(authStatus === 'Y' || authStatus === 'N' ? { authStatus } : {}),
+            ...(applyStatus === undefined ? {} : { applyStatus: applyStatus as ConnectorApplyStatus }),
+          }, request.signal);
+          return Response.json(ok(result), noStore);
         }
         if (endpoint === 'market-categories') return Response.json(ok(await market().categories(request.signal)), noStore);
+        if (endpoint === 'market-index') {
+          const refresh = payload.refresh;
+          if (refresh !== undefined && typeof refresh !== 'boolean') return invalidRequest();
+          return Response.json(ok(await market().index(request.signal, refresh === true)), noStore);
+        }
+        // 授权申请/取消申请的单点地址：菜单与业务参数由界面给出，宿主只负责生成参数。
+        if (endpoint === 'market-sso') {
+          const menuId = payload.menuId;
+          const box = record(payload.bizParams);
+          if (typeof menuId !== 'string' || !/^\d{10,25}$/u.test(menuId) || !box) return invalidRequest();
+          const bizParams: Record<string, string> = {};
+          for (const [key, value] of Object.entries(box)) {
+            if (typeof value !== 'string') return invalidRequest();
+            bizParams[key] = value;
+          }
+          return Response.json(ok(await market().adminSsoTarget(menuId, bizParams, request.signal)), noStore);
+        }
         if (endpoint === 'market-install' && typeof payload.originId === 'string' && payload.originId.trim()) {
           const originId = payload.originId;
           const meta = { action: 'install', assetType: 'mcp', assetId: originId.trim() } as const;

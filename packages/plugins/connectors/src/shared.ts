@@ -201,12 +201,13 @@ export interface ConnectorInstallTask {
 
 /**
  * 市场安装的即时结果：直接执行的条目同步建连并返回 ready；
- * 需要下载依赖的条目返回 installing，界面据此改为轮询安装状态。
+ * 需要下载依赖的条目返回 installing，界面据此改为轮询安装状态；
+ * `existing` 表示本机已有同一市场条目的实例，直接按「已安装」处理，不重复建连。
  */
 export interface MarketInstallResult {
   readonly originId: string;
   readonly title: string;
-  readonly state: 'ready' | 'installing';
+  readonly state: 'ready' | 'installing' | 'existing';
 }
 
 export interface ConnectorManagementService {

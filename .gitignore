@@ -50,3 +50,6 @@ apps/desktop/build/official-release-cache/
 
 # Brand constants generated from brand.config.json + assets at build time.
 /packages/plugins/brand/src/generated/
+
+# Project-local corepack cache (created when the shared cache is not writable).
+/.corepack-home/

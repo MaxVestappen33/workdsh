@@ -243,17 +243,22 @@ export function desktopConnectorMarketPatch(home: string, server: ServerConfig, 
     ['categories', server.bizSceneListPath],
     // 安装/卸载完成后统一实时上报到资产操作记录接口（旧安装上报接口已下线）。
     ['report', server.assetOperationReportPath],
+    // 授权申请/取消申请的单点登录参数接口：与技能授权申请共用同一通道。
+    ['ssoParams', server.adminSsoParamsPath],
   ] as const).flatMap(([name, value]) => (typeof value === 'string' && /^\//u.test(value) ? [[name, value] as const] : []))
   // 资产操作记录的 clientId 取载体配置的 appId（与版本检查同源），不再使用设备 UUID。
   const clientId = typeof server.appId === 'string' && server.appId.trim() ? server.appId.trim() : undefined
+  // 后台管理系统入口：申请/取消申请由界面在这个地址后追加登录参数。
+  const ssoUrl = typeof server.adminSsoUrl === 'string' && server.adminSsoUrl.trim() ? server.adminSsoUrl.trim() : undefined
   const registry = server.mcpPackageRegistry
   const installable = typeof registry === 'string' && /^https?:\/\//u.test(registry)
-  if (rows.length === 0 && !installable && clientId === undefined) return undefined
+  if (rows.length === 0 && !installable && clientId === undefined && ssoUrl === undefined) return undefined
   const paths = rows.length === 0 ? '' : `    paths:\n${rows.map(([name, value]) => `      ${name}: ${JSON.stringify(value)}\n`).join('')}`
   const client = clientId === undefined ? '' : `    clientId: ${JSON.stringify(clientId)}\n`
+  const sso = ssoUrl === undefined ? '' : `    ssoUrl: ${JSON.stringify(ssoUrl)}\n`
   const install = installable ? `    install:\n      registry: ${JSON.stringify(registry)}\n      node: ${JSON.stringify(runtime.node)}\n      pnpm: ${JSON.stringify(runtime.pnpm)}\n      root: ${JSON.stringify(join(home, 'mcp'))}\n` : ''
   const patch = join(home, '.connector-market.patch.yml')
-  writeFileSync(patch, `- id: workdsh-connectors\n  config:\n${client}${paths}${install}`, { mode: 0o600 })
+  writeFileSync(patch, `- id: workdsh-connectors\n  config:\n${client}${paths}${sso}${install}`, { mode: 0o600 })
   return patch
 }
 

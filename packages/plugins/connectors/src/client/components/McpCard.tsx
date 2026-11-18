@@ -1,6 +1,5 @@
 import { useState, type MouseEvent } from 'react';
-import { Icon } from 'workdsh-ui';
-import type { MarketItem } from '../../market.js';
+import type { ConnectorApplyStatus, MarketItem } from '../../market.js';
 import type { ConnectorSummary } from '../../shared.js';
 
 export const connectorStateLabels = {
@@ -9,6 +8,14 @@ export const connectorStateLabels = {
   offline: '连接异常',
   disabled: '已停用',
 } as const;
+
+/** 申请状态文案：与后台 applyStatus 一一对应；授权状态是独立标签，不参与这里。 */
+export const APPLY_LABEL: Record<ConnectorApplyStatus, string> = {
+  none: '未申请',
+  pending: '申请中',
+  approved: '已通过',
+  rejected: '未通过',
+};
 
 /** 卡片图标：`icon` 为 http(s) 图标地址，`color` 为底色；缺失或加载失败时回退首字符。 */
 export type ConnectorMark = { readonly label: string; readonly icon?: string; readonly color?: string };
@@ -72,18 +79,30 @@ export function MarketStats({ subscribers, downloads, stars }: { subscribers: nu
 
 type LocalCardProps = {
   readonly row: ConnectorSummary;
+  /** 业务场景文案（分类字典 text，多值以「 · 」分隔）；自建实例为空串，界面保留空行以对齐。 */
   readonly category: string;
   /** 已加载的市场条目：用于还原市场安装实例的图标。 */
   readonly market: readonly MarketItem[];
+  /** 授权索引里的对应条目：本地卡片的申请状态与申请入口都按它展示。 */
+  readonly marketRef?: { readonly authorized: boolean; readonly applyStatus: ConnectorApplyStatus };
+  /** 是否随客户端内置（与市场列表口径一致）：标签行展示「内置 / 非内置」。 */
+  readonly builtin: boolean;
   readonly busy: boolean;
   /** 该实例正在启停：开关位置换成加载态，卡片底部显示流式进度条。 */
   readonly toggling: boolean;
+  /** 单点跳转请求占用：申请/取消申请期间禁用按钮。 */
+  readonly ssoBusy: boolean;
   readonly batchMode: boolean;
   readonly selected: boolean;
   readonly onOpen: (id: string) => void;
   readonly onToggle: (row: ConnectorSummary, enabled: boolean) => void;
-  readonly onRemove: (row: ConnectorSummary) => void;
+  /** 危险操作按钮统一叫「卸载」：市场来源走市场卸载并上报，自建来源只在本机移除。 */
+  readonly onUninstall: (row: ConnectorSummary) => void;
   readonly onSelect: (id: string) => void;
+  readonly onApply: (row: ConnectorSummary) => void;
+  readonly onCancelApply: (row: ConnectorSummary) => void;
+  /** 「去试试」：新建会话、预选该 MCP 并预填一句提示词（与技能试用的交互一致）。 */
+  readonly onTrial: (row: ConnectorSummary) => void;
 };
 
 /**
@@ -94,10 +113,11 @@ function isCardAction(target: EventTarget | null): boolean {
   return target instanceof Element && Boolean(target.closest('button,a,input,select,textarea,.switch,.switch-loading,.batch-check,.plus'));
 }
 
-/** 本地卡片：图标 · 名称 · 来源与分类 · 描述 · 状态 · 工具数 · 启停开关 · 删除（批量模式下改为勾选）。 */
-export function LocalMcpCard({ row, category, market, busy, toggling, batchMode, selected, onOpen, onToggle, onRemove, onSelect }: LocalCardProps) {
-  // 来源只有两种：市场安装（可卸载）与随客户端内置（只能本机移除）；没有分类的实例只显示来源。
-  const tag = [row.originId ? '已安装' : '内置', category].filter(Boolean).join(' · ');
+/**
+ * 本地卡片：与市场卡片同一套版式。
+ * 图标跨两行 · 名称 / service_id · 业务场景 · 描述（两行）· 标签 · 连接状态与工具数 · 操作按钮。
+ */
+export function LocalMcpCard({ row, category, market, marketRef, builtin, busy, toggling, ssoBusy, batchMode, selected, onOpen, onToggle, onUninstall, onSelect, onApply, onCancelApply, onTrial }: LocalCardProps) {
   // 授权异常时优先显示原因，开关一并置灰；记录里的用户启用位不变，恢复授权后可自动还原。
   const blocked = row.authState !== undefined;
   const state = blocked
@@ -105,6 +125,18 @@ export function LocalMcpCard({ row, category, market, busy, toggling, batchMode,
     : row.enabled ? connectorStateLabels[row.state] : '已停用';
   const actionText = row.enabled ? '停用' : '启用';
   const togglingText = `正在${actionText}…`;
+  /**
+   * 申请 / 取消申请只对「授权已失效」出现，与本地技能的判定一致：
+   * 从未授权的市场资产说明本就不该装在本机，给申请入口反而引导用户重复申请；
+   * 自建资产没有后台编号，根本没有可申请的资产，只展示原因文案。
+   */
+  const revoked = row.authState === 'revoked';
+  const applyStatus = marketRef?.applyStatus;
+  const cancelable = revoked && applyStatus === 'pending';
+  const applicable = revoked && applyStatus !== 'pending';
+  // 「去试试」只对当前真正可调用的实例有意义：已启用、已连接且未被授权/有效性阻断。
+  const trialable = row.enabled && !blocked && row.state === 'ready';
+  const version = row.installManifest?.version;
   /** 整卡可点击：点描述、状态行等空白区同样打开详情；批量模式下改为勾选。 */
   const openCard = (event: MouseEvent<HTMLElement>) => {
     if (isCardAction(event.target)) return;
@@ -112,7 +144,7 @@ export function LocalMcpCard({ row, category, market, busy, toggling, batchMode,
     else onOpen(row.id);
   };
   return (
-    <article className={`card${row.enabled && !blocked ? '' : ' is-off'}${selected ? ' is-selected' : ''}`} onClick={openCard}>
+    <article className={`card local-card${row.enabled && !blocked ? '' : ' is-off'}${selected ? ' is-selected' : ''}`} onClick={openCard}>
       <div className="card-top">
         {batchMode ? (
           <button type="button" className="batch-check" role="checkbox" aria-checked={selected} aria-label={`选择 ${row.title}`} onClick={() => onSelect(row.id)}>{selected ? '✓' : ''}</button>
@@ -121,30 +153,44 @@ export function LocalMcpCard({ row, category, market, busy, toggling, batchMode,
           <McpMark {...localMark(row, market)} />
           <span className="card-title">
             <strong title={row.title}>{row.title}</strong>
-            <small className="tag" title={tag}>{tag}</small>
+            <small className="market-slug" title={row.serverName}>{row.serverName}</small>
           </span>
         </button>
-        {batchMode ? null : (
-          <>
-            {/* 启停要拉起或断开 MCP 进程，耗时可能十几秒：开关位置换成加载态，避免点了没反应。 */}
-            {toggling
-              ? <span className="switch-loading" role="status" aria-label={`正在${actionText} ${row.title}`}><i className="spinner" /></span>
-              : <button type="button" className="switch" role="switch" aria-checked={row.enabled && !blocked} aria-label={`${actionText} ${row.title}`} disabled={busy || blocked} onClick={() => onToggle(row, !row.enabled)} />}
-            <button type="button" className="card-delete" title="删除 MCP" aria-label={`删除 ${row.title}`} disabled={busy || toggling} onClick={() => onRemove(row)}><Glyph paths={glyphs.trash} /></button>
-          </>
-        )}
+        {/* 启停要拉起或断开 MCP 进程，耗时可能十几秒：开关位置换成加载态，避免点了没反应。 */}
+        {!batchMode && (toggling
+          ? <span className="switch-loading" role="status" aria-label={`正在${actionText} ${row.title}`}><i className="spinner" /></span>
+          : <button type="button" className="switch" role="switch" aria-checked={row.enabled && !blocked} aria-label={`${actionText} ${row.title}`} disabled={busy || blocked} onClick={() => onToggle(row, !row.enabled)} />)}
       </div>
+      {/* 业务场景固定占一行：没有场景的条目保留空行，保证同一行卡片的后续内容上下对齐。 */}
+      <small className={`tag market-scene${category ? '' : ' is-empty'}`} title={category || undefined} aria-hidden={category ? undefined : true}>
+        {category || '\u00a0'}
+      </small>
       <p className="card-desc">{row.description || 'MCP 服务'}</p>
+      <div className="market-card-tags">
+        {version ? <span className="version-tag">v{version.replace(/^v/iu, '')}</span> : null}
+        {builtin ? <span className="builtin-pill">内置</span> : <span className="external-pill">非内置</span>}
+        {blocked ? <span className="apply-pill none">未授权</span> : null}
+        {blocked && applyStatus ? <span className={`apply-pill ${applyStatus}`}>{APPLY_LABEL[applyStatus]}</span> : null}
+      </div>
+      {/* 授权异常原因就地展示（闸门统一文案）：与技能的提示位一致，不自己拼文案。 */}
       {row.authState && row.authReason ? <p className="auth-reason">{row.authReason}</p> : null}
+      <div className="card-foot">
+        <span className="status-line"><i className={`dot${toggling ? ' discovering' : row.enabled && !blocked ? ` ${row.state}` : ''}`} />{toggling ? togglingText : state}</span>
+        <span>{row.toolAuth ? `可用 ${row.toolAuth.usable}/${row.toolAuth.total} 个工具` : `${row.toolNames.length} 个工具`}</span>
+      </div>
       {toggling ? (
         <div className="install-bar" role="progressbar" aria-label={`正在${actionText} ${row.title}`}>
           <i className="install-bar-fill" />
         </div>
       ) : null}
-      <div className="card-foot">
-        <span className="status-line"><i className={`dot${toggling ? ' discovering' : row.enabled ? ` ${row.state}` : ''}`} />{toggling ? togglingText : state}</span>
-        <span>{row.toolAuth ? `可用 ${row.toolAuth.usable}/${row.toolAuth.total} 个工具` : `${row.toolNames.length} 个工具`}</span>
-      </div>
+      {batchMode ? null : (
+        <div className="market-card-actions">
+          {trialable ? <button type="button" className="market-action primary" aria-label={`试用 ${row.title}`} onClick={() => onTrial(row)}>去试试</button> : null}
+          {cancelable ? <button type="button" className="market-action primary" aria-label={`取消申请 ${row.title}`} disabled={ssoBusy} onClick={() => onCancelApply(row)}>取消申请</button> : null}
+          {applicable ? <button type="button" className="market-action primary" aria-label={`申请 ${row.title}`} disabled={ssoBusy} onClick={() => onApply(row)}>申请</button> : null}
+          <button type="button" className="market-action danger" aria-label={`卸载 ${row.title}`} disabled={busy || toggling} onClick={() => onUninstall(row)}>卸载</button>
+        </div>
+      )}
     </article>
   );
 }
@@ -154,48 +200,85 @@ type MarketCardProps = {
   /** 该条目在界面上的分类文案（分类字典 text，多值以「 · 」分隔）；一个都映射不出时为空串，界面不显示占位。 */
   readonly category: string;
   readonly installed: boolean;
-  /** 该条目正在安装：加号变加载态，卡片底部显示流式进度条。 */
+  /** 该条目正在安装：安装按钮进入加载态，卡片底部显示流式进度条。 */
   readonly installing: boolean;
-  /** 上一次安装失败的原因（可直接展示）；失败时保留「＋」按钮，点一下就重试。 */
+  /** 上一次安装失败的原因（可直接展示）；失败时保留安装按钮，点一下就重试。 */
   readonly failure?: string;
   readonly busy: boolean;
+  /** 单点跳转请求占用：申请/取消申请期间禁用按钮。 */
+  readonly ssoBusy: boolean;
   readonly onOpen: (id: string) => void;
   readonly onInstall: (entry: MarketItem) => void;
+  readonly onUninstall: (entry: MarketItem) => void;
+  readonly onApply: (entry: MarketItem) => void;
+  readonly onCancelApply: (entry: MarketItem) => void;
 };
 
-/** 市场卡片：图标 · 名称 · 分类 · 描述 · 统计行 · 右上角「＋」（安装中为加载态，已安装时替换为禁用态胶囊）。 */
-export function MarketMcpCard({ entry, category, installed, installing, failure, busy, onOpen, onInstall }: MarketCardProps) {
+/**
+ * 市场卡片：图标 · 名称 · 服务标识 · 分类 · 描述 · 统计行 · 状态徽标组 · 底部操作区。
+ * 布局与技能市场一致：标签靠左、操作按钮靠右；卸载属于危险操作，固定放在最右侧。
+ */
+export function MarketMcpCard({ entry, category, installed, installing, failure, busy, ssoBusy, onOpen, onInstall, onUninstall, onApply, onCancelApply }: MarketCardProps) {
   /** 整卡可点击：点卡片任意空白区都打开详情，卡片内的按钮区仍走各自行为。 */
   const openCard = (event: MouseEvent<HTMLElement>) => {
     if (isCardAction(event.target)) return;
     onOpen(entry.originId);
   };
+  const authorized = entry.authorized === true;
+  // 未授权时：申请中给「取消申请」，其余状态都给「申请」（已通过但被撤权的仍可重新申请）。
+  const cancelable = !authorized && entry.applyStatus === 'pending';
+  const applicable = !authorized && entry.applyStatus !== 'pending';
   return (
-    <article className={`card${installing ? ' is-installing' : ''}`} onClick={openCard}>
+    <article className={`card market-card${installing ? ' is-installing' : ''}`} onClick={openCard}>
       <div className="card-top">
         <button type="button" className="card-open" aria-label={`查看 ${entry.title}`} onClick={() => onOpen(entry.originId)}>
           <McpMark {...marketMark(entry)} />
           <span className="card-title">
             <strong title={entry.title}>{entry.title}</strong>
-            {category ? <small title={category}>{category}</small> : null}
+            <small className="market-slug" title={entry.serverName}>{entry.serverName}</small>
           </span>
         </button>
-        {installed ? (
-          <span className="installed-pill">已安装</span>
-        ) : installing ? (
-          <span className="plus installing" role="status" aria-label={`正在安装 ${entry.title}`}><i className="spinner" /></span>
-        ) : (
-          <button type="button" className="plus" title="安装到本机" aria-label={`安装 ${entry.title}`} disabled={busy} onClick={() => onInstall(entry)}><Icon name="plus" size={18} /></button>
-        )}
       </div>
+      {/* 业务场景固定占一行：没有场景的条目保留空行，保证所有卡片的同名行上下对齐。 */}
+      <small className={`tag market-scene${category ? '' : ' is-empty'}`} title={category || undefined} aria-hidden={category ? undefined : true}>
+        {category || '\u00a0'}
+      </small>
       <p className="card-desc">{entry.description}</p>
+      {/* 统计信息改为蓝色标签：安装 / 下载 / 收藏，不再使用图标 + 数字。 */}
+      <div className="market-stats-tags">
+        <span className="stat-tag">安装 {entry.subscribers}</span>
+        <span className="stat-tag">下载 {entry.downloads}</span>
+        <span className="stat-tag">收藏 {entry.stars}</span>
+      </div>
+      <div className="market-card-foot">
+        {/* 第一行：状态标签靠左；第二行：操作按钮靠右。 */}
+        <div className="market-card-tags">
+          {entry.version ? <span className="version-tag">{entry.version}</span> : null}
+          {entry.builtin === undefined ? null : <span className={entry.builtin ? 'builtin-pill' : 'external-pill'}>{entry.builtin ? '内置' : '非内置'}</span>}
+          <span className={installed ? 'installed-pill' : 'uninstalled-pill'}>{installed ? '已安装' : '未安装'}</span>
+          <span className={`apply-pill ${authorized ? 'approved' : 'none'}`}>{authorized ? '已授权' : '未授权'}</span>
+          <span className={`apply-pill ${entry.applyStatus}`}>{APPLY_LABEL[entry.applyStatus]}</span>
+        </div>
+        <div className="market-card-actions">
+          {!installed && authorized
+            ? installing
+              ? <span className="plus installing" role="status" aria-label={`正在安装 ${entry.title}`}><i className="spinner" /></span>
+              : <button type="button" className="market-action primary" aria-label={`${failure ? '重试安装' : '安装'} ${entry.title}`} title={failure ? '重新安装到本机' : '安装到本机'} disabled={busy} onClick={() => onInstall(entry)}>{failure ? '重试安装' : '安装'}</button>
+            : null}
+          {cancelable ? <button type="button" className="market-action primary" aria-label={`取消申请 ${entry.title}`} disabled={ssoBusy} onClick={() => onCancelApply(entry)}>取消申请</button> : null}
+          {applicable ? <button type="button" className="market-action primary" aria-label={`申请 ${entry.title}`} disabled={ssoBusy} onClick={() => onApply(entry)}>申请</button> : null}
+          {/* 随客户端内置的条目随安装包发布，市场侧不提供卸载入口。 */}
+          {installed && entry.clientBuiltin !== true
+            ? <button type="button" className="market-action danger" aria-label={`卸载 ${entry.title}`} disabled={busy} onClick={() => onUninstall(entry)}>卸载</button>
+            : null}
+        </div>
+      </div>
       {installing ? (
         <div className="install-bar" role="progressbar" aria-label={`正在安装 ${entry.title}`}>
           <i className="install-bar-fill" />
         </div>
       ) : null}
       {failure && !installed ? <p className="card-error" role="alert">{failure}</p> : null}
-      <MarketStats subscribers={entry.subscribers} downloads={entry.downloads} stars={entry.stars} />
     </article>
   );
 }
