@@ -279,15 +279,52 @@ export interface ModelRouteEntry {
   readonly contextWindow?: number;
   readonly maxTokens?: number;
   readonly input: readonly string[];
+  /** 可选推理档位；缺省表示该模型不提供推理，会话选择器也不会显示推理等级。 */
+  readonly reasoningEfforts?: CustomReasoningEfforts;
+}
+
+/** 已知档位集合：后台 tier 必须命中，未知档位 fail closed 丢弃，不写进配置。 */
+const KNOWN_REASONING_LEVELS: ReadonlySet<string> = new Set<string>(REASONING_LEVELS);
+
+/**
+ * 把后台推理等级表转换为 pi-ai 的 reasoningEfforts 声明。
+ *
+ * 映射规则：
+ * - 未开启推理等级（reasoningLevelEnabled 为 false）或没有有效档位时返回 undefined，
+ *   保持缺省，会话选择器不显示推理等级；
+ * - off 档固定写 null（不发送任何参数）；后台 off 的 value 是「关闭思考」这类中文说明，
+ *   绝不能当作 wire 参数值透传；
+ * - 非 off 档取 value.trim() 作为 wire 值，空值跳过；最终至少要有一个非 off 档位，
+ *   否则官方适配器会拒绝「只有 Off」的声明；
+ * - 未知档位与重复档位直接丢弃；最后用 validateReasoningEfforts 兜底校验，不通过则不写。
+ */
+export function reasoningEffortsOf(model: ModelMarketModel): CustomReasoningEfforts | undefined {
+  if (!model.reasoningLevelEnabled) return undefined;
+  const efforts: Record<string, string | null> = {};
+  for (const level of model.reasoningLevels) {
+    const tier = level.tier.trim();
+    if (!KNOWN_REASONING_LEVELS.has(tier) || tier in efforts) continue;
+    if (tier === 'off') {
+      efforts.off = null;
+      continue;
+    }
+    const wire = level.value.trim();
+    if (wire) efforts[tier] = wire;
+  }
+  // 兜底校验：空表、只有 Off 等无效声明直接按「无档位」处理，不写入配置。
+  if (validateReasoningEfforts(efforts) !== undefined) return undefined;
+  return efforts;
 }
 
 /** 把一个市场模型转换为 pi-ai 路由里的模型条目。 */
 export function modelRouteEntry(model: ModelMarketModel): ModelRouteEntry {
   const contextWindow = parseContextWindow(model.contextLength);
+  const reasoningEfforts = reasoningEffortsOf(model);
   return {
     id: model.modelCode,
     name: model.modelName || model.modelCode,
     ...(contextWindow === undefined ? {} : { contextWindow }),
+    ...(reasoningEfforts === undefined ? {} : { reasoningEfforts }),
     input: model.modelType === 'MLLM' ? ['text', 'image'] : ['text'],
   };
 }

@@ -649,8 +649,15 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
           const provider = providerOf(providersNow, route);
           const models = modelsOf(provider);
           const index = models.findIndex(item => text(item.id) === entry.id);
+          // 覆盖安装要反映后台最新配置：entry 没有 reasoningEfforts（后台未开启/档位无效）时，
+          // 必须清掉旧条目残留的档位，否则会话选择器会继续显示已失效的推理等级。
+          const merged = (item: Record<string, unknown>): Record<string, unknown> => {
+            const result = { ...item, ...entry };
+            if (entry.reasoningEfforts === undefined) delete result.reasoningEfforts;
+            return result;
+          };
           const next = index >= 0
-            ? models.map((item, position) => position === index ? { ...item, ...entry } : item)
+            ? models.map((item, position) => position === index ? merged(item) : item)
             : [...models, entry];
           return [
             { op: 'set', path: ['providers', route, 'displayName'], value: model.providerName || model.provider || route },
