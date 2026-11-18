@@ -3,6 +3,7 @@ import {
   API_PROTOCOLS, MODEL_PROVIDERS, MODEL_TYPES, dictionaryLabel,
   nonNegativeInteger, positiveInteger,
   type ModelMarketModel, type ModelMarketPage, type ModelMarketPaths, type ModelMarketQuery,
+  type ModelReasoningLevel,
 } from './shared.js';
 
 /** 通用业务后台通道（由 workdsh-provider-backend-channel 提供）的最小结构。 */
@@ -33,6 +34,31 @@ const rowsOf = (value: unknown): unknown[] => {
   return Array.isArray(rows) ? rows : [];
 };
 
+/**
+ * 推理等级表：后台以 JSON 字符串返回。解析失败、为空或行结构不完整时按「没有档位」处理，
+ * 界面上就不渲染推理等级表，不让脏数据把整页详情打挂。
+ */
+function reasoningLevels(value: unknown): readonly ModelReasoningLevel[] {
+  let source: unknown = value;
+  if (typeof value === 'string') {
+    if (!value.trim()) return [];
+    try {
+      source = JSON.parse(value) as unknown;
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(source)) return [];
+  return source.flatMap(item => {
+    const row = record(item);
+    if (!row) return [];
+    const tier = text(row.tier).trim();
+    const label = text(row.value).trim();
+    if (!tier && !label) return [];
+    return [{ tier, value: label, description: text(row.description), rate: text(row.rate) }];
+  });
+}
+
 /** 把后台一行 AiModel 归一化为界面模型；缺少主键的行直接丢弃。 */
 export function normalizeModel(value: unknown): ModelMarketModel | undefined {
   const row = record(value);
@@ -52,6 +78,11 @@ export function normalizeModel(value: unknown): ModelMarketModel | undefined {
     modelType,
     modelTypeName: text(row.modelType_dictText) || dictionaryLabel(MODEL_TYPES, modelType),
     contextLength: text(row.contextLength),
+    maxOutputTokens: text(row.maxOutputTokens),
+    inputTypes: text(row.inputTypes),
+    reasoningLevelEnabled: flag(row.reasoningLevelEnabled),
+    reasoningLevels: reasoningLevels(row.reasoningLevels),
+    subscribeCount: nonNegativeInteger(row.subscribeCount, 0),
     icon: text(row.icon),
     apiProtocol,
     apiProtocolName: text(row.apiProtocol_dictText) || dictionaryLabel(API_PROTOCOLS, apiProtocol),

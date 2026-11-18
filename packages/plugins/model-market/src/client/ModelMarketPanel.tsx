@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { CardSkeleton, cardSkeletonCss, QueryOverlay, queryOverlayCss } from 'workdsh-ui';
 import {
-  MODEL_TYPES, installActionLabel, installability,
+  MODEL_TYPES, installActionLabel, installability, inputTypes, splitList,
   type CustomModelDraft, type CustomModelEntry, type ModelMarketDetail, type ModelMarketModel, type ModelMarketPage,
 } from '../shared.js';
 import { createModelMarketClient } from './management.js';
@@ -10,6 +10,59 @@ import { CustomModelForm } from './CustomModelForm.js';
 
 const PAGE_SIZE = 10;
 const QUERY_DEBOUNCE_MS = 250;
+
+/** 标签配色：对齐 ant-design-vue 的 a-tag 观感（浅底 + 同系文字 + 1px 同系描边 + 4px 圆角）。 */
+interface TagTone {
+  readonly bg: string;
+  readonly color: string;
+  readonly border: string;
+  readonly dot?: string;
+}
+
+const PROVIDER_TAG_TONE: Readonly<Record<string, TagTone>> = {
+  OPENAI: { bg: '#E8F8F3', color: '#087F5B', border: '#A7E8D6' },
+  ZHIPU: { bg: '#E6F4FF', color: '#0958D9', border: '#91CAFF' },
+  QIANFAN: { bg: '#E6FFFB', color: '#08979C', border: '#87E8DE' },
+  QWEN: { bg: '#F9F0FF', color: '#531DAB', border: '#D3ADF7' },
+  DEEPSEEK: { bg: '#F0F5FF', color: '#1D39C4', border: '#ADC6FF' },
+  OLLAMA: { bg: '#F5F5F5', color: '#262626', border: '#D9D9D9' },
+  SELF: { bg: '#FFF7E6', color: '#D46B08', border: '#FFD591' },
+  OTHER: { bg: '#FFF0F6', color: '#C41D7F', border: '#FFADD2' },
+};
+
+const MODEL_TYPE_TAG_TONE: Readonly<Record<string, TagTone>> = {
+  LLM: { bg: '#FFFFFF', color: '#1D39C4', border: '#ADC6FF' },
+  MLLM: { bg: '#FFFFFF', color: '#9D174D', border: '#FBCFE8' },
+  ASR: { bg: '#FFFFFF', color: '#A16207', border: '#FDE68A' },
+  EMBED: { bg: '#FFFFFF', color: '#0F766E', border: '#99F6E4' },
+  RERANKER: { bg: '#FFFFFF', color: '#B91C1C', border: '#FECACA' },
+  OTHER: { bg: '#FFFFFF', color: '#4B5563', border: '#D1D5DB' },
+};
+
+const INPUT_TYPE_TAG_TONE: Readonly<Record<string, TagTone>> = {
+  TEXT: { bg: '#F8FAFC', color: '#334155', border: '#E2E8F0', dot: '#64748B' },
+  IMAGE: { bg: '#F5F3FF', color: '#5B21B6', border: '#DDD6FE', dot: '#7C3AED' },
+  OTHER: { bg: '#FAFAFA', color: '#525252', border: '#E5E5E5', dot: '#A3A3A3' },
+};
+
+/** 中性标签与技能市场的版本号一致；模型标识用 cyan，默认模型用 blue。 */
+const NEUTRAL_TAG_TONE: TagTone = { bg: 'whitesmoke', color: '#434343', border: '#ffffff' };
+const CYAN_TAG_TONE: TagTone = { bg: '#e6fffb', color: '#08979c', border: '#87e8de' };
+const BLUE_TAG_TONE: TagTone = { bg: '#e6f4ff', color: '#0958d9', border: '#91caff' };
+const GRAY_TAG_TONE: TagTone = { bg: '#f5f5f5', color: '#434343', border: '#d9d9d9' };
+
+/** 后台取值大小写不统一（LLM / Reranker），匹配时先精确再忽略大小写，最后落到 OTHER。 */
+function toneOf(map: Readonly<Record<string, TagTone>>, key: string): TagTone {
+  const direct = map[key.trim()];
+  if (direct) return direct;
+  const upper = key.trim().toUpperCase();
+  const matched = Object.keys(map).find(name => name.toUpperCase() === upper);
+  return (matched ? map[matched] : undefined) ?? map.OTHER ?? NEUTRAL_TAG_TONE;
+}
+
+function tagStyle(tone: TagTone): CSSProperties {
+  return { background: tone.bg, borderColor: tone.border, color: tone.color };
+}
 
 function ModelIcon({ model, large = false }: { model: ModelMarketModel; large?: boolean }) {
   const [failed, setFailed] = useState(false);
@@ -20,6 +73,47 @@ function ModelIcon({ model, large = false }: { model: ModelMarketModel; large?: 
       {model.icon && !failed ? <img src={model.icon} alt="" onError={() => setFailed(true)} /> : initial}
     </span>
   );
+}
+
+/** 供应商 / 模型标识 / 版本号 / 模型类型：详情页与列表卡片共用同一套标签。 */
+function ModelMetaTags({ model }: { readonly model: ModelMarketModel }) {
+  return (
+    <div className="mm-tags">
+      <span className="mm-tag" style={tagStyle(toneOf(PROVIDER_TAG_TONE, model.provider))}>
+        {model.providerName || model.provider || '未知供应商'}
+      </span>
+      {model.modelCode ? <span className="mm-tag" style={tagStyle(CYAN_TAG_TONE)}>{model.modelCode}</span> : null}
+      {model.version ? <span className="mm-tag" style={tagStyle(NEUTRAL_TAG_TONE)}>{model.version}</span> : null}
+      <span className="mm-tag" style={tagStyle(toneOf(MODEL_TYPE_TAG_TONE, model.modelType))}>
+        {model.modelTypeName || model.modelType || '类型未知'}
+      </span>
+    </div>
+  );
+}
+
+/** 输入模态标签（带圆点），逗号分隔、未知取值原样展示。 */
+function InputTypeTags({ value }: { readonly value: string }) {
+  return (
+    <>
+      {inputTypes(value).map(({ key, label }) => {
+        // 配色按后台原始取值匹配（text/image），不能拿译文去查表，否则图片会落到 OTHER 的灰色。
+        const tone = toneOf(INPUT_TYPE_TAG_TONE, key);
+        return (
+          <span key={`input:${key}`} className="mm-tag" style={tagStyle(tone)}>
+            <span className="mm-tag-dot" style={{ background: tone.dot ?? tone.color }} />
+            {label}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
+/** 本地自定义模型没有单条模态字段，取各子模型的模态并集。 */
+function customInputTypes(entry: CustomModelEntry): string {
+  const seen = new Set<string>();
+  for (const model of entry.models) for (const item of model.input) seen.add(item);
+  return [...seen].join(',');
 }
 
 function GroupHead({ title, count, expanded, onToggle }: { title: string; count: number; expanded: boolean; onToggle: () => void }) {
@@ -333,35 +427,40 @@ export function ModelMarketPanel() {
             <>
               <div className="mm-detail-head">
                 <ModelIcon model={model} large />
-                <div style={{ minWidth: 0 }}>
+                <div className="mm-detail-main">
                   <div className="mm-detail-title-row">
                     <span className="mm-detail-title">{model.modelName || model.modelCode}</span>
                     <span className={detail?.installed ? 'mm-state on' : 'mm-state'}>{detail?.installed ? '已添加' : '未添加'}</span>
+                    <span className="mm-detail-action">
+                      {detail?.installed ? (
+                        <button type="button" className="mm-action uninstall" disabled={busy} onClick={() => setConfirmUninstall(true)}>
+                          {busy ? <><span className="mm-spinner" />移除中…</> : '移除'}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="mm-action install"
+                          disabled={busy || !usable?.installable}
+                          title={usable?.installable ? undefined : usable?.reason}
+                          onClick={() => void install(model)}
+                        >
+                          {busy ? <><span className="mm-spinner" />添加中…</> : usable?.installable ? '添加' : installActionLabel(model, usable ?? { installable: false, reason: '' })}
+                        </button>
+                      )}
+                    </span>
                   </div>
-                  <div className="mm-detail-sub">{model.providerName || model.provider}{model.version ? ` · ${model.version}` : ''}</div>
+                  <ModelMetaTags model={model} />
                 </div>
-                <span className="mm-detail-action">
-                  {detail?.installed ? (
-                    <button type="button" className="mm-action uninstall" disabled={busy} onClick={() => setConfirmUninstall(true)}>
-                      {busy ? <><span className="mm-spinner" />移除中…</> : '移除'}
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      className="mm-action install"
-                      disabled={busy || !usable?.installable}
-                      title={usable?.installable ? undefined : usable?.reason}
-                      onClick={() => void install(model)}
-                    >
-                      {busy ? <><span className="mm-spinner" />添加中…</> : usable?.installable ? '添加' : installActionLabel(model, usable ?? { installable: false, reason: '' })}
-                    </button>
-                  )}
-                </span>
               </div>
+              {/* 第二行：是否默认、输入模态与业务标签直接以标签呈现，不加字段名。 */}
               <div className="mm-tags">
-                {model.isDefault ? <span className="mm-badge default">默认模型</span> : null}
-                <span className="mm-badge">{model.apiProtocolName || model.apiProtocol || '协议未知'}</span>
-                <span className="mm-badge">{model.modelTypeName || model.modelType || '类型未知'}</span>
+                <span className="mm-tag" style={tagStyle(model.isDefault ? BLUE_TAG_TONE : GRAY_TAG_TONE)}>
+                  {model.isDefault ? '默认模型' : '非默认模型'}
+                </span>
+                <InputTypeTags value={model.inputTypes} />
+                {splitList(model.tag).map(item => (
+                  <span key={`tag:${item}`} className="mm-tag" style={tagStyle(NEUTRAL_TAG_TONE)}>{item}</span>
+                ))}
               </div>
               {confirmUninstall ? (
                 <div className="mm-confirm" role="alertdialog" aria-label="确认移除模型">
@@ -372,28 +471,49 @@ export function ModelMarketPanel() {
                   </button>
                 </div>
               ) : null}
+              <div className="mm-detail-desc">{model.description || '暂无模型描述'}</div>
               <div className="mm-info-grid">
-                <div className="mm-info"><span className="k">模型标识</span><span className="v">{model.modelCode || '—'}</span></div>
                 <div className="mm-info"><span className="k">上下文长度</span><span className="v">{model.contextLength || '—'}</span></div>
-                <div className="mm-info"><span className="k">供应商</span><span className="v">{model.providerName || model.provider || '—'}</span></div>
-                <div className="mm-info"><span className="k">模型类型</span><span className="v">{model.modelTypeName || model.modelType || '—'}</span></div>
-                <div className="mm-info"><span className="k">API 协议</span><span className="v">{model.apiProtocolName || model.apiProtocol || '—'}</span></div>
+                <div className="mm-info"><span className="k">最大输出 token</span><span className="v">{model.maxOutputTokens || '—'}</span></div>
                 <div className="mm-info"><span className="k">负责人</span><span className="v">{model.owner || '—'}</span></div>
-                <div className="mm-info"><span className="k">所属部门</span><span className="v">{model.departName || model.depart || '—'}</span></div>
-                <div className="mm-info"><span className="k">更新时间</span><span className="v">{model.updateTime || model.createTime || '—'}</span></div>
-              </div>
-              {model.tag ? (
-                <div className="mm-tags">
-                  {model.tag.split(',').flatMap(tag => {
-                    const value = tag.trim();
-                    return value ? [<span key={value} className="mm-badge">{value}</span>] : [];
-                  })}
+                <div className="mm-info"><span className="k">负责部门</span><span className="v">{model.departName || model.depart || '—'}</span></div>
+                <div className="mm-info"><span className="k">订阅数</span><span className="v">{model.subscribeCount}</span></div>
+                <div className="mm-info"><span className="k">发布时间</span><span className="v">{model.createTime || '—'}</span></div>
+                <div className="mm-info"><span className="k">API 协议</span><span className="v">{model.apiProtocolName || model.apiProtocol || '—'}</span></div>
+                <div className="mm-info">
+                  <span className="k">是否开启推理等级</span>
+                  <span className="v">{model.reasoningLevelEnabled ? '是' : '否'}</span>
                 </div>
-              ) : null}
-              {model.description ? (
-                <div>
-                  <h2 className="mm-section-title">说明</h2>
-                  <div className="mm-block">{model.description}</div>
+              </div>
+              {model.reasoningLevelEnabled && model.reasoningLevels.length ? (
+                <div className="mm-reasoning-table">
+                  <div className="mm-quote">推理等级详细设置</div>
+                  <table>
+                    <colgroup>
+                      <col className="col-tier" />
+                      <col className="col-wire" />
+                      <col />
+                      <col className="col-rate" />
+                    </colgroup>
+                    <thead>
+                      <tr>
+                        <th scope="col">档位</th>
+                        <th scope="col">API 参数值</th>
+                        <th scope="col">推理等级描述</th>
+                        <th scope="col">消耗速度</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {model.reasoningLevels.map(level => (
+                        <tr key={level.tier || level.value}>
+                          <td>{level.tier || '—'}</td>
+                          <td>{level.value || '—'}</td>
+                          <td>{level.description || '—'}</td>
+                          <td>{level.rate ? `${level.rate}x` : '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               ) : null}
             </>
@@ -464,28 +584,33 @@ export function ModelMarketPanel() {
               const busy = customBusyKey === entry.key;
               return (
                 <div className="mm-card mm-card-static" key={entry.key}>
-                  <div className="mm-card-top">
-                    <span className="mm-icon" aria-hidden="true">{(entry.displayName || entry.providerId).slice(0, 2).toUpperCase()}</span>
-                    <div style={{ minWidth: 0 }}>
+                  {/* 第一块（两行）：图标跨两行，右侧一行名称、一行供应商标识。 */}
+                  <div className="mm-card-head">
+                    <span className="mm-icon lg" aria-hidden="true">{(entry.displayName || entry.providerId).slice(0, 2).toUpperCase()}</span>
+                    <div className="mm-card-head-main">
                       <div className="mm-name">{entry.displayName}</div>
-                      <div className="mm-version">{entry.providerId}</div>
+                      <div className="mm-tags">
+                        <span className="mm-tag" style={tagStyle(NEUTRAL_TAG_TONE)}>{entry.providerId}</span>
+                      </div>
                     </div>
                   </div>
-                  <div className="mm-meta">
-                    <span className="mm-source custom">本地模型</span>
-                    <span className="mm-meta-text">{protocolBrand(entry.apiProtocol)}</span>
-                  </div>
-                  <div className="mm-desc">{entry.models.map(model => model.name || model.id).join('、')}</div>
-                  <div className="mm-foot">
-                    <span className="mm-foot-left">
-                      <span className="mm-state on">已添加</span>
-                      {entry.isDefault ? <span className="mm-badge default">默认</span> : null}
-                      <span className="mm-context">{entry.models.length} 个模型</span>
-                    </span>
+                  <div className="mm-tags">
+                      <span className="mm-tag" style={tagStyle(entry.isDefault ? BLUE_TAG_TONE : GRAY_TAG_TONE)}>
+                        {entry.isDefault ? '默认模型' : '非默认模型'}
+                      </span>
+                      <span className="mm-tag" style={tagStyle(NEUTRAL_TAG_TONE)}>{protocolBrand(entry.apiProtocol)}</span>
+                      <InputTypeTags value={customInputTypes(entry)} />
+                    </div>
+                    <div className="mm-desc">{entry.models.map(model => model.name || model.id).join('、') || '暂无模型描述'}</div>
+                    <div className="mm-foot">
+                      <span className="mm-foot-left">
+                        <span className="mm-state on">已添加</span>
+                        <span className="mm-tag mm-tip" style={tagStyle(NEUTRAL_TAG_TONE)} data-tip="模型数量">{entry.models.length} 个</span>
+                      </span>
                     <span className="mm-card-actions">
                       <button
                         type="button"
-                        className="mm-action"
+                        className="mm-action primary"
                         disabled={busy}
                         onClick={() => { setEditing(entry); setError(''); }}
                       >
@@ -523,16 +648,17 @@ export function ModelMarketPanel() {
         <div className="mm-loading" role="status">正在读取本地模型…</div>
       ) : null}
       <div className="mm-content">
-      {source !== 'custom' && loading && !page ? (
-        <div className="mm-grid" role="status" aria-label="正在加载模型市场…"><CardSkeleton variant="model" count={PAGE_SIZE} /></div>
-      ) : null}
-      {source !== 'custom' && page ? (
+      {/* 分组标题不等接口：先渲染出来，数量随首页数据补齐，避免进入页面时分组整体缺失。 */}
+      {source !== 'custom' ? (
         <GroupHead
           title="模型市场"
-          count={page.records.length}
+          count={page?.records.length ?? 0}
           expanded={!marketCollapsed}
           onToggle={() => setMarketCollapsed(value => !value)}
         />
+      ) : null}
+      {source !== 'custom' && loading && !page ? (
+        <div className="mm-grid" role="status" aria-label="正在加载模型市场…"><CardSkeleton variant="model" count={PAGE_SIZE} /></div>
       ) : null}
       {source !== 'custom' && !marketCollapsed && page && page.records.length ? (
         <>
@@ -556,23 +682,48 @@ export function ModelMarketPanel() {
                     }
                   }}
                 >
-                  <div className="mm-card-top">
-                    <ModelIcon model={model} />
-                    <div style={{ minWidth: 0 }}>
+                  {/* 第一块（两行）：图标跨两行，右侧一行名称、一行模型标识。 */}
+                  <div className="mm-card-head">
+                    <ModelIcon model={model} large />
+                    <div className="mm-card-head-main">
                       <div className="mm-name">{model.modelName || model.modelCode}</div>
-                      <div className="mm-version">{model.version || '—'}</div>
+                      <div className="mm-tags">
+                        {model.modelCode ? (
+                          <span className="mm-tag" style={tagStyle(CYAN_TAG_TONE)}>{model.modelCode}</span>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
-                  <div className="mm-meta">
-                    <span className="mm-source">市场模型</span>
-                    <span className="mm-meta-text">{model.providerName || model.provider || '—'} · {model.modelTypeName || model.modelType || '—'}</span>
+                  {/* 第二块：默认态、供应商、类型、版本、输入模态与业务标签。 */}
+                  <div className="mm-tags">
+                    <span className="mm-tag" style={tagStyle(model.isDefault ? BLUE_TAG_TONE : GRAY_TAG_TONE)}>
+                      {model.isDefault ? '默认模型' : '非默认模型'}
+                    </span>
+                    <span className="mm-tag" style={tagStyle(toneOf(PROVIDER_TAG_TONE, model.provider))}>
+                      {model.providerName || model.provider || '未知供应商'}
+                    </span>
+                    <span className="mm-tag" style={tagStyle(toneOf(MODEL_TYPE_TAG_TONE, model.modelType))}>
+                      {model.modelTypeName || model.modelType || '类型未知'}
+                    </span>
+                    {model.version ? (
+                      <span className="mm-tag" style={tagStyle(NEUTRAL_TAG_TONE)}>{model.version}</span>
+                    ) : null}
+                    <InputTypeTags value={model.inputTypes} />
+                    {splitList(model.tag).map(item => (
+                      <span key={`tag:${item}`} className="mm-tag" style={tagStyle(NEUTRAL_TAG_TONE)}>{item}</span>
+                    ))}
                   </div>
-                  <div className="mm-desc">{model.description || '暂无说明'}</div>
+                  <div className="mm-desc">{model.description || '暂无模型描述'}</div>
                   <div className="mm-foot">
                     <span className="mm-foot-left">
                       <span className={isInstalled ? 'mm-state on' : 'mm-state'}>{isInstalled ? '已添加' : '未添加'}</span>
-                      {model.isDefault ? <span className="mm-badge default">默认</span> : null}
-                      <span className="mm-context">{model.contextLength || '—'}</span>
+                      {/* 数值只显示自己，字段名放进 data-tip，由 .mm-tip 的伪元素即时提示。 */}
+                      <span className="mm-tag mm-tip" style={tagStyle(NEUTRAL_TAG_TONE)} data-tip="上下文长度">
+                        {model.contextLength || '—'}
+                      </span>
+                      <span className="mm-tag mm-tip" style={tagStyle(NEUTRAL_TAG_TONE)} data-tip="最大输出 token">
+                        {model.maxOutputTokens || '—'}
+                      </span>
                     </span>
                     {isInstalled ? (
                       <button

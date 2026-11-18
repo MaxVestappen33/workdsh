@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { installability, installActionLabel, formatCapacity, mergeDiscoveredModels, modelRouteEntry, parseContextWindow, validateReasoningEfforts } from '../dist/shared.js';
+import { installability, installActionLabel, formatCapacity, mergeDiscoveredModels, modelRouteEntry, parseContextWindow, validateReasoningEfforts, inputTypes } from '../dist/shared.js';
 import { normalizeModel } from '../dist/market.js';
 import { marketDefaultsMarker, marketRecordFile, readMarketRecords, writeMarketDefaultsMarker, writeMarketRecords } from '../dist/records.js';
 
@@ -13,6 +13,14 @@ const model = {
   apiProtocol: '01', apiProtocolName: 'OpenAI 兼容', apiUrl: 'https://api.deepseek.com', isDefault: true,
   description: '', tag: '', owner: '', depart: '', departName: '', createTime: '', updateTime: '',
 };
+
+test('输入模态保留原始取值并翻译，未知取值原样展示', () => {
+  assert.deepEqual(inputTypes('text,image'), [{ key: 'text', label: '文本' }, { key: 'image', label: '图片' }]);
+  // 配色按原始取值匹配，大写输入也要能翻译成「图片」。
+  assert.deepEqual(inputTypes('IMAGE'), [{ key: 'IMAGE', label: '图片' }]);
+  assert.deepEqual(inputTypes('text,audio'), [{ key: 'text', label: '文本' }, { key: 'audio', label: 'audio' }]);
+  assert.deepEqual(inputTypes(''), []);
+});
 
 test('上下文长度按 K/M 归一化为 token 数', () => {
   assert.equal(parseContextWindow('128K'), 131072);

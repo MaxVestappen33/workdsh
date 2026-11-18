@@ -122,6 +122,18 @@ export interface CustomModelEntry {
 /** 当前客户端只支持对话模型：语音、向量与重排序模型展示但不可安装。 */
 const INSTALLABLE_TYPES = new Set(['LLM', 'MLLM']);
 
+/** 后台 inputTypes 的展示文案；目前只有文本与图片，未知取值原样展示。 */
+const INPUT_TYPES: Readonly<Record<string, string>> = { text: '文本', image: '图片' };
+
+/** 后台推理等级表的一行：tier 是档位，value 是发给 API 的参数值。 */
+export interface ModelReasoningLevel {
+  readonly tier: string;
+  readonly value: string;
+  readonly description: string;
+  /** 消耗速度倍率，保留后台原始精度（例如 0.8001）。 */
+  readonly rate: string;
+}
+
 /** 官方 pi-ai 适配器支持的协议标识。 */
 const PROTOCOL_API: Readonly<Record<string, string>> = {
   '01': 'openai-completions',
@@ -149,6 +161,13 @@ export interface ModelMarketModel {
   readonly modelType: string;
   readonly modelTypeName: string;
   readonly contextLength: string;
+  readonly maxOutputTokens: string;
+  /** 逗号分隔的输入模态；为空表示后台未配置。 */
+  readonly inputTypes: string;
+  readonly reasoningLevelEnabled: boolean;
+  readonly reasoningLevels: readonly ModelReasoningLevel[];
+  /** 订阅数；后台为 null 时按 0 展示。 */
+  readonly subscribeCount: number;
   readonly icon: string;
   readonly apiProtocol: string;
   readonly apiProtocolName: string;
@@ -197,6 +216,27 @@ export type ModelMarketInstallability =
 
 export function dictionaryLabel(options: readonly (readonly [string, string])[], value: string): string {
   return options.find(([key]) => key === value)?.[1] ?? value;
+}
+
+/** 逗号分隔的多值字段（inputTypes、tag）展开成去空白的数组。 */
+export function splitList(value: string): readonly string[] {
+  return value.split(',').map(item => item.trim()).filter(Boolean);
+}
+
+/** 输入模态：key 保留后台原始取值（用于配色匹配），label 为展示文案。 */
+export interface ModelInputType {
+  readonly key: string;
+  readonly label: string;
+}
+
+/** 输入模态按逗号拆分并翻译；未知取值原样展示。大小写不敏感，兼容 TEXT/text。 */
+export function inputTypes(value: string): readonly ModelInputType[] {
+  return splitList(value).map(item => ({ key: item, label: INPUT_TYPES[item.toLowerCase()] ?? item }));
+}
+
+/** 只取展示文案，供纯文本场景使用。 */
+export function inputTypeLabels(value: string): readonly string[] {
+  return inputTypes(value).map(item => item.label);
 }
 
 /** 添加前的静态校验：类型、协议与必填字段。 */
