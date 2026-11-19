@@ -16,6 +16,15 @@ export const inject = ['slots'];
  */
 const BRAND_GLOBAL = '__WORKDSH_BRAND__';
 
+/**
+ * 官方设置弹窗右上角的「打开配置文件」按钮注册在 `settings.action` 槽。
+ * 该槽是 list，占位者只能追加不能遮蔽，因此只能在样式层隐藏；
+ * 选择器按 CSS Modules 的稳定后缀 `<hash>_action` 匹配、不写死哈希，
+ * 只命中该按钮所在的容器（容器内只有这一个按钮，关闭 × 是它的兄弟节点）。
+ * 官方升级改名时最坏表现是按钮重新出现，不影响设置页其它功能。
+ */
+const SETTINGS_DOCUMENT_STYLE = 'div[class$="_action"] > button{display:none!important}';
+
 export function apply(ctx: Context): void {
   const scope = globalThis as Record<string, unknown>;
   const previous = scope[BRAND_GLOBAL];
@@ -24,6 +33,15 @@ export function apply(ctx: Context): void {
     if (previous === undefined) delete scope[BRAND_GLOBAL];
     else scope[BRAND_GLOBAL] = previous;
   }, 'workdsh.brand.hero-config');
+
+  // 卸载插件（或移除这条样式）后按钮立即恢复，官方 DOM 未被改动。
+  ctx.effect(() => {
+    const style = document.createElement('style');
+    style.dataset.workdsh = 'settings-document-action';
+    style.textContent = SETTINGS_DOCUMENT_STYLE;
+    document.head.append(style);
+    return () => style.remove();
+  }, 'workdsh.brand.settings-document-action');
 
   // `slots.inject` 自身就是一次 `ctx.effect`：槽声明消失或插件卸载时，
   // 它注册的 occupant 会被立刻销毁，官方 fallback 原样回归。

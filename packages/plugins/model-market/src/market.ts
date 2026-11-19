@@ -2,8 +2,8 @@
 import {
   API_PROTOCOLS, MODEL_PROVIDERS, MODEL_TYPES, dictionaryLabel,
   nonNegativeInteger, positiveInteger,
-  type ModelMarketModel, type ModelMarketPage, type ModelMarketPaths, type ModelMarketQuery,
-  type ModelReasoningLevel,
+  type ModelAdminSsoTarget, type ModelApplyStatus, type ModelMarketModel, type ModelMarketPage, type ModelMarketPaths,
+  type ModelMarketQuery, type ModelReasoningLevel,
 } from './shared.js';
 
 /** 通用业务后台通道（由 workdsh-provider-backend-channel 提供）的最小结构。 */
@@ -25,6 +25,22 @@ const text = (value: unknown): string =>
 
 const flag = (value: unknown): boolean =>
   value === true || value === 1 || value === '1' || value === 'true';
+
+/**
+ * isAuthorized：Y 已授权、N 未授权；字段缺失或未知取值按已授权兜底，
+ * 与 MCP 市场对旧后台的口径一致。后台对 is_default=1 统一下发 Y，客户端不做特例。
+ */
+const authorizedOf = (value: unknown): boolean => {
+  if (value === false || value === 0) return false;
+  const raw = text(value).trim().toUpperCase();
+  return raw !== 'N';
+};
+
+/** applyStatus：只接受四个已知取值，其它（含缺省）按 none（未申请）处理。 */
+const applyStatusOf = (value: unknown): ModelApplyStatus => {
+  const raw = text(value).trim().toLowerCase();
+  return raw === 'pending' || raw === 'approved' || raw === 'rejected' ? raw : 'none';
+};
 
 const record = (value: unknown): Record<string, unknown> | undefined =>
   value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
@@ -95,6 +111,9 @@ export function normalizeModel(value: unknown): ModelMarketModel | undefined {
     departName: text(row.depart_dictText),
     createTime: text(row.createTime),
     updateTime: text(row.updateTime),
+    authorized: authorizedOf(row.isAuthorized),
+    applyStatus: applyStatusOf(row.applyStatus),
+    ...(text(row.assetId).trim() ? { assetId: text(row.assetId).trim() } : {}),
   };
 }
 
@@ -152,8 +171,39 @@ export class ModelMarketBackend {
       modelType: input.modelType?.trim() || undefined,
       apiProtocol: input.apiProtocol?.trim() || undefined,
       isDefault: input.isDefault ? '1' : undefined,
+      authStatus: input.authStatus,
+      applyStatus: input.applyStatus,
     };
     return pageOf(await this.request(channel => channel.get(this.paths.list, query, signal)));
+  }
+
+  /**
+   * 后台管理系统单点地址：用通用后台通道生成加密参数后拼到入口地址上。
+   * 通道缺失、不可用或参数生成失败时退回纯地址并标记 degraded，由界面提示用户手动登录。
+   */
+  async adminSsoTarget(
+    menuId: string,
+    bizParams: Readonly<Record<string, string>>,
+    ssoUrl: string,
+    signal?: AbortSignal,
+  ): Promise<ModelAdminSsoTarget> {
+    const fallback: ModelAdminSsoTarget = { url: ssoUrl, degraded: true };
+    const channel = this.channel();
+    if (!channel) return fallback;
+    try {
+      if (!(await channel.available())) return fallback;
+    } catch {
+      return fallback;
+    }
+    const path = this.paths.ssoParams?.trim() || '';
+    if (!path) return fallback;
+    try {
+      const result = await channel.post(path, { menuId, bizParams }, undefined, signal);
+      if (typeof result !== 'string' || !result.trim()) return fallback;
+      return { url: `${ssoUrl}?params=${encodeURIComponent(result.trim())}`, degraded: false };
+    } catch {
+      return fallback;
+    }
   }
 
   /** 按主键取一条完整记录（含 apiKey，只在 Host 内使用）。 */

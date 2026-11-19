@@ -33,6 +33,14 @@ export const modelMarketCss = `
 .wd-model-market .mm-filters{display:flex;align-items:center;gap:8px;flex:0 0 auto}
 @media (max-width:560px){.wd-model-market .mm-tools{flex-wrap:wrap}}
 .wd-model-market .mm-select{height:32px;padding:0 10px;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary)}
+/* 第二行状态筛选：技能市场同款胶囊，窄屏自动换行。 */
+.wd-model-market .mm-status-filters{display:flex;flex-wrap:wrap;align-items:center;gap:10px 18px;margin:-6px 0 16px;min-width:0;max-width:100%}
+.wd-model-market .mm-filter-group{display:flex;align-items:center;gap:7px;min-width:0;max-width:100%;flex-wrap:wrap}
+.wd-model-market .mm-filter-label{flex:none;font-size:13px;font-weight:600;color:var(--dsw-alias-label-secondary)}
+.wd-model-market .mm-pills{display:flex;flex-wrap:wrap;gap:2px;min-width:0}
+.wd-model-market .mm-pills button{min-height:28px;padding:3px 9px;border:0;border-radius:7px;background:transparent;color:var(--dsw-alias-label-secondary);font-size:13px;line-height:20px;white-space:nowrap;cursor:pointer}
+.wd-model-market .mm-pills button:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.wd-model-market .mm-pills button.active{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);font-weight:600}
 .wd-model-market .mm-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 /* 模型市场区：覆盖层只罩这一块，标题、搜索与筛选保持可点。 */
 .wd-model-market .mm-content{position:relative;min-height:120px}
@@ -52,6 +60,11 @@ export const modelMarketCss = `
 .wd-model-market .mm-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:auto;padding-top:7px}
 .wd-model-market .mm-foot-left{display:inline-flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap}
 .wd-model-market .mm-card-actions{display:inline-flex;align-items:center;gap:8px;flex:none}
+/* 市场卡片：操作按钮独立成行并右对齐（本地卡片仍沿用行内布局）。 */
+.wd-model-market .mm-card-actions.is-row{display:flex;justify-content:flex-end;flex-wrap:wrap}
+/* 规格项：字段名直接展示在胶囊前，不再依赖悬浮提示。 */
+.wd-model-market .mm-spec{display:inline-flex;align-items:center;gap:5px;font-size:12px;line-height:20px;color:var(--dsw-alias-label-tertiary);white-space:nowrap}
+.wd-model-market .mm-spec-label{font-weight:400}
 .wd-model-market .mm-state{display:inline-flex;align-items:center;flex:none;height:20px;padding:0 5px;border:1px solid #d9d9d9;border-radius:4px;background:#f5f5f5;color:#434343;font-size:12px;line-height:18px;white-space:nowrap}
 .wd-model-market .mm-state.on{background:#f6ffed;border-color:#b7eb8f;color:#389e0d}
 /* 状态/分类标签：与技能市场 a-tag 同规格，配色由面板按字典逐项注入。 */
@@ -196,5 +209,23 @@ export const modelMarketCss = `
 .wd-model-market .mm-reasoning-error{margin:0;color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:18px}
 .wd-model-market .mm-form-actions{display:flex;justify-content:flex-end;gap:8px;padding-top:4px}
 .wd-model-market .mm-form-actions .mm-action{height:32px;min-width:80px}
+
+/* ------------------------------------------------------------ 自定义模型弹窗
+   添加 / 编辑本地模型统一在设置面板上层弹窗：遮罩盖住整窗，弹窗居中，
+   关闭后设置仍停在模型管理列表。 */
+.mm-modal-mask{position:fixed;inset:0;z-index:2147483000;display:grid;place-items:center;padding:24px;background:var(--dsw-alias-bg-mask-2,rgba(0,0,0,.32));animation:wd-mm-mask-in .12s ease-out}
+.mm-modal{display:flex;flex-direction:column;box-sizing:border-box;width:min(760px,100%);max-height:min(84vh,760px);border:1px solid var(--dsw-alias-border-l2);border-radius:16px;background:var(--dsw-alias-bg-base);box-shadow:0 24px 64px rgba(0,0,0,.28);overflow:hidden}
+.mm-modal *{box-sizing:border-box}
+.mm-modal-head{display:flex;align-items:center;gap:12px;flex:none;padding:12px 16px;border-bottom:1px solid var(--dsw-alias-border-l2)}
+.mm-modal-title{font-size:15px;line-height:22px;font-weight:600;color:var(--dsw-alias-label-primary);font-family:var(--dsw-font-family)}
+.mm-modal-close{display:grid;place-items:center;flex:none;width:28px;height:28px;margin-left:auto;padding:0;border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-tertiary);cursor:pointer}
+.mm-modal-close:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.mm-modal-close:disabled{cursor:not-allowed;opacity:.55}
+.mm-modal-body{flex:1 1 auto;min-height:0;padding:14px 16px 16px;overflow:auto;--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2)}
+/* 弹窗自带标题与关闭按钮：隐藏表单内部的「返回模型列表」，底部仍有取消。 */
+.mm-modal-body .wd-model-market{height:auto;padding:0;overflow:visible}
+.mm-modal-body .mm-back{display:none}
+@keyframes wd-mm-mask-in{from{opacity:0}to{opacity:1}}
+@media (max-width:560px){.mm-modal-mask{padding:10px}.mm-modal{max-height:calc(100vh - 20px)}}
 }
 `;

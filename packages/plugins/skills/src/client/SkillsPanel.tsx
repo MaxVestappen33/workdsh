@@ -162,6 +162,8 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
   const applicationGenerationRef = useRef(0);
   /** 关键词防抖计时器：市场关键词由服务端筛选，输入停顿后才发请求。 */
   const queryTimerRef = useRef<number>(undefined);
+  /** 点过申请/取消申请后置位：用户从后台回到页面时消费一次，补拉一次市场列表。 */
+  const pendingAuthRefresh = useRef(false);
 
   /** `silent`：后台重拉（如回到窗口），不切到骨架屏，避免列表闪一下。 */
   const refresh = useCallback(async (silent = false) => {
@@ -236,6 +238,31 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
   useEffect(() => {
     if (!marketOn && (tab === 'market' || tab === 'applications')) setTab('local');
   }, [marketOn, tab]);
+
+  /**
+   * 切屏刷新：市场列表平时完全不做隐式轮询；只有用户点过申请/取消申请，
+   * 从后台回到本页时才补拉一次，之后继续回到「不自动查询」。
+   */
+  useEffect(() => {
+    // Electron 切回窗口通常只有 window focus，没有 visibilitychange，两个信号都听。
+    const onReturn = (): void => {
+      if (!pendingAuthRefresh.current) return;
+      pendingAuthRefresh.current = false;
+      if (tab === 'market' && marketOn) {
+        void loadMarket({ scenes, keyword: query, builtin: builtinFilter, install: installFilter, auth: authFilter, apply: applyFilter });
+      }
+    };
+    const onVisible = (): void => {
+      if (document.visibilityState !== 'visible') return;
+      onReturn();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onReturn);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onReturn);
+    };
+  }, [tab, marketOn, loadMarket, scenes, query, builtinFilter, installFilter, authFilter, applyFilter]);
 
   /** 表单字典：技能类型 / 审批状态 / 来源节点 / 业务场景树。后台不可用时保持空，入口照常展示但表单会提示。 */
   const loadListingOptions = useCallback(async () => {
@@ -542,6 +569,8 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
       const target = SKILL_AUTH_SSO[action];
       if (!target.menuId) { setNotice('授权申请跳转地址待配置，请联系管理员。'); return; }
       const result = await management.adminSsoFor(target.menuId, { ...target.bizParams, assetId: entry.id });
+      // 申请状态要等用户在后台操作完才变化：记一个标记，回到本页时补拉一次。
+      pendingAuthRefresh.current = true;
       if (result.degraded) setSsoPromptUrl(result.url);
       else openAdminSso(result.url);
     } catch (cause) { setError(messageOf(cause)); }

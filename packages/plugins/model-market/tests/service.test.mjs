@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { ModelMarketService } from '../dist/service.js';
+import { modelRequestGuard } from '../dist/index.js';
 
 async function until(check, timeout = 10_000) {
   const deadline = Date.now() + timeout;
@@ -68,6 +69,7 @@ function harness(models, options = {}) {
   const channel = {
     async available() { return true; },
     async get(_path, query) {
+      if (options.fail?.value) throw new Error('backend down');
       // isDefault=1 的列表查询由 ensureDefaults 的种子流程使用。
       if (query?.isDefault === '1') {
         return { records: defaults, total: defaults.length, pages: defaults.length ? 1 : 0, size: 100, current: 1 };
@@ -98,7 +100,7 @@ function harness(models, options = {}) {
   return { ctx, sections, secrets, calls };
 }
 
-test('资产闸门开启时过滤未授权模型并拒绝未授权安装', async () => {
+test('列表不再按读权限过滤，未授权安装仍被闸门拒绝', async () => {
   const home = await mkdtemp(join(tmpdir(), 'workdsh-model-market-service-'));
   const previous = process.env.DSH_HOME;
   process.env.DSH_HOME = home;
@@ -118,7 +120,8 @@ test('资产闸门开启时过滤未授权模型并拒绝未授权安装', async
     const { ctx } = harness(models, { gate });
     const service = new ModelMarketService(ctx, {});
 
-    assert.deepEqual((await service.list({})).records.map(row => row.id), ['1']);
+    // 读阶段不再过滤：未授权条目必须留在列表里，界面才能展示「未授权 + 申请」。
+    assert.deepEqual((await service.list({})).records.map(row => row.id), ['1', '2']);
     await assert.rejects(() => service.install('2'), error => error.code === 'gate/denied-not-entitled');
     // 已授权模型可安装，卸载始终放行。
     await service.install('1');
@@ -272,6 +275,106 @@ test('执行期反查按 route + modelCode 命中，且按账号隔离', async (
     else process.env.DSH_HOME = previous;
     await rm(home, { recursive: true, force: true });
   }
+});
+
+test('执行期授权：默认模型直接放行，其余市场模型按授权快照判定，自建豁免', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'workdsh-model-market-auth-'));
+  try {
+    const models = {
+      1: { ...base, id: '1', modelName: 'DeepSeek-V4.1-Flash', modelCode: 'deepseek-flash', isDefault: '1', apiKey: 'sk-1' },
+      2: { ...base, id: '2', modelName: 'DeepSeek-V4-Pro', modelCode: 'deepseek-pro', isDefault: '0', apiKey: 'sk-1' },
+    };
+    const snapshot = { current: { revision: 'r1', assets: { model: ['1', '2'] } } };
+    let refreshes = 0;
+    const gate = {
+      enabled: () => true,
+      async decide() { return { allow: true, reason: 'gate/allowed-entitled', message: '已授权。' }; },
+      snapshot: () => snapshot.current,
+      refreshNow() { refreshes += 1; },
+    };
+    const service = new ModelMarketService(harness(models, { gate }).ctx, { stateDir: home });
+    await service.install('1');
+    await service.install('2');
+
+    // 快照命中即已授权；同时会触发一次快照刷新。
+    snapshot.current = { revision: 'r2', assets: { model: ['2'] } };
+    assert.equal(await service.authorizationOf('workdsh-deepseek', 'deepseek-pro'), 'authorized');
+    assert.ok(refreshes > 0, '判定前应触发快照刷新');
+
+    // 本地不再有默认模型豁免：is_default=1 的模型不在快照里同样按未授权处理。
+    assert.equal(await service.authorizationOf('workdsh-deepseek', 'deepseek-flash'), 'unauthorized');
+
+    // revision 变化后按新快照重建：不在名单里的市场模型 → 未授权。
+    snapshot.current = { revision: 'r3', assets: { model: [] } };
+    assert.equal(await service.authorizationOf('workdsh-deepseek', 'deepseek-pro'), 'unauthorized');
+
+    // 主闸门关闭 / 拿不到快照：市场模型一律未授权。
+    const noGate = new ModelMarketService(harness(models).ctx, { stateDir: home });
+    assert.equal(await noGate.authorizationOf('workdsh-deepseek', 'deepseek-flash'), 'unauthorized');
+    assert.equal(await noGate.authorizationOf('workdsh-deepseek', 'deepseek-pro'), 'unauthorized');
+
+    // 资产换过 route 后仍按模型认出同一 assetId；老记录没有 manifest 时用记录键兜底。
+    const recordsFile = join(home, 'market-installs.json');
+    const records = JSON.parse(await readFile(recordsFile, 'utf8'));
+    records.installs['2'].route = 'workdsh-renamed';
+    delete records.installs['2'].manifest;
+    await writeFile(recordsFile, JSON.stringify(records), 'utf8');
+    snapshot.current = { revision: 'r4', assets: { model: ['2'] } };
+    assert.equal(await service.authorizationOf('workdsh-renamed', 'deepseek-pro'), 'authorized');
+    snapshot.current = { revision: 'r5', assets: { model: [] } };
+    assert.equal(await service.authorizationOf('workdsh-renamed', 'deepseek-pro'), 'unauthorized');
+
+    // 非市场来源（自建/未登记）完全豁免。
+    await service.customInstall({
+      providerId: 'acme-gateway', displayName: 'Acme', apiUrl: 'https://gw.example/v1',
+      apiProtocol: 'openai-completions', apiKey: 'sk-custom',
+      models: [{ id: 'acme-think', name: 'Acme Think', input: ['text'] }],
+    });
+    assert.equal(await service.authorizationOf('acme-gateway', 'acme-think'), 'authorized');
+    assert.equal(await service.authorizationOf('unknown-route', 'whatever'), 'authorized');
+
+    // 批量接口与单条口径一致。
+    assert.deepEqual(await service.authorizationsOf([
+      { provider: 'workdsh-renamed', model: 'deepseek-pro' },
+      { provider: 'acme-gateway', model: 'acme-think' },
+    ]), [
+      { provider: 'workdsh-renamed', model: 'deepseek-pro', state: 'unauthorized' },
+      { provider: 'acme-gateway', model: 'acme-think', state: 'authorized' },
+    ]);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('调用期拦截：未授权抛错，未知/异常/中断一律放行', async () => {
+  const live = new AbortController();
+  const next = async () => ({ provider: 'workdsh-deepseek', model: 'deepseek-flash' });
+  const expected = { provider: 'workdsh-deepseek', model: 'deepseek-flash' };
+
+  const denied = modelRequestGuard({ async authorizationOf() { return 'unauthorized'; } });
+  await assert.rejects(
+    () => denied({ signal: live.signal }, next),
+    error => error.message === '授权已失效，请重新申请。',
+  );
+
+  for (const state of ['authorized', 'unknown']) {
+    const guard = modelRequestGuard({ async authorizationOf() { return state; } });
+    assert.deepEqual(await guard({ signal: live.signal }, next), expected);
+  }
+
+  // 判定抛异常按「取不到授权状态」放行，只记一条日志。
+  const warnings = [];
+  const failed = modelRequestGuard({ async authorizationOf() { throw new Error('boom'); } }, message => warnings.push(message));
+  assert.deepEqual(await failed({ signal: live.signal }, next), expected);
+  assert.equal(warnings.length, 1);
+
+  // 本轮已中断：不再判定。
+  const aborted = new AbortController();
+  aborted.abort();
+  let called = 0;
+  const idle = modelRequestGuard({ async authorizationOf() { called += 1; return 'unauthorized'; } });
+  assert.deepEqual(await idle({ signal: aborted.signal }, next), expected);
+  assert.equal(called, 0);
 });
 
 test('自定义模型安装、列出与卸载', async () => {

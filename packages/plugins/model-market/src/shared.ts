@@ -1,10 +1,39 @@
 /** 模型市场的公共类型、字典与纯函数；Host 与 Client 共用。 */
 
+/** 授权申请状态：与后台 applyStatus 同口径，缺省 none（未申请）。 */
+export type ModelApplyStatus = 'none' | 'pending' | 'approved' | 'rejected';
+
+/** 后台管理系统的单点地址：degraded 时只拿到纯登录地址，界面据此提示手动打开。 */
+export interface ModelAdminSsoTarget {
+  readonly url: string;
+  readonly degraded: boolean;
+}
+
+/**
+ * 已安装市场模型的执行期授权状态：
+ * - `authorized`：有授权，或不是市场来源（用户自建模型完全豁免）；
+ * - `unauthorized`：后台明确判定未授权；
+ * - `unknown`：取不到授权状态（后台不可用等）——调用方按放行处理。
+ */
+export type ModelAuthorizationState = 'authorized' | 'unauthorized' | 'unknown';
+
+/** 授权状态查询的一条输入：provider 路由名 + 模型标识，与模型选择器的分组一一对应。 */
+export interface ModelAuthorizationQuery {
+  readonly provider: string;
+  readonly model: string;
+}
+
+export interface ModelAuthorizationEntry extends ModelAuthorizationQuery {
+  readonly state: ModelAuthorizationState;
+}
+
 export interface ModelMarketPaths {
   /** 已授权模型列表（GET）。 */
   readonly list: string;
   /** 资产操作记录上报（POST）：安装/卸载完成后实时上报一条事件，宿主可覆盖。 */
   readonly report?: string;
+  /** 后台单点登录参数接口（POST）：生成申请/取消申请跳转用的加密参数。 */
+  readonly ssoParams?: string;
 }
 
 /**
@@ -15,6 +44,7 @@ export interface ModelMarketPaths {
 export const DEFAULT_MODEL_MARKET_PATHS: ModelMarketPaths = {
   list: '/desktop-client/model/queryAuthorizedModelList',
   report: '/desktop-client/asset/operation/report',
+  ssoParams: '/sys/generateCasLoginParams',
 };
 
 /** 后台字典（与 jeecg 字典 model_provider 一致）。 */
@@ -148,6 +178,10 @@ export interface ModelMarketQuery {
   readonly modelType?: string;
   readonly apiProtocol?: string;
   readonly isDefault?: boolean;
+  /** 授权状态：下发为 `authStatus`（Y 已授权、N 未授权）；缺省表示不筛选。 */
+  readonly authStatus?: 'Y' | 'N';
+  /** 授权申请状态：下发为 `applyStatus`；缺省表示不筛选。 */
+  readonly applyStatus?: ModelApplyStatus;
 }
 
 /** 发给界面展示的模型信息：永远不包含 apiKey。 */
@@ -180,6 +214,15 @@ export interface ModelMarketModel {
   readonly departName: string;
   readonly createTime: string;
   readonly updateTime: string;
+  /**
+   * 后台授权状态（isAuthorized：Y/N）。字段缺失或未知取值按已授权处理，
+   * 与 MCP 市场对旧后台的兜底一致，避免灰度期把所有模型显示成「未授权」。
+   */
+  readonly authorized: boolean;
+  /** 后台授权申请状态（applyStatus）：缺省或未知取值按 none（未申请）处理。 */
+  readonly applyStatus: ModelApplyStatus;
+  /** 后台资产编号：与主键不同时用于发起授权申请，缺省回退主键。 */
+  readonly assetId?: string;
 }
 
 export interface ModelMarketPage {

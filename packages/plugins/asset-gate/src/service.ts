@@ -75,6 +75,11 @@ export interface AssetGateApi {
    */
   refreshNow(): Promise<void>;
   /**
+   * 忽略本地 revision 拉一次完整快照（仍受单飞与 15 秒节流）：
+   * 后台在授权变化时不推进 revision 时，用它保证能拿到最新授权名单。
+   */
+  refreshNowFull(): Promise<void>;
+  /**
    * 强制刷新快照：写操作被「快照里没有该资产」这类可刷新修复的原因拒绝后调用，
    * 绕过节流与定时安排立即重拉一次；返回 true 表示本次刷新成功拿到可用快照。
    */
@@ -300,9 +305,9 @@ export class AssetGateService extends Service implements AssetGateApi {
     return (await this.pull(signal)).record;
   }
 
-  sync(signal?: AbortSignal): Promise<void> {
+  sync(signal?: AbortSignal, full = false): Promise<void> {
     if (this.running) return this.running;
-    this.running = this.runSync(signal).finally(() => { this.running = undefined; });
+    this.running = this.runSync(signal, full).finally(() => { this.running = undefined; });
     return this.running;
   }
 
@@ -314,6 +319,13 @@ export class AssetGateService extends Service implements AssetGateApi {
     // 节流：刚校验过就跳过，避免连续切页签/重复刷新打出一串 revision 请求。
     if (Date.now() - this.lastSyncAt < TRIGGER_MIN_INTERVAL_MS) return;
     await this.sync();
+  }
+
+  async refreshNowFull(): Promise<void> {
+    if (!this.effective.masterEnabled || this.disposed) return;
+    if (this.running) return this.running;
+    if (Date.now() - this.lastSyncAt < TRIGGER_MIN_INTERVAL_MS) return;
+    await this.sync(undefined, true);
   }
 
   /**
@@ -560,7 +572,7 @@ export class AssetGateService extends Service implements AssetGateApi {
    * 下一轮的间隔取「方案周期」与「快照 staleAt 距离现在」的较小值：到 staleAt 先重拉，
    * 成功就用新的 staleAt 续上；失败或拉到的仍是过期快照则按退避重试。
    */
-  private async runSync(signal?: AbortSignal): Promise<void> {
+  private async runSync(signal?: AbortSignal, full = false): Promise<void> {
     this.clearTimer();
     if (this.disposed) return;
     try {
@@ -583,7 +595,7 @@ export class AssetGateService extends Service implements AssetGateApi {
         return;
       }
       this.lastSyncAt = Date.now();
-      const { ok, record } = await this.pull(signal);
+      const { ok, record } = await this.pull(signal, full);
       const now = Date.now();
       if (ok && record && !snapshotExpired(record.staleAt, now)) {
         this.failures = 0;
@@ -598,7 +610,7 @@ export class AssetGateService extends Service implements AssetGateApi {
   }
 
   /** 拉取快照；ok 表示后台请求成功（即便返回 unchanged）。 */
-  private async pull(signal?: AbortSignal): Promise<{ ok: boolean; record?: SnapshotRecord }> {
+  private async pull(signal?: AbortSignal, full = false): Promise<{ ok: boolean; record?: SnapshotRecord }> {
     // 零开销：主闸门关闭时到此为止——不解析身份、不请求接口、不读快照、不算哈希。
     if (!this.effective.masterEnabled) return { ok: true };
 
@@ -621,7 +633,8 @@ export class AssetGateService extends Service implements AssetGateApi {
     }
 
     try {
-      let result = await this.backend.snapshot(cached?.revision, signal);
+      // full：忽略本地 revision 直接要整份快照，后台不推进 revision 也能拿到最新名单。
+      let result = await this.backend.snapshot(full ? undefined : cached?.revision, signal);
       if (result.unchanged && !cached) result = await this.backend.snapshot(undefined, signal);
       if (result.unchanged) {
         if (cached) {

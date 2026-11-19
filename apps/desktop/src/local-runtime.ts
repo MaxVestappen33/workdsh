@@ -325,15 +325,20 @@ export function desktopModelMarketPatch(home: string, server: ServerConfig, stat
     ['list', server.modelMarketListPath],
     // 安装/卸载完成后统一实时上报到资产操作记录接口（旧 useModel/unUseModel 已下线）。
     ['report', server.assetOperationReportPath],
+    // 授权申请/取消申请的单点登录参数接口：与技能/MCP 授权申请共用同一通道。
+    ['ssoParams', server.adminSsoParamsPath],
   ] as const).flatMap(([name, value]) => (typeof value === 'string' && /^\//u.test(value) ? [[name, value] as const] : []))
   // 资产操作记录的 clientId 取载体配置的 appId（与版本检查同源），不再使用设备 UUID。
   const clientId = typeof server.appId === 'string' && server.appId.trim() ? server.appId.trim() : undefined
-  if (rows.length === 0 && stateDir === undefined && clientId === undefined) return undefined
+  // 后台管理系统入口：申请/取消申请由界面在这个地址后追加登录参数。
+  const ssoUrl = typeof server.adminSsoUrl === 'string' && /^https?:\/\//u.test(server.adminSsoUrl) ? server.adminSsoUrl : undefined
+  if (rows.length === 0 && stateDir === undefined && clientId === undefined && ssoUrl === undefined) return undefined
   const paths = rows.length === 0 ? '' : `    paths:\n${rows.map(([name, value]) => `      ${name}: ${JSON.stringify(value)}\n`).join('')}`
   const client = clientId === undefined ? '' : `    clientId: ${JSON.stringify(clientId)}\n`
   const state = stateDir === undefined ? '' : `    stateDir: ${JSON.stringify(stateDir)}\n`
+  const sso = ssoUrl === undefined ? '' : `    ssoUrl: ${JSON.stringify(ssoUrl)}\n`
   const patch = join(home, '.model-market.patch.yml')
-  writeFileSync(patch, `- id: workdsh-model-market\n  config:\n${client}${paths}${state}`, { mode: 0o600 })
+  writeFileSync(patch, `- id: workdsh-model-market\n  config:\n${client}${paths}${state}${sso}`, { mode: 0o600 })
   return patch
 }
 

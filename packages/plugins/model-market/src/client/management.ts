@@ -1,6 +1,7 @@
 import type {} from '@deepseek-ai/dsh-client-connection/client';
 import type {
   CustomModelDefinition, CustomModelDraft, CustomModelEntry,
+  ModelAdminSsoTarget, ModelAuthorizationEntry, ModelAuthorizationQuery,
   ModelMarketDetail, ModelMarketInstallResult, ModelMarketPage, ModelMarketQuery,
   ModelMarketUninstallResult,
 } from '../shared.js';
@@ -48,6 +49,12 @@ export function createModelMarketClient(lifetime?: AbortSignal) {
     available: () => invoke<{ available: boolean }>('available', {}, lifetime),
     list: (query: ModelMarketQuery) => invoke<ModelMarketPage>('list', query, lifetime),
     detail: (id: string) => invoke<ModelMarketDetail>('detail', { id }, lifetime),
+    /** 授权申请/取消申请：拿后台管理系统的单点地址（degraded 时只有登录页）。 */
+    marketSso: (menuId: string, bizParams: Readonly<Record<string, string>>) =>
+      invoke<ModelAdminSsoTarget>('market-sso', { menuId, bizParams }, lifetime),
+    /** 模型选择器：批量取已安装市场模型的执行期授权状态。 */
+    modelAuthorizations: (models: readonly ModelAuthorizationQuery[]) =>
+      invoke<readonly ModelAuthorizationEntry[]>('model-authorizations', { models }, lifetime),
     install: (id: string) => invoke<ModelMarketInstallResult>('install', { id }, lifetime, MUTATE_TIMEOUT_MS),
     uninstall: (id: string) => invoke<ModelMarketUninstallResult>('uninstall', { id }, lifetime, MUTATE_TIMEOUT_MS),
     customList: () => invoke<readonly CustomModelEntry[]>('custom-list', {}, lifetime),

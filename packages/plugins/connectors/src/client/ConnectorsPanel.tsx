@@ -119,6 +119,8 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
   const generationRef = useRef(0);
   /** 关键词防抖计时器：市场关键词由服务端筛选，输入停顿后才发请求。 */
   const queryTimerRef = useRef<number>(undefined);
+  /** 点过申请/取消申请后置位：用户从后台回到页面时消费一次，补拉一次市场列表。 */
+  const pendingAuthRefresh = useRef(false);
 
   /** 本地实例分类：安装时落盘的市场分类名称（bizSceneList 文案），多个用「 · 」分隔；自建实例为空。 */
   const categoryOf = useCallback((row: ConnectorSummary) => (row.categories ?? []).join(' · '), []);
@@ -237,6 +239,29 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
   useEffect(() => {
     if (!marketOn && tab === 'market') setTab('local');
   }, [marketOn, tab]);
+
+  /**
+   * 切屏刷新：市场列表平时完全不做隐式轮询；只有用户点过申请/取消申请，
+   * 从后台回到本页时才补拉一次，之后继续回到「不自动查询」。
+   */
+  useEffect(() => {
+    // Electron 切回窗口通常只有 window focus，没有 visibilitychange，两个信号都听。
+    const onReturn = (): void => {
+      if (!pendingAuthRefresh.current) return;
+      pendingAuthRefresh.current = false;
+      if (tab === 'market' && marketOn) void loadMarket(filter);
+    };
+    const onVisible = (): void => {
+      if (document.visibilityState !== 'visible') return;
+      onReturn();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onReturn);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onReturn);
+    };
+  }, [tab, marketOn, loadMarket, filter]);
 
   /**
    * 全量授权索引：本地实例的授权/申请状态只能来自后台索引；
@@ -561,6 +586,8 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
       const target = MCP_AUTH_SSO[action];
       if (!target.menuId) { setNotice('MCP 授权申请跳转地址待配置，请联系管理员。'); return; }
       const result = await management.marketSso(target.menuId, { ...target.bizParams, assetId });
+      // 申请状态要等用户在后台操作完才变化：记一个标记，回到本页时补拉一次。
+      pendingAuthRefresh.current = true;
       if (result.degraded) setSsoPromptUrl(result.url);
       else openAdminSso(result.url);
     } catch (cause) {

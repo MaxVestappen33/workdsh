@@ -6,6 +6,7 @@ import {
   CUSTOM_API_PROTOCOLS, CUSTOM_PROVIDER_ID, DEFAULT_MODEL_MARKET_PATHS, REASONING_LEVELS,
   installability, modelRouteEntry, protocolApi, validateReasoningEfforts,
   type CustomModelDefinition, type CustomModelDraft, type CustomModelEntry, type CustomReasoningEfforts,
+  type ModelAdminSsoTarget, type ModelAuthorizationEntry, type ModelAuthorizationQuery, type ModelAuthorizationState,
   type ModelMarketDetail, type ModelMarketInstallResult, type ModelMarketModel, type ModelMarketPage,
   type ModelMarketPaths, type ModelMarketQuery, type ModelMarketUninstallResult,
 } from './shared.js';
@@ -21,6 +22,8 @@ const DEFAULT_MODEL_NS = 'agent-default-model';
 const DEFAULT_PAGE_SIZE = 100;
 const DEFAULT_RETRY_MIN_MS = 15_000;
 const DEFAULT_RETRY_MAX_MS = 300_000;
+/** 后台管理系统入口缺省值；与技能/MCP 市场同一地址，由宿主按 workdsh-app.json 覆盖。 */
+const DEFAULT_ADMIN_SSO_URL = 'http://localhost:3100/clientSSO';
 
 /**
  * 资产闸门是可选宿主能力：缺失、关闭或 model 子闸门未开启时完全透明，
@@ -43,6 +46,18 @@ interface AssetGateLike {
     readonly assetId?: string;
     readonly assetName?: string;
   }): void;
+  /** 当前授权快照（主闸门关闭或尚未就绪时不可用）；`assets.model` 是已授权的模型资产编号。 */
+  snapshot?(): {
+    readonly revision: string;
+    readonly assets: { readonly model: readonly string[] };
+  } | undefined;
+  /** 触发一次快照刷新；实现内部自带节流，失败由实现吞掉。 */
+  refreshNow?(): void;
+  /**
+   * 忽略本地 revision 的整份快照刷新（内部有 15 秒节流）：
+   * 后台在授权变化时不推进 revision 时，用它拿最新名单。
+   */
+  refreshNowFull?(): Promise<void>;
   /** 关键写操作审计；同样只入队、不阻断业务。 */
   auditWrite?(input: {
     readonly action: GateAuditAction;
@@ -118,20 +133,6 @@ async function gateAllows(ctx: Context, assetId: string): Promise<boolean> {
   const gate = assetGate(ctx);
   if (!gate?.enabled('model')) return true;
   return (await gate.decide({ assetType: 'model', assetId, usage: 'write' })).allow;
-}
-
-async function visibleModels<T>(ctx: Context, rows: readonly T[], idOf: (row: T) => string | undefined): Promise<readonly T[]> {
-  const gate = assetGate(ctx);
-  if (!gate?.enabled('model')) return rows;
-  // 进市场页签/刷新/写操作后都会走到这里：先做一次 revision 校验（单飞 + 节流）。
-  await gate.refreshNow?.();
-  const visible: T[] = [];
-  for (const row of rows) {
-    const id = idOf(row);
-    if (id === undefined) continue;
-    if ((await gate.decide({ assetType: 'model', assetId: id, usage: 'read' })).allow) visible.push(row);
-  }
-  return visible;
 }
 
 type SettingsPathOp =
@@ -343,6 +344,8 @@ export interface ModelMarketOptions {
   readonly stateDir?: string;
   /** 客户端应用标识：由宿主（Desktop）从 ServerConfig.appId 注入，用于资产操作记录。 */
   readonly clientId?: string;
+  /** 后台管理系统入口地址：由宿主注入 ServerConfig.adminSsoUrl，缺省回退内置地址。 */
+  readonly ssoUrl?: string;
 }
 
 /** 反查结果只保留判定需要的信息：来源标记与后台资产编号。 */
@@ -373,6 +376,16 @@ export interface ModelMarketServiceApi {
   customUninstall(key: string): Promise<ModelMarketUninstallResult>;
   /** 用当前表单的地址、协议和密钥探测可用的模型目录。 */
   customDiscover(input: unknown): Promise<readonly CustomModelDefinition[]>;
+  /** 授权申请/取消申请的后台单点地址：菜单与业务参数由界面给出。 */
+  adminSsoTarget(menuId: string, bizParams: Readonly<Record<string, string>>, signal?: AbortSignal): Promise<ModelAdminSsoTarget>;
+  /**
+   * 执行期授权状态：按 provider 路由 + 模型标识反查安装记录。
+   * 非市场来源完全豁免；市场来源查后台授权（缓存 60 秒，取不到时沿用上次已知结论，
+   * 从未取到过则返回 unknown 由调用方放行）。
+   */
+  authorizationOf(provider: string, model: string, signal?: AbortSignal): Promise<ModelAuthorizationState>;
+  /** 批量授权状态：模型选择器一次取全，避免逐个往返。 */
+  authorizationsOf(items: readonly ModelAuthorizationQuery[], signal?: AbortSignal): Promise<readonly ModelAuthorizationEntry[]>;
   /** 一次性回填：为旧安装记录补写安装清单；幂等、可重复执行。 */
   backfillInstallManifests(): Promise<{ readonly scanned: number; readonly written: number; readonly failed: number }>;
 }
@@ -389,6 +402,13 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
   private readonly clientId: string | undefined;
   /** 资产操作记录接口路径：宿主注入优先，否则用内置缺省值。 */
   private readonly reportPath: string;
+  /** 后台管理系统入口：宿主注入 ServerConfig.adminSsoUrl，缺省回退本机地址。 */
+  private readonly ssoUrl: string;
+  /**
+   * 授权判定改成读资产授权快照：按 snapshot.revision 记忆已授权集合，
+   * revision 变化时重建；主闸门关闭拿不到快照时返回 undefined。
+   */
+  private authMemo?: { readonly revision: string; readonly entitled: ReadonlySet<string> };
   /** 串行化安装/卸载与默认模型种子，避免同一配置被并发写坏。 */
   private serial: Promise<unknown> = Promise.resolve();
   private defaultsTimer?: ReturnType<typeof setTimeout>;
@@ -404,6 +424,8 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
     this.clientId = options.clientId;
     this.recordsFile = marketRecordFile(options.stateDir);
     this.reportPath = options.paths?.report?.trim() || DEFAULT_MODEL_MARKET_PATHS.report || ASSET_OPERATION_REPORT_PATH;
+    const sso = typeof options.ssoUrl === 'string' ? options.ssoUrl.trim() : '';
+    this.ssoUrl = /^https?:\/\//u.test(sso) ? sso.replace(/\/+$/u, '') : DEFAULT_ADMIN_SSO_URL;
     this.backend = new ModelMarketBackend(
       () => this.ctx.reflect.get('workdshBackend') as BackendChannelLike | undefined,
       paths,
@@ -424,15 +446,21 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
   }
 
   async list(input: ModelMarketQuery = {}, signal?: AbortSignal): Promise<ModelMarketPage> {
+    // 加载列表前先触发一次整份快照刷新（宿主内部有 15 秒节流），避免授权信息陈旧。
+    const refresh = assetGate(this.ctx)?.refreshNowFull?.();
+    if (refresh) void refresh.catch(() => {});
+    else assetGate(this.ctx)?.refreshNow?.();
     const page = await this.backend.list(input, signal);
     // 市场页被打开时也尝试补齐默认模型，避免用户必须先重启客户端。
     this.scheduleDefaults(0);
-    // 二次过滤：未授权的模型不下发给 UI；闸门关闭时原样返回。
-    return {
-      ...page,
-      records: await visibleModels(this.ctx, page.records, model => model.id),
-      installedIds: await this.installedIds(),
-    };
+    // 列表不再按读权限过滤：授权状态由后台 isAuthorized 下发并由界面展示，
+    // 未授权条目必须留在列表里，才能筛出「未授权」并给出申请入口；添加/移除仍由闸门拦截。
+    return { ...page, installedIds: await this.installedIds() };
+  }
+
+  /** 授权申请/取消申请的后台单点地址：菜单与业务参数由界面给出，宿主只负责生成参数。 */
+  async adminSsoTarget(menuId: string, bizParams: Readonly<Record<string, string>>, signal?: AbortSignal): Promise<ModelAdminSsoTarget> {
+    return this.backend.adminSsoTarget(menuId, bizParams, this.ssoUrl, signal);
   }
 
   async detail(id: string, signal?: AbortSignal): Promise<ModelMarketDetail> {
@@ -459,6 +487,69 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
       };
     }
     return undefined;
+  }
+
+  /**
+   * 执行期授权判定：先看后台默认模型（无需授权），再读资产授权快照。
+   * 自建/非市场模型一律已授权；主闸门关闭、拿不到快照时，市场模型按未授权处理。
+   */
+  async authorizationOf(provider: string, model: string, signal?: AbortSignal): Promise<ModelAuthorizationState> {
+    if (!provider || !model) return 'authorized';
+    const records = await readMarketRecords(this.recordsFile);
+    const assetId = this.marketAssetOf(records, provider, model);
+    if (assetId === undefined) return 'authorized';
+    assetGate(this.ctx)?.refreshNow?.();
+    return this.entitledIds()?.has(assetId) === true ? 'authorized' : 'unauthorized';
+  }
+
+  /**
+   * 模型选择器批量入口：与单个判定同一套口径，全程不产生后台模型查询。
+   */
+  async authorizationsOf(items: readonly ModelAuthorizationQuery[], signal?: AbortSignal): Promise<readonly ModelAuthorizationEntry[]> {
+    // 打开面板时强制要一份整份快照（15 秒节流内直接复用）；最多等 300ms，
+    // 慢的时候先用当前已恢复的快照出结论，不把面板拖住。
+    const refresh = assetGate(this.ctx)?.refreshNowFull?.();
+    if (refresh) await Promise.race([refresh.catch(() => {}), new Promise(resolve => setTimeout(resolve, 300))]);
+    else assetGate(this.ctx)?.refreshNow?.();
+    const records = await readMarketRecords(this.recordsFile);
+    const entitled = this.entitledIds();
+    return items.map(item => {
+      const assetId = this.marketAssetOf(records, item.provider, item.model);
+      const authorized = assetId === undefined || entitled?.has(assetId) === true;
+      return { provider: item.provider, model: item.model, state: authorized ? 'authorized' : 'unauthorized' };
+    });
+  }
+
+  /**
+   * 按后台资产编号反查市场安装记录：
+   * 先按 route + 模型精确匹配，再退化到只看模型——同一资产换过 route 时仍能认出；
+   * 自建 provider 及其模型直接豁免（返回 undefined，视为已授权）。
+   */
+  private marketAssetOf(records: MarketRecordFile, provider: string, model: string): string | undefined {
+    const entries = Object.entries(records.installs);
+    for (const [, install] of entries) {
+      if (install.kind === 'custom' && install.route === provider && install.modelCodes?.includes(model)) return undefined;
+    }
+    const market = entries.filter(([key, install]) => install.kind !== 'custom' && this.assetIdOf(key, install) !== undefined);
+    const matched = market.find(([, install]) => install.route === provider && install.modelCode === model)
+      ?? market.find(([, install]) => install.modelCode === model);
+    return matched ? this.assetIdOf(matched[0], matched[1]) : undefined;
+  }
+
+  /** 市场安装的资产编号：优先 manifest.assetId，老记录没有 manifest 时用数字记录键兜底。 */
+  private assetIdOf(key: string, install: InstallRecord): string | undefined {
+    const id = install.manifest?.assetId ?? key;
+    return /^\d+$/.test(id) ? id : undefined;
+  }
+
+  /** 快照里的已授权模型集合：按 revision 记忆；主闸门关闭或快照未就绪时返回 undefined。 */
+  private entitledIds(): ReadonlySet<string> | undefined {
+    const snapshot = assetGate(this.ctx)?.snapshot?.();
+    if (!snapshot) return undefined;
+    if (this.authMemo?.revision !== snapshot.revision) {
+      this.authMemo = { revision: snapshot.revision, entitled: new Set(snapshot.assets.model) };
+    }
+    return this.authMemo.entitled;
   }
 
   async install(id: string, signal?: AbortSignal): Promise<ModelMarketInstallResult> {

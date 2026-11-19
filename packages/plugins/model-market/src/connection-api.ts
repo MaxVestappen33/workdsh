@@ -3,8 +3,12 @@ import type { Context } from '@deepseek-ai/cordis';
 import type { ConnectionRpcResult, HostConnectionHandle } from '@deepseek-ai/dsh-client-connection';
 import { ModelMarketError } from './market.js';
 import { AssetGateDenied, type ModelMarketServiceApi } from './service.js';
+import type { ModelApplyStatus, ModelAuthorizationQuery } from './shared.js';
 
 export const modelMarketConnectionPath = '/api/workdsh-model-market';
+
+/** 申请状态白名单：与技能/MCP 市场同口径。 */
+const APPLY_STATUSES: readonly ModelApplyStatus[] = ['none', 'pending', 'approved', 'rejected'];
 
 const noStore = { headers: { 'cache-control': 'no-store' } };
 const ok = <T>(value: T): ConnectionRpcResult<T> => ({ ok: true, value });
@@ -48,10 +52,42 @@ export function registerModelMarketConnection(ctx: Context): void {
           const modelType = optionalText(payload.modelType);
           const apiProtocol = optionalText(payload.apiProtocol);
           if (pageNo === null || pageSize === null || keyword === null || provider === null || modelType === null || apiProtocol === null) return invalidRequest();
+          const authStatus = payload.authStatus;
+          const applyStatus = payload.applyStatus;
+          if (authStatus !== undefined && authStatus !== 'Y' && authStatus !== 'N') return invalidRequest();
+          if (applyStatus !== undefined && !APPLY_STATUSES.includes(applyStatus as ModelApplyStatus)) return invalidRequest();
           return Response.json(ok(await market().list({
             pageNo, pageSize, keyword, provider, modelType, apiProtocol,
             ...(typeof payload.isDefault === 'boolean' ? { isDefault: payload.isDefault } : {}),
+            ...(authStatus === 'Y' || authStatus === 'N' ? { authStatus } : {}),
+            ...(applyStatus === undefined ? {} : { applyStatus: applyStatus as ModelApplyStatus }),
           }, request.signal)), noStore);
+        }
+        // 模型选择器的执行期授权状态：一次批量取回，宿主侧统一缓存与兜底。
+        if (endpoint === 'model-authorizations') {
+          const rows = payload.models;
+          if (!Array.isArray(rows) || rows.length > 200) return invalidRequest();
+          const items: ModelAuthorizationQuery[] = [];
+          for (const row of rows) {
+            const item = record(row);
+            const provider = text(item?.provider);
+            const model = text(item?.model);
+            if (!item || !provider || !model) return invalidRequest();
+            items.push({ provider, model });
+          }
+          return Response.json(ok(await market().authorizationsOf(items, request.signal)), noStore);
+        }
+        // 授权申请/取消申请的单点地址：菜单与业务参数由界面给出，宿主只负责生成参数。
+        if (endpoint === 'market-sso') {
+          const menuId = payload.menuId;
+          const box = record(payload.bizParams);
+          if (typeof menuId !== 'string' || !/^\d{10,25}$/u.test(menuId) || !box) return invalidRequest();
+          const bizParams: Record<string, string> = {};
+          for (const [key, value] of Object.entries(box)) {
+            if (typeof value !== 'string') return invalidRequest();
+            bizParams[key] = value;
+          }
+          return Response.json(ok(await market().adminSsoTarget(menuId, bizParams, request.signal)), noStore);
         }
         if (endpoint === 'detail') {
           const id = text(payload.id);
