@@ -40,11 +40,14 @@ vi.mock('electron', async () => {
     focus() {} setTitle() {} setBackgroundColor() {} isMinimized() { return false }
     isDestroyed() { return this.destroyed }
     getBounds() { return { x: 0, y: 0, width: 1440, height: 960 } }
+    getNormalBounds() { return this.getBounds() }
+    isMaximized() { return false }
+    maximize() { this.emit('maximize') }
     destroy() { this.destroyed = true; this.emit('closed') }
   }
   return {
     BrowserWindow: Window,
-    screen: { getPrimaryDisplay: () => ({ workArea: { x: 0, y: 0, width: 1440, height: 960 } }) },
+    screen: { getPrimaryDisplay: () => ({ workArea: { x: 0, y: 0, width: 1440, height: 960 } }), getAllDisplays: () => [{ workArea: { x: 0, y: 0, width: 1440, height: 960 } }] },
     ipcMain: { handle: vi.fn() },
     app: Object.assign(new EventEmitter(), {
       setActivationPolicy: vi.fn(), setName: vi.fn(), setAppUserModelId: vi.fn(), getVersion: () => '1.0.0',

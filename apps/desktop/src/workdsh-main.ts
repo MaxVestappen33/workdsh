@@ -37,6 +37,7 @@ import { verifyWindowsInstaller } from './update-install.ts'
 import { launchMacInstaller } from './update-install-mac.ts'
 import { updateWindowHtml } from './update-window.ts'
 import { updateToastHtml } from './update-toast.ts'
+import { centerWindowBounds, fitBoundsIntoWorkAreas, MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH, readWindowState, writeWindowState } from './window-state.ts'
 
 const PROFILE_NAME = 'workdsh'
 const READY_PATTERN = /dsh web:\s+(http:\/\/127\.0\.0\.1:\d+\/?\?token=[^\s]+)/u
@@ -1146,24 +1147,55 @@ async function waitForWorkbenchMount(page: BrowserWindow, timeoutMs = 20_000): P
   }
 }
 
+/**
+ * 记录窗口的位置、尺寸与最大化状态，供下次启动恢复。
+ * 拖动/缩放事件高频，做 400ms 防抖；最大化切换与关闭时立即落盘。
+ */
+function trackWindowState(page: BrowserWindow): void {
+  const directory = app.getPath('userData')
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const save = (): void => {
+    if (timer !== undefined) { clearTimeout(timer); timer = undefined }
+    if (page.isDestroyed()) return
+    const maximized = page.isMaximized()
+    // 最大化时记录还原尺寸：否则下次「还原」会得到一整块工作区，而不是用户原来的窗口大小。
+    writeWindowState(directory, { bounds: maximized ? page.getNormalBounds() : page.getBounds(), maximized })
+  }
+  const schedule = (): void => {
+    if (timer !== undefined) clearTimeout(timer)
+    timer = setTimeout(save, 400)
+    timer.unref?.()
+  }
+  page.on('resize', schedule)
+  page.on('move', schedule)
+  page.on('maximize', save)
+  page.on('unmaximize', save)
+  page.on('close', save)
+  page.on('closed', () => { if (timer !== undefined) { clearTimeout(timer); timer = undefined } })
+}
+
 function openWindow(url: string, connection: DesktopConnection = { mode: 'personal' }, carrier = false, reveal = true, backgroundColor = '#111113'): void {
   const previous = window
-  // 上一个窗口若处于最大化，新窗口沿用最大化状态；首次启动（没有上一个窗口）同样默认最大化。
-  const wasMaximized = previous !== undefined && !previous.isDestroyed() && previous.isMaximized()
   const previousEntrySurface = entrySurface
   const icon = fileURLToPath(new URL('../build/app-icon.png', import.meta.url))
-  // 首次启动或上一个窗口是最大化时，新窗口直接铺满工作区：用工作区尺寸创建窗口，
-  // 比「先创建再 maximize」少一次可见的缩放刷新，避免过场后的白屏闪一下。
   const firstWindow = previous === undefined || previous.isDestroyed()
-  const bounds = firstWindow || wasMaximized ? screen.getPrimaryDisplay().workArea : previous!.getBounds()
+  // 上一个窗口若最大化，新窗口沿用最大化状态；首次启动沿用上次退出前的状态，没有记录时默认最大化。
+  const wasMaximized = !firstWindow && previous!.isMaximized()
+  const saved = firstWindow ? readWindowState(app.getPath('userData')) : undefined
+  const maximize = firstWindow ? saved?.maximized ?? true : wasMaximized
+  // 入口页与工作台是两个窗口：切换时整体沿用上一个窗口的位置与尺寸（最大化时用还原尺寸），
+  // 不能只复制位置再用固定宽高建窗，否则登录后窗口会变小。
+  const bounds = firstWindow
+    ? fitBoundsIntoWorkAreas(saved?.bounds ?? centerWindowBounds(screen.getPrimaryDisplay().workArea), screen.getAllDisplays().map(display => display.workArea))
+      ?? centerWindowBounds(screen.getPrimaryDisplay().workArea)
+    : wasMaximized ? previous!.getNormalBounds() : previous!.getBounds()
   window = new BrowserWindow({
-    width: 1440,
-    height: 960,
+    width: bounds.width,
+    height: bounds.height,
     x: bounds.x,
     y: bounds.y,
-    ...(firstWindow || wasMaximized ? { width: bounds.width, height: bounds.height } : {}),
-    minWidth: 960,
-    minHeight: 640,
+    minWidth: MIN_WINDOW_WIDTH,
+    minHeight: MIN_WINDOW_HEIGHT,
     title: '警务助手',
     icon,
     backgroundColor,
@@ -1178,6 +1210,7 @@ function openWindow(url: string, connection: DesktopConnection = { mode: 'person
   })
   const page = window
   disableSpellcheckDictionaryDownloads(page)
+  trackWindowState(page)
   entrySurface = carrier
   window.on('page-title-updated', event => {
     event.preventDefault()
@@ -1233,6 +1266,9 @@ function openWindow(url: string, connection: DesktopConnection = { mode: 'person
             : `工作台窗口已显示（登录到主界面总耗时 ${Date.now() - loginStartedAt}ms）`)
           loginStartedAt = undefined
         }
+        // 窗口全程 show:false，先最大化再显示：既拿到真正的最大化状态（标题栏按钮、任务栏行为），
+        // 也不会出现可见的缩放跳变。
+        if (maximize) page.maximize()
         page.show()
       }
     }
