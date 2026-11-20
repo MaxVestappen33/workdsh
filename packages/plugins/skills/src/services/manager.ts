@@ -786,10 +786,17 @@ export class SkillManager extends Service implements SkillManagementService {
     if (!entry) {
       // 随包技能不在受管目录里（落在 Profile 资源中）：按 provider 给出的路径读同目录清单。
       // 不在这里兜底会把 office 系列当成「未登记」，闸门会在目录与调用两处全部拒绝。
-      let path: string | undefined;
-      try { path = (await this.ctx.skills.get(name))?.path; } catch { path = undefined; }
-      if (!path) return undefined;
-      const bundled = await readAssetManifest(dirname(path));
+      // 虚拟 provider（如 experts 的 workdsh-expert-manager）只给 resourceBase 目录、没有指令文件路径，
+      // 此时直接用该目录读清单，否则内置技能会被整体判成「未上架」。
+      let directory: string | undefined;
+      try {
+        const definition = await this.ctx.skills.get(name);
+        directory = definition?.path
+          ? dirname(definition.path)
+          : definition?.resourceBase?.kind === 'directory' ? definition.resourceBase.path : undefined;
+      } catch { directory = undefined; }
+      if (!directory) return undefined;
+      const bundled = await readAssetManifest(directory);
       return bundled && bundled.assetType === 'skill' ? { ...bundled, assetType: 'skill' } : undefined;
     }
     if (entry.directoryBundle) {

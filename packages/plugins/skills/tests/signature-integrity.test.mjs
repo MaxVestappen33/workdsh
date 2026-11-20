@@ -118,6 +118,28 @@ test('验签开关开启：无签名块按 gate/denied-signature-missing 拒绝�
   assert.match(SIGNATURE_REINSTALL_MESSAGE, /重新安装/u);
 });
 
+test('虚拟 provider 只给 resourceBase 目录：installManifest 仍读到随包清单', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'workdsh-skill-virtual-'));
+  const bundledDir = join(home, 'resources', 'skills', 'demo');
+  await mkdir(bundledDir, { recursive: true });
+  await writeFile(join(bundledDir, 'SKILL.md'), DOC);
+  await writeAssetManifest(bundledDir, { assetType: 'skill', name: 'demo', source: 'builtin', assetId: '2120057884731162626' });
+  const ctx = new Context();
+  // 只给 resourceBase、不给 path：与 experts / office 等运行时注册的技能一致。
+  ctx.skills = {
+    get: async name => name === 'demo' ? {
+      name: 'demo', description: 'demo', content: DOC, source: 'bundled', provider: 'runtime',
+      invocation: { modelInvocable: true, userInvocable: true },
+      resourceBase: { kind: 'directory', path: bundledDir },
+    } : undefined,
+    list: async () => [],
+  };
+  const manager = new SkillManager(ctx, { dshHome: join(home, 'dsh'), agentsHome: join(home, 'agents') });
+  const manifest = await manager.installManifest('demo');
+  assert.equal(manifest?.source, 'builtin');
+  assert.equal(manifest?.assetId, '2120057884731162626');
+});
+
 test('验签开关关闭：市场安装不取签名，清单不写签名块', async (t) => {
   const home = await mkdtemp(join(tmpdir(), 'workdsh-market-install-'));
   const previous = process.env.DSH_HOME;
