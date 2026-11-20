@@ -28,6 +28,7 @@ vi.mock('electron', async () => {
   }
   return {
     BrowserWindow: Window,
+    screen: { getPrimaryDisplay: () => ({ workArea: { x: 0, y: 0, width: 1440, height: 960 } }) },
     ipcMain: { handle: (name: string, fn: any) => { state.handlers[name] = fn } },
     app: Object.assign(new EventEmitter(), { setActivationPolicy: vi.fn(), setName: vi.fn(), setAppUserModelId: vi.fn(), getVersion: () => '1.0.0', requestSingleInstanceLock: () => true, whenReady: async () => {}, quit: vi.fn(), exit: vi.fn(), relaunch: vi.fn(), getPath: () => state.userData, getAppPath: () => '/tmp/WorkDSH development/app' }),
     shell: { openExternal: vi.fn() }, net: { fetch: vi.fn() }, dialog: { showErrorBox: vi.fn(), showOpenDialog: vi.fn(async () => ({ canceled: true, filePaths: [] })) },

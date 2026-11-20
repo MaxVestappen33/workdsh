@@ -36,12 +36,13 @@ vi.mock('electron', async () => {
     })
     constructor(readonly options: any) { super(); state.windows.push(this) }
     async loadURL(url: string) { this.url = url }
-    show() { this.shown = true } setTitle() {} setBackgroundColor() {} isDestroyed() { return this.destroyed }
+    show() { this.shown = true } setTitle() {} setBackgroundColor() {} isMaximized() { return false } isDestroyed() { return this.destroyed }
     getBounds() { return { x: 0, y: 0, width: 1440, height: 960 } }
     destroy() { this.destroyed = true; this.emit('closed') }
   }
   return {
     BrowserWindow: Window,
+    screen: { getPrimaryDisplay: () => ({ workArea: { x: 0, y: 0, width: 1440, height: 960 } }) },
     ipcMain: { handle: vi.fn() },
     app: Object.assign(new EventEmitter(), {
       setActivationPolicy: vi.fn(), setName: vi.fn(), setAppUserModelId: vi.fn(), getVersion: () => '1.0.0',
