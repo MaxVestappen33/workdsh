@@ -72,6 +72,8 @@ let updateWindow: BrowserWindow | undefined
 let updateView: UpdateView = { phase: 'idle' }
 let updateWindowPhase: UpdateView['phase'] | undefined
 let updaterInstalling = false
+/** 「重启升级」确认框是否正在显示：防止提醒条与更新窗口各弹一次。 */
+let upgradeConfirming = false
 /** 因升级交接被主动停止的 Host 进程：它的退出事件不是故障，不能再提示“本机运行已停止”。 */
 const updaterStoppedRuntimes = new WeakSet<ChildProcess>()
 let updateLog: DebugLog | undefined
@@ -437,8 +439,11 @@ function showUpdateWindow(): void {
   page.on('close', event => {
     if (quitting || updaterInstalling) return
     event.preventDefault()
-    // 强制更新不允许只关闭提示；普通更新关闭即隐藏。
-    if (updateView.mandatory !== true) page.hide()
+    // 强制更新不允许只关闭提示；普通更新关闭即隐藏，下载中关闭等同取消。
+    if (updateView.mandatory !== true) {
+      cancelActiveDownload()
+      page.hide()
+    }
   })
   page.on('closed', () => {
     if (updateWindow === page) {
@@ -597,9 +602,17 @@ function syncUpdateToast(): void {
   }
 }
 
+/** 下载/校验阶段关闭窗口等同取消下载：否则用户以为取消了，装完仍会自动重启。 */
+function cancelActiveDownload(): void {
+  if (updateView.phase === 'downloading' || updateView.phase === 'verifying') void updater?.cancel()
+}
+
 /** “重启升级”：先提醒会重启，确认后自动下载、安装并重启。 */
 async function confirmAndRestartUpgrade(parentWindow?: BrowserWindow): Promise<void> {
-  if (updater === undefined || updateView.phase === 'installing') return
+  // 防重入：确认框打开期间忽略再次触发，避免两个确认框叠加后「取消」只关掉其中一个。
+  if (updater === undefined || upgradeConfirming) return
+  const phase = updateView.phase
+  if (phase === 'installing' || phase === 'downloading' || phase === 'verifying') return
   const version = updateView.version ?? '新版本'
   const options = {
     type: 'question' as const,
@@ -614,13 +627,22 @@ async function confirmAndRestartUpgrade(parentWindow?: BrowserWindow): Promise<v
   // 弹窗挂在触发它的窗口上：提醒条的按钮挂在主窗口，更新窗口的按钮挂在更新窗口。
   const owner = parentWindow !== undefined && !parentWindow.isDestroyed() ? parentWindow : undefined
   const parent = owner ?? (window !== undefined && !window.isDestroyed() ? window : undefined)
-  const result = parent === undefined
-    ? await dialog.showMessageBox(options)
-    : await dialog.showMessageBox(parent, options)
-  if (result.response !== 1) return
+  upgradeConfirming = true
+  let response: number
+  try {
+    const result = parent === undefined
+      ? await dialog.showMessageBox(options)
+      : await dialog.showMessageBox(parent, options)
+    response = result.response
+  } finally {
+    upgradeConfirming = false
+  }
+  if (response !== 1) return
   hideUpdateToast()
   showUpdateWindow()
-  void updater.downloadAndInstall()
+  // 已下载完成时只需要安装；否则下载完成后再安装。
+  if (updateView.phase === 'ready') void updater.install()
+  else void updater.downloadAndInstall()
 }
 
 function assertUpdateSender(event: IpcMainInvokeEvent): void {
@@ -658,7 +680,11 @@ function installUpdateHandlers(): void {
         updateWindow?.hide()
         return
       case 'close':
-        if (updateView.phase !== 'installing') updateWindow?.hide()
+        // 关闭即隐藏；下载中关闭等同取消，避免用户以为取消了却在装完自动重启。
+        if (updateView.phase !== 'installing') {
+          if (updateView.mandatory !== true) cancelActiveDownload()
+          updateWindow?.hide()
+        }
         return
       default:
         return
@@ -678,7 +704,10 @@ function installUpdateHandlers(): void {
         break
       case 'close':
         // 强制更新不能只关掉提示；安装阶段窗口也不允许自行关闭。
-        if (updateView.mandatory !== true && updateView.phase !== 'installing') page.hide()
+        if (updateView.mandatory !== true && updateView.phase !== 'installing') {
+          cancelActiveDownload()
+          page.hide()
+        }
         break
       default:
         break

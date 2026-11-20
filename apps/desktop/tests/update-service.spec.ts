@@ -176,9 +176,9 @@ it('reports a digest mismatch as a download failure and keeps the candidate', as
   })
 })
 
-it('cancelling an in-flight download returns to available and removes the partial file', async () => {
-  await workspace()
-  const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+/** 只吐出开头一段就挂起的下载响应：用来观察「下载中」状态和取消行为。 */
+function stalledFetch(): typeof fetch {
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     if (url.includes('queryLatestVersionApp')) return jsonResponse(envelope(release('1.0.1')))
     const stream = new ReadableStream<Uint8Array>({
@@ -193,7 +193,11 @@ it('cancelling an in-flight download returns to available and removes the partia
     })
     return new Response(stream, { status: 200, headers: { 'Content-Length': String(installerBody.byteLength) } })
   }) as typeof fetch
-  const h = harness({ fetch: fetchImpl })
+}
+
+it('cancelling an in-flight download returns to available and removes the partial file', async () => {
+  await workspace()
+  const h = harness({ fetch: stalledFetch() })
   await h.service.check(true)
   const downloading = h.service.download()
   await new Promise(resolve => setTimeout(resolve, 20))
@@ -202,6 +206,20 @@ it('cancelling an in-flight download returns to available and removes the partia
   await downloading
   expect(h.service.snapshot.phase).toBe('available')
   expect(existsSync(`${installerPathFor(h.root, '1.0.1', 'win32')}.part`)).toBe(false)
+})
+
+it('cancelling a confirmed upgrade stops before install instead of restarting the app', async () => {
+  await workspace()
+  const h = harness({ fetch: stalledFetch() })
+  await h.service.check(true)
+  const upgrading = h.service.downloadAndInstall()
+  await new Promise(resolve => setTimeout(resolve, 20))
+  expect(h.service.snapshot.phase).toBe('downloading')
+  // 用户点了「重启升级」后反悔：取消必须真的终止，不能再进安装。
+  await h.service.cancel()
+  await upgrading
+  expect(h.service.snapshot.phase).toBe('available')
+  expect(h.installed).toEqual([])
 })
 
 it('reports an install failure and allows a retry from ready', async () => {

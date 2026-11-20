@@ -113,6 +113,8 @@ export class UpdateService {
    * 不在队列里排队，否则会等到下载结束才生效。
    */
   cancel(): Promise<void> {
+    // 取消后绝不再自动安装：即使传输已进入收尾阶段也要清掉自动安装标记。
+    this.installAfterDownload = false
     if (this.controller !== undefined) {
       this.controller.abort()
       return Promise.resolve()

@@ -81,8 +81,9 @@ window.addEventListener('DOMContentLoaded', () => {
   })
   secondary?.addEventListener('click', () => {
     if (current === undefined) return
-    // “稍后”只收起弹窗：左下角提醒条继续保留，用户随时能从提醒条重启升级。
-    action('close')
+    // 下载中可以真正取消；「稍后」只收起弹窗：左下角提醒条继续保留，用户随时能重启升级。
+    if (current.phase === 'downloading' || current.phase === 'verifying') action('cancel')
+    else action('close')
   })
   element<HTMLButtonElement>('min')?.addEventListener('click', () => { void api.windowAction('minimize') })
   closeButton?.addEventListener('click', () => { void api.windowAction('close') })
@@ -141,6 +142,8 @@ window.addEventListener('DOMContentLoaded', () => {
     readonly sub: string
     readonly status: string
     readonly percent?: number
+    /** 下载/校验阶段允许真正取消；安装阶段不允许。 */
+    readonly cancellable?: boolean
   }): void => {
     show(head, false)
     show(notesWrap, false)
@@ -155,7 +158,7 @@ window.addEventListener('DOMContentLoaded', () => {
       upBar.style.width = determinate ? `${Math.min(100, Math.max(0, options.percent ?? 0))}%` : ''
     }
     setButton(primary, undefined, false)
-    setButton(secondary, undefined, false)
+    setButton(secondary, options.cancellable === true ? '取消下载' : undefined, options.cancellable === true)
   }
 
   const renderEmptyState = (heading: string): void => {
@@ -176,7 +179,9 @@ window.addEventListener('DOMContentLoaded', () => {
       || view.phase === 'verifying'
       || view.phase === 'ready'
       || view.phase === 'installing'
-    if (closeButton !== null) closeButton.disabled = mandatory || upgradingPhase
+    // 下载和校验可以取消；安装阶段与强制更新不允许关闭窗口。
+    const cancellable = !mandatory && (view.phase === 'downloading' || view.phase === 'verifying')
+    if (closeButton !== null) closeButton.disabled = mandatory || (upgradingPhase && !cancellable)
 
     show(badge, mandatory && hasVersion && view.phase === 'available')
     show(head, true)
@@ -208,17 +213,19 @@ window.addEventListener('DOMContentLoaded', () => {
         const sizeText = view.size === undefined ? '' : ` · ${formatSize(view.size)}`
         renderUpgrading({
           heading: '正在下载更新',
-          sub: '下载完成后将自动安装并重启软件，请稍候…',
+          sub: '下载完成后将自动安装并重启软件，可随时取消；取消后不会安装。',
           status: `正在下载… ${Math.round(percent)}%${sizeText}`,
           percent,
+          cancellable,
         })
         return
       }
       case 'verifying':
         renderUpgrading({
           heading: '正在校验安装包',
-          sub: '校验通过后将自动开始安装，请稍候…',
+          sub: '校验通过后将自动开始安装，可随时取消；取消后不会安装。',
           status: '正在校验完整性与文件签名…',
+          cancellable,
         })
         return
       case 'ready':
