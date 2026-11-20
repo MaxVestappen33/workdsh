@@ -1,5 +1,5 @@
 import { Context, Service } from '@deepseek-ai/cordis';
-import { defineDomain, domainTable, type KvTable } from '@deepseek-ai/dsh-storage-domain';
+import { defineDomain, domainTable, type Domain, type KvTable } from '@deepseek-ai/dsh-storage-domain';
 import { z } from 'zod';
 import type { AuditEvent, AuditService } from 'workdsh-contracts';
 import { GovernanceContractError } from './governance.js';
@@ -21,12 +21,42 @@ const auditEventSchema: z.ZodType<AuditEvent> = z.object({
   references: z.record(z.string(), z.string()).optional(),
 });
 
-export const auditDomainSpec = defineDomain({
-  name: 'workdsh_audit',
+const auditEventTable = domainTable<string, AuditEvent>(auditEventSchema);
+
+/**
+ * 单月审计域。按月分域而不是全部写进 `workdsh_audit` 单表：
+ * 官方 per-record 存储层在打开域时用 Promise.all 并发读取整表文件，
+ * 单表无上限增长会超过进程 fd 上限（启动即 EMFILE），因此每个月独立成域。
+ */
+function monthDomainSpec(month: string) {
+  return defineDomain({
+    name: `workdsh_audit_${month}`,
+    version: 1,
+    layout: 'per-record',
+    tables: { events: auditEventTable },
+  });
+}
+
+const monthIndexSchema = z.object({ lastEventAt: z.iso.datetime() });
+const monthsDomainSpec = defineDomain({
+  name: 'workdsh_audit_months',
   version: 1,
   layout: 'per-record',
-  tables: { events: domainTable<string, AuditEvent>(auditEventSchema) },
+  tables: { months: domainTable<string, z.infer<typeof monthIndexSchema>>(monthIndexSchema) },
 });
+
+/** 保留月数：只保留上个月与本月，更早的月份域整月裁剪，避免本地磁盘无限增长。 */
+const RETENTION_MONTHS = 1;
+
+/** `occurredAt` 的 UTC 月份键，`2026-11-19T...` → `202611`；字典序即时间序。 */
+function monthKey(iso: string): string {
+  return iso.slice(0, 7).replace('-', '');
+}
+
+function monthsAgoKey(count: number): string {
+  const now = new Date();
+  return monthKey(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - count, 1)).toISOString());
+}
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -51,9 +81,16 @@ function validateEvent(event: AuditEvent): void {
   }
 }
 
+interface ActiveMonth {
+  month: string;
+  domain: Domain<ReturnType<typeof monthDomainSpec>>;
+  events: KvTable<string, AuditEvent>;
+}
+
 export class AuditJournal extends Service implements AuditService {
   static inject = ['storageDomain'];
-  private events?: KvTable<string, AuditEvent>;
+  private months?: KvTable<string, { lastEventAt: string }>;
+  private active?: ActiveMonth;
   private appendTail: Promise<void> = Promise.resolve();
 
   constructor(ctx: Context) {
@@ -61,17 +98,26 @@ export class AuditJournal extends Service implements AuditService {
   }
 
   async [Service.init](): Promise<void> {
-    const domain = await this.ctx.storageDomain.open(auditDomainSpec);
-    this.ctx.effect(() => () => domain.close(), 'workdshAudit.domainClose');
-    this.events = domain.table('events');
-    this.ctx.effect(() => async () => this.flush(), 'workdshAudit.flush');
+    const monthsDomain = await this.ctx.storageDomain.open(monthsDomainSpec);
+    this.ctx.effect(() => () => monthsDomain.close(), 'workdshAudit.monthsClose');
+    this.months = monthsDomain.table('months');
+    await this.activate(monthKey(new Date().toISOString()));
+    this.ctx.effect(() => async () => {
+      await this.flush();
+      await this.closeActive();
+    }, 'workdshAudit.flush');
+    // 过期月份裁剪放在后台，不阻塞启动。
+    void this.pruneExpired().catch((error: unknown) => {
+      this.ctx.logger.warn(`审计：过期月份裁剪失败（${error instanceof Error ? error.message : String(error)}）。`);
+    });
   }
 
   append(event: AuditEvent, signal?: AbortSignal): Promise<void> {
     const result = this.appendTail.then(async () => {
       signal?.throwIfAborted();
       validateEvent(event);
-      const events = this.requireEvents();
+      await this.activate(monthKey(event.occurredAt));
+      const events = this.requireActive().events;
       if (events.get(event.id)) throw new GovernanceContractError('audit/duplicate-event', `Audit event '${event.id}' already exists.`);
       await events.put(event.id, Object.freeze({ ...event, references: event.references && Object.freeze({ ...event.references }) }));
     });
@@ -79,8 +125,9 @@ export class AuditJournal extends Service implements AuditService {
     return result;
   }
 
+  /** 当前已加载月份的事件快照（跨月历史不会为查询而整体载入，需按月份单独打开）。 */
   snapshot(): readonly AuditEvent[] {
-    return Object.freeze([...this.requireEvents().entries()]
+    return Object.freeze([...this.requireActive().events.entries()]
       .map(([, event]) => event)
       .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt) || left.id.localeCompare(right.id)));
   }
@@ -89,9 +136,52 @@ export class AuditJournal extends Service implements AuditService {
     await this.appendTail;
   }
 
-  private requireEvents(): KvTable<string, AuditEvent> {
-    if (!this.events) throw new GovernanceContractError('audit/not-ready', 'Audit journal is not ready.');
-    return this.events;
+  /** 切到目标月份域；旧月份域随即关闭，避免长期占用内存与文件句柄。 */
+  private async activate(month: string): Promise<void> {
+    if (this.active?.month === month) return;
+    await this.closeActive();
+    const domain = await this.ctx.storageDomain.open(monthDomainSpec(month));
+    this.active = { month, domain, events: domain.table('events') };
+    const months = this.requireMonths();
+    if (!months.get(month)) await months.put(month, { lastEventAt: new Date().toISOString() });
+  }
+
+  private async closeActive(): Promise<void> {
+    const active = this.active;
+    this.active = undefined;
+    if (active) await active.domain.close();
+  }
+
+  private async pruneExpired(): Promise<void> {
+    const cutoff = monthsAgoKey(RETENTION_MONTHS);
+    const expired = [...this.requireMonths().entries()]
+      .map(([month]) => month)
+      .filter((month) => month < cutoff)
+      .sort();
+    for (const month of expired) {
+      if (this.active?.month === month) continue;
+      let domain: Domain<ReturnType<typeof monthDomainSpec>> | undefined;
+      try {
+        domain = await this.ctx.storageDomain.open(monthDomainSpec(month));
+        const events = domain.table('events');
+        for (const key of [...events.keys()]) await events.delete(key);
+        await this.requireMonths().delete(month);
+      } catch (error) {
+        this.ctx.logger.warn(`审计：${month} 月记录裁剪失败，保留待下次重试（${error instanceof Error ? error.message : String(error)}）。`);
+      } finally {
+        await domain?.close();
+      }
+    }
+  }
+
+  private requireMonths(): KvTable<string, { lastEventAt: string }> {
+    if (!this.months) throw new GovernanceContractError('audit/not-ready', 'Audit journal is not ready.');
+    return this.months;
+  }
+
+  private requireActive(): ActiveMonth {
+    if (!this.active) throw new GovernanceContractError('audit/not-ready', 'Audit journal is not ready.');
+    return this.active;
   }
 }
 

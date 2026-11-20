@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Context } from '@deepseek-ai/cordis';
@@ -130,6 +130,49 @@ test('access grants and audit records survive a cold Host restart', async () => 
     assert.equal(decision.effect, 'allow');
     assert.deepEqual(decision.grantIds, ['grant-cold-restart']);
     assert.ok(second.workdshAudit.snapshot().length > eventCount);
+  } finally {
+    if (first) await first.fiber.dispose();
+    if (second) await second.fiber.dispose();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+const monthOf = (iso) => iso.slice(0, 7).replace('-', '');
+function monthsAgoIso(count) {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - count, 15, 12)).toISOString();
+}
+
+test('audit partitions events by month and prunes expired months', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'workdsh-audit-month-'));
+  let first;
+  let second;
+  const event = (id, occurredAt) => ({
+    id, occurredAt, requestId: `request-${id}`, principalId: 'owner-a', organizationId: 'organization-a',
+    action: 'test.audit', outcome: 'succeeded', code: 'test/succeeded',
+  });
+  const currentIso = new Date().toISOString();
+  const oldIso = monthsAgoIso(8);
+  const oldDir = join(root, `workdsh_audit_${monthOf(oldIso)}`, 'events');
+  const currentDir = join(root, `workdsh_audit_${monthOf(currentIso)}`, 'events');
+  try {
+    first = await boot(root);
+    await first.workdshAudit.append(event('audit-old', oldIso));
+    await first.workdshAudit.append(event('audit-current', currentIso));
+    assert.deepEqual(await readdir(oldDir), ['audit-old.json']);
+    assert.deepEqual(await readdir(currentDir), ['audit-current.json']);
+    await first.fiber.dispose();
+    first = undefined;
+
+    second = await boot(root);
+    // 过期月份在后台裁剪：至少扫到一次 7 个月前以外的目录被清空。
+    let remaining = await readdir(oldDir).catch(() => []);
+    for (let attempt = 0; attempt < 60 && remaining.length > 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      remaining = await readdir(oldDir).catch(() => []);
+    }
+    assert.deepEqual(remaining, []);
+    assert.deepEqual(await readdir(currentDir), ['audit-current.json']);
   } finally {
     if (first) await first.fiber.dispose();
     if (second) await second.fiber.dispose();

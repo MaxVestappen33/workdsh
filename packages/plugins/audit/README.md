@@ -15,6 +15,6 @@
 
 ## 验收与下一步
 
-`AuditJournal` 注入官方 `storageDomain`，使用 `workdsh_audit` per-record 领域保存不可变事件。追加操作在插件内串行，持久成功后才完成；事件保存组织、主体、requestId、动作、目标、结果与非敏感引用。`flush()` 供 Session durability checkpoint 和插件卸载等待此前追加结算。
+`AuditJournal` 注入官方 `storageDomain`，按 UTC 月份拆成 `workdsh_audit_<YYYYMM>` per-record 领域保存不可变事件，月份索引写在 `workdsh_audit_months`；只加载当前月份，超过保留期（只保留上个月与本月）的月份在启动后后台整月裁剪，避免单表无限增长压垮官方存储层的整表并发加载。追加操作在插件内串行，持久成功后才完成；事件保存组织、主体、requestId、动作、目标、结果与非敏感引用。`flush()` 供 Session durability checkpoint 和插件卸载等待此前追加结算。
 
 下一步补受 Access 保护的组织审计查询、分页和导出。完成对应 PLAN 任务及 [验收矩阵](../../../apps/web/docs/ACCEPTANCE.md) 场景后才结束 P1-09。
