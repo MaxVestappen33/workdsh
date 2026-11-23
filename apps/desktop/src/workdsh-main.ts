@@ -82,7 +82,7 @@ let lastAutoCheckAt = 0
 
 // Account (replaces personal identity) session state.
 let appConfig: ResolvedAppConfig | undefined
-let account: { login: AccountLogin, store: AccountStore, deviceId: string, authority?: AccountAuthority, authFile?: string, stopSync?: () => void } | undefined
+let account: { login: AccountLogin, store: AccountStore, deviceId: string, authority?: AccountAuthority, authFile?: string, stopSync?: () => void, stopProbe?: () => void } | undefined
 
 // ── 启动耗时打点（纯观测，不改变任何启动行为）──────────────────────────────
 // 双击到主界面之间可能有一段“一个窗口都没有”的空窗期。此打点把各阶段耗时写入
@@ -1304,7 +1304,15 @@ function openWindow(url: string, connection: DesktopConnection = { mode: 'person
     // 主界面在插件加载完成前会先显示官方的「Loading plugins…」过场页；入口窗口继续挡在前面，
     // 等主界面的工作台真正挂载后再切，避免过场动画之后又闪一次加载页。
     if (carrier) revealPage()
-    else void waitForWorkbenchMount(page).then(revealPage)
+    else void waitForWorkbenchMount(page).then(() => {
+      revealPage()
+      // 兜底：账号模式下工作台必须能读到登录账号。Host 侧身份插件缺失（/api/auth/me 404）时
+      // 界面不会报错，只会悄悄退化成「只有设置、没有退出入口」，用户就再也退不出去；
+      // 这里在挂载完成后持续探测，连续读不到账号信息就退回登录页。
+      if (page.isDestroyed() || account === undefined || enterprise !== undefined) return
+      account.stopProbe?.()
+      account.stopProbe = startAccountProbe(page)
+    })
   }).catch((error: unknown) => {
     // 失败原因是区分「本地服务未就绪」「端口/进程冲突」「被安全软件拦截」的唯一线索，
     // 必须随提示一起给出。失败 URL 带一次性 token，展示前先抹掉。
@@ -1705,6 +1713,7 @@ async function leaveWorkspace(options: { quitting?: boolean } = {}): Promise<voi
 async function leaveAccountWorkspace(options: { keepSession?: boolean } = {}): Promise<void> {
   const page = window
   account?.stopSync?.()
+  account?.stopProbe?.()
   const session = account
   await session?.authority?.close()
   session?.login.cancelRequests()
@@ -1738,6 +1747,7 @@ async function leaveAccountWorkspace(options: { keepSession?: boolean } = {}): P
  */
 async function stopAccountForQuit(): Promise<void> {
   account?.stopSync?.()
+  account?.stopProbe?.()
   const session = account
   await session?.authority?.close()
   session?.login.cancelRequests()
@@ -1890,10 +1900,14 @@ function accountActor(login: AccountLogin): AccountActor {
   }
 }
 
+/** 连续连不上账号服务超过该时长即退回登录页（短暂网络抖动用退避容忍）。 */
+const ACCOUNT_UNREACHABLE_GRACE_MS = 10 * 60 * 1000
+
 /**
  * 账号模式会话校验 + 用户信息同步循环。
  * 间隔 baseDelay（默认 30s，含 ±10% 抖动）；失败按 30s→60s→120s… 退避，上限 15min，成功即复位。
- * 仅「本地 exp 已过期」或「后台明确 401」才登出；网络错误/超时/5xx/服务端异常一律容忍重试。
+ * 仅「本地 exp 已过期」或「后台明确 401」才登出；网络错误/超时/5xx/服务端异常一律容忍重试，
+ * 但连续连不上超过 ACCOUNT_UNREACHABLE_GRACE_MS 时退回登录页兜底，避免停在无账号状态。
  * 返回停止函数，随登出/切换调用，内部会解绑 powerMonitor 监听。
  */
 function startAccountSync(session: { login: AccountLogin, store: AccountStore }): () => void {
@@ -1901,6 +1915,8 @@ function startAccountSync(session: { login: AccountLogin, store: AccountStore })
   const maxDelay = 15 * 60 * 1000
   let timer: ReturnType<typeof setTimeout> | undefined
   let failures = 0
+  /** 本轮连续失败的起始时间；成功后清空。 */
+  let firstFailureAt: number | undefined
   let stopped = false
 
   // 抖动：100 名员工约 28.8 万次/天，无抖动会形成整齐的请求尖峰。
@@ -1925,6 +1941,7 @@ function startAccountSync(session: { login: AccountLogin, store: AccountStore })
       }
       if (result.outcome === 'ok') {
         failures = 0
+        firstFailureAt = undefined
         // 落盘节流：只有快照内容确实变化时才写回，绝不次次写盘。
         if (result.changed) session.store.write(session.login.seal())
         schedule(jitter(baseDelay))
@@ -1932,6 +1949,16 @@ function startAccountSync(session: { login: AccountLogin, store: AccountStore })
       }
       // ② 其他失败（网络/超时/5xx/服务端异常）：容忍并退避。
       failures += 1
+      const now = Date.now()
+      firstFailureAt ??= now
+      // 兜底：长时间连不上账号服务时不再无限重试，退回登录页，避免停在一个取不到账号的工作区。
+      if (now - firstFailureAt >= ACCOUNT_UNREACHABLE_GRACE_MS) {
+        stopped = true
+        process.stderr.write(`[account] 连续 ${failures} 次校验失败，累计 ${Math.round((now - firstFailureAt) / 1000)}s，退回登录页：${result.message}\n`)
+        dialog.showErrorBox('无法连接账号服务', '长时间无法连接账号服务，即将退回登录页。请检查网络或后台地址后重新登录。')
+        void returnToLogin()
+        return
+      }
       schedule(Math.min(baseDelay * 2 ** (failures - 1), maxDelay))
     } finally {
       verifying = false
@@ -1949,6 +1976,55 @@ function startAccountSync(session: { login: AccountLogin, store: AccountStore })
     if (timer) { clearTimeout(timer); timer = undefined }
     powerMonitor.off('resume', onResume)
   }
+}
+
+/** 账号信息探针：工作台必须能读到账号，否则用户既看不到账号也没有退出入口。 */
+const ACCOUNT_PROBE_INTERVAL_MS = 8_000
+const ACCOUNT_PROBE_STEADY_MS = 60_000
+const ACCOUNT_PROBE_MAX_FAILURES = 3
+
+/**
+ * 账号模式下从工作台页面读取 `/api/auth/me`：连续读不到就退回登录页。
+ * 只在工作台挂载完成后启动，读到账号信息即视为正常（之后改为低频巡检）；页面销毁、切换、退出时自动停止。
+ */
+function startAccountProbe(page: BrowserWindow): () => void {
+  let stopped = false
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let failures = 0
+  let confirmed = false
+  const readAccount = "fetch('/api/auth/me', { cache: 'no-store', credentials: 'same-origin' })"
+    + '.then(response => response.ok ? response.json() : null)'
+    + ".then(body => body && typeof body.displayName === 'string' && body.displayName ? body.displayName : null)"
+    + '.catch(() => null)'
+  const stillLoading = "(() => { const body = document.body; return body ? body.innerText.includes('Loading plugins') : true })()"
+  const schedule = (): void => {
+    if (stopped) return
+    timer = setTimeout(() => { void run() }, confirmed ? ACCOUNT_PROBE_STEADY_MS : ACCOUNT_PROBE_INTERVAL_MS)
+  }
+  const run = async (): Promise<void> => {
+    if (stopped) return
+    if (page.isDestroyed() || window !== page || switching || quitting || enterprise !== undefined || account === undefined) {
+      stopped = true
+      return
+    }
+    // 仍在官方「Loading plugins…」过场时插件尚未注册，不能算失败。
+    let loading = false
+    try { loading = (await page.webContents.executeJavaScript(stillLoading, true)) === true } catch { loading = false }
+    if (stopped) return
+    if (loading) { schedule(); return }
+    let name: unknown = null
+    try { name = await page.webContents.executeJavaScript(readAccount, true) } catch { name = null }
+    if (stopped) return
+    if (typeof name === 'string' && name.length > 0) { failures = 0; confirmed = true; schedule(); return }
+    failures += 1
+    if (failures < ACCOUNT_PROBE_MAX_FAILURES) { schedule(); return }
+    stopped = true
+    process.stderr.write(`[account] 连续 ${failures} 次读取 /api/auth/me 失败，退回登录页\n`)
+    dialog.showErrorBox('账号信息不可用', '本机未能读取登录账号信息（身份插件未加载或本地服务异常），即将退回登录页重新登录。')
+    void returnToLogin()
+  }
+  schedule()
+  return () => { stopped = true; if (timer) { clearTimeout(timer); timer = undefined } }
 }
 
 /** Start the DSH runtime bound to the logged-in account identity. */
