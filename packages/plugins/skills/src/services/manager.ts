@@ -30,6 +30,8 @@ const skillNamePattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const trashIdPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*-\d{4}-\d{2}-\d{2}T[0-9-]+Z$/;
 const maximumDocumentBytes = 1024 * 1024;
 const draftIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+/** 升级对账标记：记录已完成「随客户端内置技能」对账的载体版本。 */
+const CLIENT_BUILTIN_RECONCILE_MARKER = 'client-builtin-reconcile.json';
 /** 列表阶段完整性判定失败时展示在技能卡片上的原因文案。 */
 const INTEGRITY_REASONS = {
   modified: '技能文件已被修改，与安装记录不一致，已停止使用；请重新从市场安装。',
@@ -1094,6 +1096,62 @@ export class SkillManager extends Service implements SkillManagementService {
     if (directory) await writeAssetManifest(target, input);
     else await writeAssetFileManifest(target, input);
     return true;
+  }
+
+  /** 载体版本变化后的首次启动才需要对账；Web 没有载体版本，恒为 false。 */
+  async clientBuiltinReconcilePending(): Promise<boolean> {
+    const version = process.env.WORKDSH_APP_VERSION?.trim();
+    return version ? (await this.clientBuiltinReconcileMarker()) !== version : false;
+  }
+
+  /**
+   * 升级对账：市场返回「随客户端内置」（isClientBuiltin=1）的技能以随包副本为准，
+   * 但用户技能目录里的同名旧副本在注册表里优先级更高，会遮蔽新包里的技能与清单，
+   * 导致升级后内置技能在本地「消失」、市场显示未安装。载体版本变化后的首次启动
+   * 按这份名单直接删除旧副本（不进回收站），只处理名单内的名字，用户自建技能不受影响。
+   * 有删除失败时不写版本标记，下次启动重试。
+   */
+  async reconcileClientBuiltinSkills(names: ReadonlySet<string>): Promise<{ scanned: number; removed: number }> {
+    const version = process.env.WORKDSH_APP_VERSION?.trim();
+    if (!version) return { scanned: 0, removed: 0 };
+    const wanted = new Set<string>();
+    for (const name of names) {
+      const normalized = name.trim().toLowerCase();
+      if (skillNamePattern.test(normalized)) wanted.add(normalized);
+    }
+    if (wanted.size === 0) return { scanned: 0, removed: 0 };
+    if ((await this.clientBuiltinReconcileMarker()) === version) return { scanned: 0, removed: 0 };
+    let scanned = 0; let removed = 0;
+    for (const root of [...this.activeRoots, this.disabledRoot]) {
+      await mkdir(root, { recursive: true });
+      for (const entry of await readdir(root, { withFileTypes: true })) {
+        const name = entry.isDirectory()
+          ? entry.name
+          : entry.isFile() && entry.name.endsWith('.md') ? entry.name.slice(0, -3) : undefined;
+        if (!name || !wanted.has(name.trim().toLowerCase())) continue;
+        scanned += 1;
+        const target = join(root, entry.name);
+        try {
+          await rm(target, { recursive: true, force: true });
+          if (!entry.isDirectory()) {
+            await rm(assetFileManifestPath(target), { force: true }).catch(() => {});
+            await rm(assetFileSignatureCachePath(target), { force: true }).catch(() => {});
+          }
+          removed += 1;
+        } catch (error) {
+          this.ctx.logger.warn(`技能：清理旧版内置技能副本失败（${name}）：${describe(error)}。`);
+        }
+      }
+    }
+    if (removed === scanned) await this.writeJson(join(this.stateRoot, CLIENT_BUILTIN_RECONCILE_MARKER), { version });
+    return { scanned, removed };
+  }
+
+  private async clientBuiltinReconcileMarker(): Promise<string | undefined> {
+    try {
+      const value = JSON.parse(await readFile(join(this.stateRoot, CLIENT_BUILTIN_RECONCILE_MARKER), 'utf8')) as { readonly version?: unknown };
+      return typeof value.version === 'string' ? value.version : undefined;
+    } catch { return undefined; }
   }
 
   /** 写清单失败只记日志：安装本身已成功，清单缺失会让该技能按「用户自建」处理（失败即拒绝）。 */

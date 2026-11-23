@@ -374,6 +374,16 @@ export interface SkillManagementService extends SkillRevisionProvider {
    */
   marketAssets?(): Promise<readonly { readonly localId: string; readonly assetId: string }[]>;
   /**
+   * 升级对账前置判定：载体版本变化后的首次启动为 true。
+   * Web 没有载体版本，恒为 false。
+   */
+  clientBuiltinReconcilePending?(): Promise<boolean>;
+  /**
+   * 升级对账：按市场返回的「随客户端内置」名单（isClientBuiltin=1）删除用户技能目录里的
+   * 同名旧副本，让随包副本生效；只处理名单内的名字，用户自建技能不受影响。不进回收站。
+   */
+  reconcileClientBuiltinSkills?(names: ReadonlySet<string>): Promise<{ readonly scanned: number; readonly removed: number }>;
+  /**
    * 启用前完整性校验：目录形态比对文件清单，单文件形态比对旁挂清单。
    * `options.signature` 为 true 时，市场来源先验签再比文件集合（mtime 不参与）；
    * 为 false 时跳过验签，但清单内容比对仍执行（自我一致性不受开关影响）。

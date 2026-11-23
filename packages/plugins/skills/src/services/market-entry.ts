@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { Service } from '@deepseek-ai/cordis';
 import type { Context } from '@deepseek-ai/cordis';
 import {
-  SkillMarketClient, SkillMarketRequestError, readSkillFile, skillDocumentText, stagedNameOf, streamSkillFile,
+  SkillMarketClient, SkillMarketRequestError, clientBuiltinSlugs, readSkillFile, skillDocumentText, stagedNameOf, streamSkillFile,
   type SkillMarketAuthorized, type SkillMarketBackend, type SkillMarketDocument, type SkillMarketInstallResult,
   type SkillMarketItem, type SkillMarketPage, type SkillMarketPaths, type SkillMarketQuery, type SkillScene,
 } from '../market.js';
@@ -85,6 +85,11 @@ export interface SkillMarket {
   categories(signal?: AbortSignal): Promise<readonly SkillScene[]>;
   /** 全量授权技能索引：本地技能按标识匹配业务场景用（带短 TTL 缓存）。 */
   index(signal?: AbortSignal, refresh?: boolean): Promise<readonly SkillMarketAuthorized[]>;
+  /**
+   * 升级对账：按授权索引里 is_client_builtin=1 的名单，清理用户技能目录里遮蔽随包副本的
+   * 同名旧技能。只在载体版本变化后的首次启动执行；市场不可用时跳过并保留重试机会。
+   */
+  reconcileClientBuiltinSkills(signal?: AbortSignal): Promise<{ readonly scanned: number; readonly removed: number }>;
   /**
    * 安装到本机：下载条目附件（fjxxList 第一条）→ 验签 → 官方导入链路写入共享技能目录 →
    * 写清单，全部完成后再上报一次 install；缺少附件时直接拒绝安装。
@@ -189,6 +194,19 @@ export class SkillMarketService extends Service implements SkillMarket {
     this.cachedIndex = { at: now, rows };
     await this.syncBuiltin(rows);
     return rows;
+  }
+
+  /**
+   * 升级对账：名单只认后台 is_client_builtin=1，不按随包文件或名字猜。
+   * 先看载体版本是否需要处理，避免每次启动都翻页拉全量索引。
+   */
+  async reconcileClientBuiltinSkills(signal?: AbortSignal): Promise<{ readonly scanned: number; readonly removed: number }> {
+    const manager = this.ctx.workdshSkills;
+    if (!(await manager.clientBuiltinReconcilePending?.())) return { scanned: 0, removed: 0 };
+    if (!(await this.available())) return { scanned: 0, removed: 0 };
+    const names = clientBuiltinSlugs(await this.index(signal, true));
+    if (names.size === 0) return { scanned: 0, removed: 0 };
+    return (await manager.reconcileClientBuiltinSkills?.(names)) ?? { scanned: 0, removed: 0 };
   }
 
   /**

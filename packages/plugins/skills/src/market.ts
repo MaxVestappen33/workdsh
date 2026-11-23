@@ -146,6 +146,19 @@ export interface SkillMarketAuthorized {
   readonly applyStatus?: SkillApplyStatus;
 }
 
+/**
+ * 升级对账用：授权索引里「随客户端内置」（后台 is_client_builtin=1）的技能标识集合。
+ * 标识与本地技能名（目录名 / SKILL.md name）同口径，用于清理遮蔽随包副本的旧版同名技能。
+ */
+export function clientBuiltinSlugs(rows: readonly SkillMarketAuthorized[]): Set<string> {
+  const names = new Set<string>();
+  for (const row of rows) {
+    const slug = text(row.slug);
+    if (row.clientBuiltin === true && slug) names.add(slug);
+  }
+  return names;
+}
+
 /** 市场接口路径：全部由宿主配置注入，不写死在业务逻辑里。 */
 export interface SkillMarketPaths {
   readonly list: string;
