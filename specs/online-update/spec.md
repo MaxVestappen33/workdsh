@@ -1,6 +1,6 @@
 # 在线升级改造方案（可靠性 + 体验与运营）
 
-状态：**方案待评审，未开始实施**。
+状态：**方案待评审，未开始实施**；第一步（下载可靠性 + 本地包复用）的实施设计已记录在 4.10，暂不实施。
 
 范围：WorkDSH Desktop 现有自研更新链路（`apps/desktop/src/update-*.ts` 与 `workdsh-main.ts` 的更新部分）。
 
@@ -81,9 +81,12 @@ readonly autoSuppressed?: boolean          // 本次运行已取消自动下载
 
 - `checked` 增加 `origin` 与 `delayMs`：自动检查且自动下载开启时进入 `scheduled`，否则进入 `available`。
 - `schedule-elapsed`：由服务层计时器触发，`scheduled → downloading`。
-- `retry-wait`：下载重试等待，写入 `retry`，阶段保持 `downloading`。
 - `download-failed` 增加 `quiet: boolean`：自动下载失败回到 `available`（保留 failure 供窗口查看），手动下载失败仍进入 `error`。
 - `suppress-auto`：用户取消自动下载，回到 `available` 并记录 `autoSuppressed`。
+- `retry-wait`：下载重试等待，写入 `retry`，阶段保持 `downloading`（第一步实现）。
+- `reuse`：检查时发现本地安装包有效，`available → ready`，不下载（第一步实现）。
+- `install-package-invalid`：安装前发现本地包缺失/损坏，`installing → downloading`，自动重下一次（第一步实现）。
+- `redownload`：用户手动要求重新下载，`error` / `ready → downloading`（第一步实现，待确认是否加按钮）。
 
 `UpdateEffect` 增加：
 
@@ -105,6 +108,9 @@ readonly autoSuppressed?: boolean          // 本次运行已取消自动下载
 | `downloading` | `download-failed`（非 quiet） | `error`（现有行为） |
 | `ready` | `install` | `installing`（现有） |
 | `available` / `scheduled` | `download`（本地安装包校验通过） | `ready`；若为“重启升级”意图则继续 `installing`，全程零下载 |
+| `available` | `reuse`（本地安装包校验通过） | `ready`，不下载 |
+| `installing` | `install-package-invalid` | `downloading`，自动重下一次后继续安装 |
+| `error` / `ready` | `redownload` | `downloading`，删除本地包后完整重下 |
 | `error` | 重试（本地安装包校验通过） | `installing`，不重新下载 |
 
 `mandatoryUpdateBlocksEntry()` 需要把 `scheduled` 也纳入阻断；由于强制更新 `delayMs=0`，不会出现长时间锁在门外。
@@ -138,10 +144,12 @@ readonly autoSuppressed?: boolean          // 本次运行已取消自动下载
 
 #### 4.1.1 本地安装包复用
 
-- 下载前先检查 `installerPathFor(downloadDirectory, version, platform)`：文件存在、大小匹配、sidecar `installer.json` 记录的 sha256 与候选一致，且文件校验通过，则**跳过网络请求**，直接进入 `ready`。
-- 校验通过后写 sidecar `{ version, size, sha256, verifiedAt }`；候选 sha256 变化或版本切换时删除安装包与 sidecar。
+- 下载前先检查 `installerPathFor(downloadDirectory, version, platform)`：文件存在、大小匹配、sidecar `<installer>.json` 记录的 sha256 与候选一致，且文件校验通过，则**跳过网络请求**，直接进入 `ready`。
+- sidecar 记录 `{ version, size, sha256, mtimeMs, verifiedAt }`；存在且 mtime 未变时直接信任，缺失或 mtime 变化时流式重算一次哈希并补写；候选 sha256 变化或版本切换时删除安装包与 sidecar。
+- **检查完成时也先复用**：本地包有效则通过 `reuse` 事件直接进入 `ready`，避免重启后再次显示“可下载”。
 - **安装失败不得删除安装包**：`discard()` 只在版本切换、候选变化或用户主动清理时调用，`error` 状态必须保留本地包。
 - 用户点“重试”：本地包有效则直接 `installing`，不再下载；文件缺失或哈希不符才走完整下载。
+- 安装前发现本地包缺失/损坏时，自动删除并完整重下一次后继续安装，只兜底一次（详见 4.10）。
 - 连续两次安装失败且本地包哈希仍一致时，不自动重下；在错误页提供“重新下载安装包”手动入口，避免坏包死循环。
 
 ### 4.2 自动预下载与错峰
@@ -162,6 +170,7 @@ readonly autoSuppressed?: boolean          // 本次运行已取消自动下载
 - `stopRuntimeForUpdate()` 失败时中止安装，不退出应用。
 - 安装失败统一走 `recoverAfterInstallFailure()`：尝试重启本机 Host 并回到工作区；失败才 `returnToLogin()`。
 - 安装失败保留本地安装包；“重试”优先复用已校验的包，见 4.1.1。
+- 安装前发现本地包缺失/损坏时，自动删除并完整重下一次后继续安装，只兜底一次。
 - 安装开始前记录 `upgrade-pending.json`（见 4.4），成功启动后清理。
 
 ### 4.4 启动健康与手动回退
@@ -247,6 +256,73 @@ readonly autoSuppressed?: boolean          // 本次运行已取消自动下载
 
 在“只有 exe”约束下仍可单独评估、但不纳入本轮的点：去掉 robocopy 进度壳、自定义 `customRemoveFiles` 跳过逐文件改名、调整安装器压缩方式、减少 runtime 文件数、运维杀软白名单。
 
+### 4.10 第一步实施设计（下载可靠性 + 本地包复用，暂不实施）
+
+范围：只做下载可靠性、本地包复用与兜底；不做 `scheduled`、自动预下载、错峰、30 分钟冷却、上报、回滚。
+
+**文件约定**
+
+每个版本目录 `userData/updates/app/<version>/`：
+
+| 文件 | 作用 |
+| --- | --- |
+| `setup.exe` / `update.zip` | 下载完成且校验通过的安装包 |
+| `<installer>.part` | 未完成的分片 |
+| `<installer>.part.json` | 分片对应的 `version/size/sha256/etag/updatedAt`，防止旧分片拼新包 |
+| `<installer>.json` | 完整包 sidecar：`version/size/sha256/mtimeMs/verifiedAt`，用于后续复用 |
+
+**下载器（`update-download.ts`）**
+
+1. 读取 `.part.json` 与当前候选比对；不一致则删除分片和元数据，从 0 开始；一致则读取 `.part` 实际大小作为续传起点。
+2. 请求带 `Range: bytes=<已下载>-` 与 `Accept-Encoding: identity`。
+3. 响应处理：`206` 且 `Content-Range` 起点/总长匹配 → 追加；`200` → 清空分片从 0 写；`416` → 删除分片，内部重试一次完整下载。
+4. 续传时先把已有分片读一遍喂给 sha256，再继续写；最终仍校验总大小与 sha256。
+5. 磁盘检查改为“剩余字节 + 256 MiB”，不再要求整包空间。
+6. 成功后：`fsync` → 删除旧安装包 → `rename(.part, installer)` → 原子写 `<installer>.json` → 删除 `.part.json`。
+7. 失败处理：`network/timeout` 保留分片；`cancelled`、`size/hash-mismatch`、`write-failed` 删除分片；`http-status` 结果附带 `status`，供服务层区分 5xx/408/429 与其他 4xx。
+
+**服务层重试（`update-service.ts`）**
+
+- 网络类失败最多重试 3 次，退避 2s / 5s / 10s，继续使用同一个分片。
+- 大小或哈希不符：删除分片，整包重下 1 次；仍失败则终止。
+- 4xx、磁盘不足、写盘失败不重试。
+- 退避期间快照带 `retry: { attempt, of, delayMs }`；取消可以打断退避，回到 `available` 并清掉分片。
+- 退避使用可取消的 `sleep`，不阻塞后续状态迁移。
+
+**本地包复用与兜底（新增 `update-installer.ts`）**
+
+- 校验：文件存在、大小匹配、sidecar 的 `version/size/sha256` 与候选一致。
+  - sidecar 存在且 `mtimeMs` 未变 → 直接信任，不重算哈希；
+  - sidecar 缺失或 mtime 变化 → 流式计算一次 sha256，匹配则补写 sidecar，不匹配则判定不可用。
+- 三个复用点：
+  1. 检查完成时：本地包有效 → `reuse` 事件直接进入 `ready`，不显示成“可下载”；
+  2. 下载时：有效 → 零网络请求，直接 `downloaded → ready`；
+  3. 安装时：先快速校验；文件被删/损坏 → 删除本地包，自动完整重下一次后继续安装，只兜底一次，再失败进入 `error`。
+- 安装失败本身不删除安装包；`retry` 回到 `ready`，再次安装走本地包，零下载。
+- 手动兜底：错误页“安装失败”时提供“重新下载安装包”，删除本地包后完整重下并安装（是否本期加按钮见开放问题 6）。
+
+**状态机与界面**
+
+- `UpdateSnapshot` 增加 `retry?`。
+- 新增事件：`retry-wait`、`reuse`、`install-package-invalid`、`redownload`，迁移规则见 3.3。
+- `UpdateView` 增加 `retry?`；更新窗口在下载中显示“网络不稳定，N 秒后重试（2/3）”。
+- 更新窗口错误页的次要按钮在安装失败时改为“重新下载安装包”，并新增对应 IPC action。
+- 不改托盘、账号菜单和安装交接逻辑。
+
+**测试**
+
+- 下载器：分片匹配续传、200 降级、416 重下、`Content-Range` 不匹配、网络中断保留分片、hash 失败删分片、续传后哈希正确、磁盘按剩余量判断。
+- 服务层：两次失败后成功、退避顺序、4xx 不重试、取消打断退避、hash 失败整包重下一次。
+- 复用：检查时本地有效直接 `ready`、下载零请求、安装失败后重试零下载、sidecar 缺失补算哈希、哈希不符自动重下、安装前文件缺失自动重下并安装、手动重新下载。
+- 回归：现有 `update-service` / `update-download` 用例全部通过。
+
+**取舍**
+
+- 续传校验会多读一遍已下载分片；260 MB 在 SSD 上可接受，换取拼接文件可信。
+- sidecar 快速信任避免每次检查重读整个安装包；安装前再做一次快速校验。
+- 服务端返回 200 时自动降级为整包下载，功能不受影响。
+- 30 分钟自动下载冷却与静默失败依赖第二步的自动预下载，本次不做。
+
 ---
 
 ## 5. 后台契约
@@ -300,8 +376,11 @@ readonly autoSuppressed?: boolean          // 本次运行已取消自动下载
 
 ### 5.3 Range 支持
 
-- 客户端已按 `206/200/416` 自适应；服务端支持 `Range` 即自动启用续传。
-- 待办：有 MinIO 环境后实测 `Accept-Ranges` 与 `Content-Range`，记录到本节。
+- 客户端按 `206/200/416` 自适应；服务端支持 `Range` 即自动启用续传。
+- **已实测（2026-11-23，直连 MinIO）**：S3 API 端口 `53755` 对预签名 GET 返回 `Accept-Ranges: bytes`；`Range: bytes=0-99`、`100000000-100000099`、末尾区间均返回 `206` 且 `Content-Range` 正确；越界返回 `416`；分段 `0-1023` + `1024-2047` 拼接后的 sha256 与单次 `0-2047` 完全一致。
+- 测试对象：`yt-jwai/client-release/PoliceAssistant-1.0.2-x64-Setup_1793241624658.exe`，`276,499,711` 字节；ETag 带 `-53` 分片后缀，不能当内容哈希，继续使用后台返回的 sha256。
+- **端口注意**：`9000` 是 MinIO Console（返回 HTML，且也会回 `206`），下载与预签名必须使用 `53755`；后台下发的 `downloadUrl` 必须指向 API 端口。
+- 若后续改为 Nginx/后端代理，需确认转发 `Range` 且不压缩、不整包缓冲；否则客户端自动降级为整包下载。
 
 ---
 
@@ -323,6 +402,7 @@ readonly autoSuppressed?: boolean          // 本次运行已取消自动下载
 ### P1 客户端可靠性（可独立交付）
 
 - 下载续传、重试分类与退避。
+- 本地安装包复用与兜底（检查、下载、安装前三个时机）；详细设计见 4.10。
 - `scheduled` 状态、错峰、自动预下载、下载完成后再提示、取消抑制。
 - 账号菜单“检查更新”状态联动：下载中显示 `正在下载安装包...` 且不可点击。
 - Windows 托盘菜单移除“检查更新”入口。
@@ -343,7 +423,6 @@ readonly autoSuppressed?: boolean          // 本次运行已取消自动下载
 
 - 上报队列、端点、事件接入、开关。
 - 检查请求携带 `clientId/channel`。
-- 有环境后实测 Range 并更新文档。
 
 验收：后台能按版本、事件、失败码统计；断网期间事件在下次启动补报；关闭上报后无任何请求。
 
@@ -354,11 +433,11 @@ readonly autoSuppressed?: boolean          // 本次运行已取消自动下载
 | 层 | 用例 |
 | --- | --- |
 | 状态机（headless） | `scheduled → downloading`；强制更新 `delay=0`；取消抑制；quiet 失败回 `available`；重试等待；回退提示阈值 |
-| 下载器（mock fetch） | 206 续传、200 降级、416 重下、`Content-Range` 不匹配、hash 失败重下一次、磁盘按剩余量判断 |
+| 下载器（mock fetch） | 206 续传、200 降级、416 重下、`Content-Range` 不匹配、hash 失败重下一次、磁盘按剩余量判断、网络中断保留分片、续传后哈希正确 |
 | 服务层（fake timer） | 错峰延迟可取消；重试退避顺序；冷却 30 分钟；`dispose` 清理计时器 |
-| 安装 | `waitForMarker` 超时不退出；Host 停止失败中止安装；失败后恢复工作区 |
+| 安装 | `waitForMarker` 超时不退出；Host 停止失败中止安装；失败后恢复工作区；安装前文件缺失自动重下并安装 |
 | pending/回滚 | attempts 累加、成功清除、回退选择分支、旧包保留与清理 |
-| 安装包复用 | 安装失败后重试零下载请求；哈希不符/文件缺失才重下；版本切换清理旧包；连续失败可手动重下 |
+| 安装包复用 | 检查时本地有效直接 `ready`；下载零请求；安装失败后重试零下载；sidecar 缺失补算哈希；哈希不符自动重下；手动重新下载 |
 | 上报 | 队列上限、离线补报、超时、开关关闭零请求 |
 | 账号菜单状态 | `downloading/verifying` 行禁用并显示 `正在下载安装包...`；点击不导航；`unknown/404` 退回现状；菜单关闭后停止轮询 |
 | 托盘菜单 | Windows 不渲染“检查更新”项，仅保留显示主界面与退出；macOS 保持现状；更新文案变化不影响 Windows 菜单 |
@@ -385,8 +464,9 @@ readonly autoSuppressed?: boolean          // 本次运行已取消自动下载
 2. **检查频率**：当前默认 5 分钟，注释与实现不一致（注释写 360 分钟）。是否调整为 30 分钟需与后台确认查询压力。
 3. **上报路径与字段**：`/desktop-client/clientUpdate/report` 与上述字段需后台确认；确认前保持 `updateReportEnabled=false`。
 4. **回退权限**：是否需要管理员口令或仅允许本机操作。
-5. **MinIO Range 实测**：等有环境后补测并记录。
-6. **状态路由归属**：`/api/workdsh-update-status` 放在账号设置插件的 Host 侧，还是独立小插件，实施前确定；两者都不改变“只读、无凭据”的约束。
+5. **状态路由归属**：`/api/workdsh-update-status` 放在账号设置插件的 Host 侧，还是独立小插件，实施前确定；两者都不改变“只读、无凭据”的约束。
+6. **“重新下载安装包”按钮**：是否随第一步一起做；建议做，作为坏包的最后出口。
+7. **sidecar 信任策略**：默认按 `size + mtime + 记录哈希` 快速信任，不每次重算；是否改为每次完整重算需确认。
 
 ---
 
@@ -394,6 +474,6 @@ readonly autoSuppressed?: boolean          // 本次运行已取消自动下载
 
 - 修改：`apps/desktop/src/update-state.ts`、`update-service.ts`、`update-download.ts`、`update-client.ts`、`update-view.ts`、`update-preload.ts`、`update-window.ts`、`update-toast.ts`、`update-toast-preload.ts`、`workdsh-main.ts`、`app-config.ts`（状态文件写入、托盘菜单、Host 环境变量）
 - 修改：`packages/plugins/account-settings/src/client.tsx`（检查更新行状态与禁用）、`packages/plugins/account-settings/README.md`、`CHANGELOG.md`
-- 新增：`apps/desktop/src/update-pending.ts`、`update-report.ts`、`update-status.ts`（状态文件原子写入）
-- 新增：Host 侧只读路由 `/api/workdsh-update-status`（归属见开放问题 6）
+- 新增：`apps/desktop/src/update-pending.ts`、`update-report.ts`、`update-status.ts`（状态文件原子写入）、`update-installer.ts`（安装包 sidecar 校验与复用）
+- 新增：Host 侧只读路由 `/api/workdsh-update-status`（归属见开放问题 5）
 - 测试：`apps/desktop/tests/update-*.spec.ts`（状态机、下载、服务、安装、配置）、账号菜单状态与托盘菜单的平台用例
