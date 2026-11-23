@@ -10,6 +10,7 @@ export const PRODUCT_SERVICES = Object.freeze({
   'workdsh-plugin-model-market': 'workdshModelMarket',
   'workdsh-plugin-projects': 'workdshProjects',
   'workdsh-plugin-prompts': 'workdshPrompts',
+  'workdsh-plugin-session-recycle': 'workdshSessionRecycle',
   'workdsh-plugin-skills': 'workdshSkills',
   'workdsh-plugin-workbenches': 'workdshWorkbenchRegistration',
 })

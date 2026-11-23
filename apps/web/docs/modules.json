@@ -257,6 +257,19 @@
     ]
   },
   {
+    "path": "../../packages/plugins/session-recycle",
+    "title": "会话彻底删除",
+    "status": "implemented",
+    "directories": [
+      "src",
+      "tests"
+    ],
+    "moduleVersion": "0.1",
+    "requirements": [
+      "R01"
+    ]
+  },
+  {
     "path": "../../packages/plugins/library",
     "title": "资料库",
     "status": "implemented",

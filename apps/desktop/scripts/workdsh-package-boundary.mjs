@@ -8,6 +8,7 @@ export const PRODUCT_PACKAGES = Object.freeze([
   'workdsh-plugin-model-market',
   'workdsh-plugin-projects',
   'workdsh-plugin-prompts',
+  'workdsh-plugin-session-recycle',
   'workdsh-plugin-skills',
   'workdsh-plugin-workbenches',
 ])
@@ -68,6 +69,7 @@ export const RELEASE_PACKAGES = Object.freeze([
   'workdsh-plugin-projects',
   'workdsh-plugin-model-market',
   'workdsh-plugin-prompts',
+  'workdsh-plugin-session-recycle',
   'workdsh-plugin-workbenches',
 ])
 
@@ -94,6 +96,7 @@ export const PACKAGE_DIRECTORIES = Object.freeze({
   'workdsh-plugin-projects': '../../packages/plugins/projects',
   'workdsh-plugin-model-market': '../../packages/plugins/model-market',
   'workdsh-plugin-prompts': '../../packages/plugins/prompts',
+  'workdsh-plugin-session-recycle': '../../packages/plugins/session-recycle',
   'workdsh-plugin-workbenches': '../../packages/plugins/workbenches',
   'workdsh-provider-identity-enterprise': '../../packages/providers/identity-enterprise',
   'workdsh-plugin-enterprise-collaboration': '../../packages/plugins/enterprise-collaboration',
