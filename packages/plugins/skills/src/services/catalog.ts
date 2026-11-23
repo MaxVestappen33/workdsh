@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { lstat, readFile, stat } from 'node:fs/promises';
-import { extname, join, relative, resolve, sep } from 'node:path';
+import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { SkillCatalogEntry, SkillCatalogIcon, SkillCatalogStatus, SkillCatalogSummary, SkillDiagnostic } from '../shared.js';
 
 /**
@@ -52,7 +52,8 @@ interface LoadedCatalog {
 
 function inside(root: string, target: string): boolean {
   const part = relative(resolve(root), resolve(target));
-  return part !== '' && !part.startsWith(`..${sep}`) && part !== '..' && !part.startsWith(sep);
+  // 跨盘符时 relative() 返回绝对路径，直接判为不在目录内。
+  return part !== '' && !isAbsolute(part) && !part.startsWith(`..${sep}`) && part !== '..' && !part.startsWith(sep);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

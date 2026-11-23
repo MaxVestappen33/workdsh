@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { copyFile, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { Context, Service } from '@deepseek-ai/cordis';
 import { isSkillName, type SkillDefinition, type SkillSummary } from '@deepseek-ai/dsh-skill';
 import {
@@ -92,6 +92,9 @@ async function snapshotFiles(directory: string, signal?: AbortSignal): Promise<{
 
 function inside(root: string, target: string): boolean {
   const part = relative(resolve(root), resolve(target));
+  // 跨盘符（Windows）时 relative() 返回带盘符的绝对路径，必须按「不在内部」处理，
+  // 否则安装在其它盘的自带技能会被误判成用户磁盘技能从而从列表里消失。
+  if (isAbsolute(part)) return false;
   return part === '' || (!part.startsWith(`..${sep}`) && part !== '..' && !part.startsWith(sep));
 }
 
