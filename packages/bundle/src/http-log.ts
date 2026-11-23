@@ -8,10 +8,20 @@
  *   响应体也不读取，避免占用磁盘、拖慢调用，降低敏感信息落盘的可能。
  *
  * 形态：一行请求、一行响应（同一个 `#序号` 便于并发请求配对），正文为原始 JSON-RPC / JSON。
+ * - `/auth/me` 是本机鉴权轮询（每 5 秒一次），按 60 秒窗口采样，窗口外照常全量记录；
+ *   被采样的那一条与其它接口一样完整（请求头、正文、响应头、响应体都记），只是窗口内多余的不写。
+ * - 超过慢阈值（默认 30 秒）的请求在响应行标 `⚠`，便于直接 grep。
  * 写文件失败、目录不可写、达到体积上限都静默降级，绝不影响请求本身。
  */
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
+
+/** 采样接口：本机成员鉴权轮询，保留每分钟一条即可判断可用性。 */
+const SAMPLE_PATH = '/auth/me'
+/** 采样窗口：同一接口窗口内只记一次，其余不写。 */
+const SAMPLE_INTERVAL_MS = 60_000
+/** 慢请求阈值：超过即在响应行标 `⚠`。 */
+const SLOW_MS = 30_000
 
 /** 单条正文的截断长度（字符）：协议问题看头部与结构足够，完整提示词/大响应不进日志。 */
 const MAX_BODY_CHARS = 4 * 1024
@@ -108,6 +118,19 @@ function requestHeaders(init: RequestInit | undefined): Headers {
 const requestUrl = (input: RequestInfo | URL): string =>
   typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
 
+/** 采样键只取路径：本机鉴权端口每次启动都会变，按完整 URL 会失效。 */
+function sampleKey(method: string, url: string): string | undefined {
+  try {
+    const { pathname } = new URL(url)
+    return pathname === SAMPLE_PATH ? `${method} ${pathname}` : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** 阈值展示：整秒用 `s`，否则用 `ms`。 */
+const duration = (ms: number): string => (ms % 1000 === 0 ? `${ms / 1000}s` : `${ms}ms`)
+
 /** 错误链：`fetch failed` 这类外层信息没有价值，把 cause 一起打出来。 */
 function errorLines(error: unknown): string[] {
   const lines: string[] = []
@@ -153,12 +176,20 @@ function createWriter(directory: string): Writer {
 }
 
 /** 响应详情按原样补记（异步读 clone，不阻塞调用方）。 */
-async function describeResponse(id: number, response: Response, startedAt: number, write: Writer): Promise<void> {
+async function describeResponse(
+  id: number,
+  response: Response,
+  startedAt: number,
+  write: Writer,
+  slowMs: number,
+): Promise<void> {
   const contentType = response.headers.get('content-type') ?? ''
   const media = contentType.split(';')[0]?.trim().toLowerCase() ?? ''
   const contentLength = Number(response.headers.get('content-length') ?? '')
+  const elapsed = Date.now() - startedAt
+  const slow = elapsed >= slowMs ? ` ⚠ 慢请求(>${duration(slowMs)})` : ''
   const lines = [
-    `[${stamp()}] #${id} <- ${response.status}${media ? ` ${media}` : ''} · ${Date.now() - startedAt}ms`,
+    `[${stamp()}] #${id} <- ${response.status}${media ? ` ${media}` : ''} · ${elapsed}ms${slow}`,
     `  headers: ${redactHeaders(response.headers)}`,
   ]
   if (media === 'text/event-stream') lines.push('  body: (text/event-stream 流式响应，不记录正文)')
@@ -174,17 +205,34 @@ async function describeResponse(id: number, response: Response, startedAt: numbe
  * 安装出站 HTTP 日志并返回卸载函数。`directory` 不存在时会被创建。
  * 已经安装过时返回空卸载函数：包装归第一个安装方所有。
  */
-export function installHttpLog(directory: string, { failuresOnly = false }: { failuresOnly?: boolean } = {}): () => void {
+export function installHttpLog(directory: string, {
+  failuresOnly = false,
+  slowMs = SLOW_MS,
+  sampleIntervalMs = SAMPLE_INTERVAL_MS,
+}: { failuresOnly?: boolean; slowMs?: number; sampleIntervalMs?: number } = {}): () => void {
   const scope = globalThis as LogScope
   if (scope[INSTALLED]) return () => undefined
   const original = globalThis.fetch
   const write = createWriter(directory)
   let serial = 0
+  /** 采样接口的上次记录时间：窗口内只记一次，记录内容与其它接口完全一致。 */
+  const sampledAt = new Map<string, number>()
+
+  /** 是否记录本次请求；窗口内的其余请求整条跳过，不做任何计数记录。 */
+  const sample = (key: string | undefined, now: number): boolean => {
+    if (key === undefined) return true
+    const last = sampledAt.get(key)
+    if (last !== undefined && now - last < sampleIntervalMs) return false
+    sampledAt.set(key, now)
+    return true
+  }
+
   const patched: typeof fetch = async (input, init) => {
-    const id = ++serial
     const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase()
     const url = requestUrl(input)
     const startedAt = Date.now()
+    if (!failuresOnly && !sample(sampleKey(method, url), startedAt)) return original(input, init)
+    const id = ++serial
     if (!failuresOnly) {
       const lines = [`[${stamp()}] #${id} -> ${method} ${redactUrl(url)}`, `  headers: ${redactHeaders(requestHeaders(init))}`]
       if (typeof init?.body === 'string' && init.body) lines.push(`  body: ${truncateBody(redactBody(init.body))}`)
@@ -199,8 +247,8 @@ export function installHttpLog(directory: string, { failuresOnly = false }: { fa
         }
         return response
       }
-      // 不 await：响应体读取在后台上补记，不延迟调用方（尤其流式响应）。
-      void describeResponse(id, response, startedAt, write).catch(() => undefined)
+      // 不 await：响应体读取在后台补记，不延迟调用方（尤其流式响应）。
+      void describeResponse(id, response, startedAt, write, slowMs).catch(() => undefined)
       return response
     } catch (error) {
       write([`[${stamp()}] #${id} !! ${method} ${redactUrl(url)} · ${Date.now() - startedAt}ms`, ...errorLines(error)].join('\n') + '\n')
