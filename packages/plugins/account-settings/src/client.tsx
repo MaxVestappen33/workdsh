@@ -27,8 +27,11 @@ type AccountProfile = {
 };
 
 export function apply(ctx: Context): void {
-  // 官方 ui-settings-account 的账号菜单只在注入 dshDesktop 的官方壳里注册（其 apply 首行判定），
-  // WorkDSH 载体不注入该标记。这里保持同一条判定：两者互斥，不会争抢这个单槽位。
+  // 官方 ui-settings-account 在 0.2.1-rc.5 里会无条件注册 settings.launcher（官方壳和普通 Web 都注册），
+  // 并不存在“两边互斥”的判定。这里刻意保持同优先级 0，并且依赖 Profile 让本插件先注册：
+  // 官方随后用 0 注册时 slot 会抛错，它的入口因此永远不会挂载，也不会作为备选出现。
+  // 注意：不要改优先级。改成 -1 会让官方入口成为我们卸载后的备选；改成 1 则官方 0 胜出、我们的账号菜单消失。
+  // 代价是每次启动会留下一条已知的 Uncaught Error，排序或 bundle 顺序变化时可能反转，调整 Profile 时需复核。
   if ('dshDesktop' in globalThis) return;
   ctx.slots.inject('settings.launcher', () => ctx.slots.register({ name: 'settings.launcher' }, AccountLauncher));
 }
@@ -166,6 +169,14 @@ function UpdateIcon() {
   );
 }
 
+function LogFileIcon() {
+  return (
+    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden focusable={false}>
+      <path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8zM14 3v5h5M9 13h6M9 17h6" />
+    </svg>
+  );
+}
+
 function RefreshIcon() {
   return (
     <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden focusable={false}>
@@ -176,6 +187,8 @@ function RefreshIcon() {
 
 /** 桌面载体的窄通道：工作台里用一次 workdsh:// 导航触发检查更新，不往官方页面注入桥。 */
 const CHECK_UPDATE_PATH = 'workdsh://check-update';
+/** 与单个会话的诊断包区分：这里导出整个软件的运行日志，由载体主进程收集。 */
+const DOWNLOAD_LOGS_PATH = 'workdsh://runtime-logs';
 
 /** 侧栏底部入口：账号可用时为头像 + 姓名，否则复用官方「设置」外观。 */
 function AccountLauncher({ wide, settingsShortcut, openSettings }: PropsRuntime<'settings.launcher'>) {
@@ -338,12 +351,20 @@ function AccountLauncher({ wide, settingsShortcut, openSettings }: PropsRuntime<
           设置
         </MenuItemButton>
         {desktop && (
-          <MenuItemButton
-            icon={<UpdateIcon />}
-            onSelect={() => { setOpen(false); window.location.assign(CHECK_UPDATE_PATH); }}
-          >
-            检查更新
-          </MenuItemButton>
+          <>
+            <MenuItemButton
+              icon={<UpdateIcon />}
+              onSelect={() => { setOpen(false); window.location.assign(CHECK_UPDATE_PATH); }}
+            >
+              检查更新
+            </MenuItemButton>
+            <MenuItemButton
+              icon={<LogFileIcon />}
+              onSelect={() => { setOpen(false); window.location.assign(DOWNLOAD_LOGS_PATH); }}
+            >
+              下载运行日志
+            </MenuItemButton>
+          </>
         )}
         {profile && (
           <MenuItemButton

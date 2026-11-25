@@ -14,7 +14,7 @@ export const inject = ['connection']
 const EXPORT_PATH = '/api/workdsh.diagnostics.export'
 const OFFICIAL_PACKAGE = '@deepseek-ai/dsh-session-log-export'
 /** 导出前逐行脱敏的日志：旧版本可能已把明文凭据写进这些文件。会话条目不做任何处理。 */
-const SANITIZED_LOG = /^(?:host-output|host-http|update|process-cleanup)-\d{4}-\d{2}-\d{2}\.log$/u
+const SANITIZED_LOG = /^(?:host-output|host-http|update|process-cleanup|carrier)-\d{4}-\d{2}-\d{2}\.log$/u
 const sanitizes = (name: string): boolean => SANITIZED_LOG.test(name)
 
 /** Host 侧只需要 connection 的注册面；其余服务按需 ctx.get，缺失时降级。 */

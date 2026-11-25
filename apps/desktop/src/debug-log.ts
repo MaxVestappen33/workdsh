@@ -110,12 +110,15 @@ export interface PruneResult {
 }
 
 /** 由本应用写出的按天轮转日志前缀；新增同类日志只在这里加一项。 */
-export const DAILY_LOG_PREFIXES = ['host-output', 'host-http', 'process-cleanup', 'update'] as const
+export const DAILY_LOG_PREFIXES = ['host-output', 'host-http', 'process-cleanup', 'update', 'carrier'] as const
 
-/** runtime-failure* 文件名形态（与诊断包采集同一正则）：启动失败、句柄耗尽重试、运行中崩溃三种记录共用限额。 */
-const RUNTIME_FAILURE_NAME = /^runtime-failure(?:-(?:retry|crash)-\d+)?\.log$/u
+/**
+ * runtime-failure* 文件名形态（与诊断包采集同一正则）：启动失败、句柄耗尽重试、运行中崩溃三种记录共用限额。
+ * 同时兼容旧版不带时间戳的名字，保证升级后旧记录仍会被清理。
+ */
+const RUNTIME_FAILURE_NAME = /^runtime-failure(?:-(?:retry|crash))?(?:-\d{8}-\d{6}-\d{3}(?:-\d+)?|-\d+)?\.log$/u
 /** runtime-failure* 数量上限：失败证据只留最近这么多份，多出的按最旧优先删。 */
-const MAX_RUNTIME_FAILURE_FILES = 20
+const MAX_RUNTIME_FAILURE_FILES = 50
 
 /**
  * 清理按天轮转的日志，三档策略：
@@ -124,7 +127,7 @@ const MAX_RUNTIME_FAILURE_FILES = 20
  *    与「诊断包只取最近 24 小时」同一口径。
  * 2. 总量兜底：清理后目录总量仍超过 `maxTotalBytes`（默认 32 MB）时，从最旧的受管日志继续删，
  *    直到回到预算内；非受管文件（`runtime-failure*.log`、`startup-timing.log`、`update-install.log` 等）不参与删除。
- * 3. 失败证据限额：`runtime-failure*.log` 不属于按天轮转，按 mtime 只留最近 `maxRuntimeFailures`（默认 20）份，
+ * 3. 失败证据限额：`runtime-failure*.log` 不属于按天轮转，按 mtime 只留最近 `maxRuntimeFailures`（默认 50）份，
  *    多出的最旧优先删除；mtime 最新的那份永不删，避免误删本次刚写入、正要被诊断包采集的文件。
  *
  * 目录不存在、单个文件被占用/无权限都只记录失败项，绝不抛出，因此可在启动路径里直接调用。

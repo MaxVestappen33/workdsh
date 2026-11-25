@@ -9,6 +9,15 @@ export function redactRuntimeOutput(text: string): string {
     .replace(/((?:["']?)(?:bootstrapToken|apiKey|password|accessToken|authorization)(?:["']?)\s*[:=]\s*)["']?[^\s,"'}]+["']?/giu, '$1[redacted]');
 }
 
+/**
+ * 运行日志导出用：在 `redactRuntimeOutput` 之上再覆盖不带 `?`/`&` 的 key=value 形式。
+ * 导出的是客户机文件，宁可多脱敏，也不能把凭据带出去。
+ */
+export function redactRuntimeLogText(text: string): string {
+  return redactRuntimeOutput(text)
+    .replace(/((?:^|[\s"'`([{,;])(?:token|key|api_key|apiKey|access_token|accessToken|password|passwd|secret|authorization)\s*[=:]\s*)["']?[^\s,"'}]+/gimu, '$1[redacted]');
+}
+
 /** Child-process chunks are not credential boundaries. Buffer complete lines
  * before redacting; discard oversized lines instead of emitting a secret prefix. */
 export function createRuntimeOutputRedactor(write: (text: string) => void) {
@@ -65,8 +74,15 @@ export function runtimeFailureDetail(ready: boolean, code: number | null, output
  * 现场需要的是崩溃前的运行输出，而不是启动原因。文件沿用 runtime-failure 前缀，
  * 诊断包采集与按份数清理都能一并覆盖。
  */
-export function runtimeCrashLogName(restart: number): string {
-  return `runtime-failure-crash-${restart}.log`
+export function runtimeCrashLogName(restart: number, now = new Date()): string {
+  return `runtime-failure-crash-${logTimestamp(now)}-${restart}.log`
+}
+
+/** 文件名用的本地时间戳（精确到毫秒），保证跨启动、同一秒内的多次事件都不会互相覆盖。 */
+function logTimestamp(now: Date): string {
+  const pad = (value: number, width = 2): string => String(value).padStart(width, '0')
+  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`
+    + `-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}-${pad(now.getMilliseconds(), 3)}`
 }
 
 /**
@@ -163,8 +179,9 @@ export function shouldRetryStartup(output: string, attempt: number): boolean {
 }
 
 /** 每次尝试写独立记录：首次失败与重试结果不会互相覆盖。 */
-export function startupFailureLogName(attempt: number): string {
-  return attempt === 0 ? 'runtime-failure.log' : `runtime-failure-retry-${attempt}.log`
+export function startupFailureLogName(attempt: number, now = new Date()): string {
+  const stamp = logTimestamp(now)
+  return attempt === 0 ? `runtime-failure-${stamp}.log` : `runtime-failure-retry-${stamp}-${attempt}.log`
 }
 
 /**

@@ -12,6 +12,7 @@ import {
 } from 'node:fs'
 import { basename, dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import * as nodeOs from 'node:os'
 import { enterpriseLoginHtml, connectionLoadingHtml, accountSplashHtml, accountLoginHtml } from './connection-entry.ts'
 import { connectionPartition, enterpriseConnection, type DesktopConnection } from './connection-mode.ts'
 import { parseDeploymentConfig } from './deployment-config.ts'
@@ -23,10 +24,11 @@ import { EnterpriseLogin, startEnterpriseAuthority, type Authority } from './ent
 import { desktopEnterprisePatch, desktopAccountPatch, desktopConnectorMarketPatch, desktopSkillMarketPatch, desktopPromptPatch, desktopModelMarketPatch, desktopExpertMarketPatch, desktopAssetGatePatch, accountSpace, accountModelStateDirectory, accountAssetGateStateDirectory, assetGatePolicyDirectory, enterpriseEnvironment, enterpriseSpace, materializeRuntimeProfile, markProfileUpdated, officialLauncher, officialHostLauncher, quarantineCredentialsResidue, type AccountActor } from './local-runtime.ts'
 import { manageCommand } from './command-management.ts'
 import { ACCOUNT_ONLY } from './carrier-policy.ts'
-import { createRuntimeOutputRedactor, planRuntimeRestart, RUNTIME_RESTART_LIMIT, redactRuntimeOutput, retryStartupAfterHandleExhaustion, runtimeCrashDetail, runtimeCrashLog, runtimeCrashLogName, runtimeFailureDetail, runtimeFailureLog, startupFailureLogName } from './runtime-diagnostics.ts'
+import { createRuntimeOutputRedactor, planRuntimeRestart, RUNTIME_RESTART_LIMIT, redactRuntimeLogText, redactRuntimeOutput, retryStartupAfterHandleExhaustion, runtimeCrashDetail, runtimeCrashLog, runtimeCrashLogName, runtimeFailureDetail, runtimeFailureLog, startupFailureLogName } from './runtime-diagnostics.ts'
 import { cleanOwnedProcessTree, reclaimOrphanedToolProcesses, stopOwnedProcess, terminateOwnedProcessImmediately, trackOwnedProcess } from './owned-process.ts'
 import { prepareRuntimePort, runtimePortConflict } from './runtime-port.ts'
 import { hostNodeArguments, runSessionPreflight, sessionPreflightEnabled, sessionPreflightSummary } from './session-preflight.ts'
+import { buildRuntimeLogBundle } from './runtime-log-export.ts'
 import { runOfficialCommand } from './official-command.ts'
 import { renderMarkdown } from './update-markdown.ts'
 import type { UpdateCandidate } from './update-release.ts'
@@ -62,6 +64,8 @@ let pendingConnection: ReturnType<typeof enterpriseConnection> | undefined
 let enterprise: { login: EnterpriseLogin, root: string, home: string, deviceId: string, authority?: Authority, authFile?: string } | undefined
 let verifyTimer: ReturnType<typeof setInterval> | undefined
 let verifying = false
+/** 运行日志导出在途：保存对话框是模态的，但仍挡住重复触发。 */
+let exportingRuntimeLogs = false
 
 /** 退出清理的总预算：本机进程已立即结束，剩下的收尾（后台登出、存储清理）不应再拖住退出。 */
 const QUIT_CLEANUP_DEADLINE_MS = 3_000
@@ -114,6 +118,147 @@ function markStartup(label: string): void {
   startupMarks.push({ label, elapsedMs })
   process.stderr.write(`[startup] +${elapsedMs}ms ${label}\n`)
   flushStartupTiming()
+  recordCarrier('startup', `+${elapsedMs}ms ${label}`)
+}
+
+// ── 载体运行日志（排查「整个软件」的问题，不依赖 Host）──────────────────────
+// 打包后的 GUI 没有终端：主进程异常、错误弹窗、渲染进程/GPU 崩溃原本只到 stderr，
+// 关掉窗口就再也找不回来。这里统一追加到 userData/logs/carrier-YYYY-MM-DD.log，
+// 与 Host 侧的 host-output-*.log 一起构成可导出的现场。
+let carrierLog: DebugLog | undefined
+
+const safeJson = (value: unknown): string => {
+  try { return JSON.stringify(value) } catch { return String(value) }
+}
+
+/** 官方前端 KaTeX 的排版警告：同一段内容会重复几十条，对排查运行错误没有价值。 */
+const NOISY_CONSOLE = /unicodeTextInMathMode|LaTeX-incompatible input and strict mode/u
+
+/** 追加一条载体日志；任何失败都静默降级，绝不影响软件运行。 */
+function recordCarrier(scope: string, detail: unknown): void {
+  const text = detail instanceof Error
+    ? (detail.stack ?? `${detail.name}: ${detail.message}`)
+    : typeof detail === 'string' ? detail : safeJson(detail)
+  try {
+    carrierLog ??= createDebugLog(join(app.getPath('userData'), 'logs'), 'carrier')
+    carrierLog.write(`[${new Date().toISOString()}] [${scope}] ${redactRuntimeLogText(text).slice(0, 16_384)}\n`)
+  } catch { /* 日志不可用不影响运行 */ }
+}
+
+/**
+ * 安装载体级诊断：必须早于 app.whenReady，才能捕获 Chromium 的启动期告警。
+ * - Chromium/GPU/渲染器日志落到 logs/chromium.log（只收 warning 及以上）；
+ * - 主进程未捕获异常、未处理的 Promise；
+ * - 所有 dialog.showErrorBox 的标题与详情（现场只能看到弹窗，关掉即丢失）；
+ * - 渲染进程/工具子进程崩溃。
+ */
+function installCarrierDiagnostics(): void {
+  carrierLog ??= createDebugLog(join(app.getPath('userData'), 'logs'), 'carrier')
+  const appName = typeof app.getName === 'function' ? app.getName() : 'PoliceAssistant'
+  const appVersion = typeof app.getVersion === 'function' ? app.getVersion() : 'unknown'
+  recordCarrier('boot', `${appName} ${appVersion} ${process.platform}/${process.arch} `
+    + `electron ${process.versions.electron} chrome ${process.versions.chrome} node ${process.versions.node}`)
+  // 只记录 warning/error，避免把正常网络请求细节写进客户机。
+  app.commandLine?.appendSwitch?.('enable-logging', 'file')
+  app.commandLine?.appendSwitch?.('log-file', join(app.getPath('userData'), 'logs', 'chromium.log'))
+  app.commandLine?.appendSwitch?.('log-level', '1')
+  // uncaughtExceptionMonitor 只观察，不改变原有退出行为。
+  process.on('uncaughtExceptionMonitor', (error, origin) => recordCarrier('uncaught-exception', `${origin}\n${error.stack ?? error.message}`))
+  process.on('unhandledRejection', reason => recordCarrier('unhandled-rejection', reason))
+  app.on('render-process-gone', (_event, contents, details) => {
+    let url = ''
+    try { url = contents.getURL() } catch { /* 已销毁 */ }
+    recordCarrier('render-process-gone', `${url}\n${safeJson(details)}`)
+  })
+  app.on('child-process-gone', (_event, details) => recordCarrier('child-process-gone', safeJson(details)))
+  const showErrorBox = dialog.showErrorBox.bind(dialog)
+  dialog.showErrorBox = (title: string, content: string): void => {
+    recordCarrier('error-dialog', `${title}\n${content}`)
+    showErrorBox(title, content)
+  }
+}
+
+/** 运行日志默认文件名：按时间排序，避免多次导出互相覆盖。 */
+function runtimeLogFileName(now: Date): string {
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`
+    + `-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+  return `PoliceAssistant-${app.getVersion()}-runtime-logs-${stamp}.zip`
+}
+
+/**
+ * 导出运行日志。由菜单、托盘、登录/加载页和账号菜单（workdsh://runtime-logs）共同调用，
+ * 全程在载体主进程完成，因此 Host 没起来时也能用。
+ */
+async function exportRuntimeLogs(): Promise<void> {
+  if (exportingRuntimeLogs) return
+  exportingRuntimeLogs = true
+  try {
+    recordCarrier('runtime-log-export', '开始导出运行日志')
+    const userData = app.getPath('userData')
+    const logDirectory = join(userData, 'logs')
+    let crashDumps: string | undefined
+    try { crashDumps = app.getPath('crashDumps') } catch { crashDumps = undefined }
+    const profileDirectory = join(runtimeHome(), 'profiles', PROFILE_NAME)
+    const bundle = buildRuntimeLogBundle({
+      logDirectory,
+      userDataDirectory: userData,
+      profileDirectory: existsSync(profileDirectory) ? profileDirectory : undefined,
+      crashDumpDirectory: crashDumps !== undefined && existsSync(crashDumps) ? crashDumps : undefined,
+      metadata: {
+        app: {
+          name: app.getName(),
+          version: app.getVersion(),
+          packaged: app.isPackaged,
+          locale: app.getLocale(),
+        },
+        system: {
+          platform: process.platform,
+          arch: process.arch,
+          type: nodeOs.type(),
+          release: nodeOs.release(),
+        },
+        runtime: {
+          electron: process.versions.electron,
+          chrome: process.versions.chrome,
+          node: process.versions.node,
+          v8: process.versions.v8,
+        },
+        paths: { userData, logDirectory, profileDirectory, crashDumps },
+        deployment: appConfig === undefined ? undefined : {
+          environment: appConfig.environment,
+          server: {
+            baseUrl: appConfig.server.baseUrl,
+            adminSsoUrl: appConfig.server.adminSsoUrl,
+            appId: appConfig.server.appId,
+            updateEnabled: appConfig.server.updateEnabled,
+            updateCheckIntervalMinutes: appConfig.server.updateCheckIntervalMinutes,
+          },
+        },
+      },
+    })
+    const now = new Date()
+    const defaultPath = join(app.getPath('downloads'), runtimeLogFileName(now))
+    const options = {
+      title: '保存运行日志',
+      defaultPath,
+      filters: [{ name: 'ZIP 压缩包', extensions: ['zip'] }],
+    }
+    const owner = window !== undefined && !window.isDestroyed() ? window : undefined
+    const result = owner === undefined ? await dialog.showSaveDialog(options) : await dialog.showSaveDialog(owner, options)
+    if (result.canceled || !result.filePath) {
+      recordCarrier('runtime-log-export', '用户取消保存')
+      return
+    }
+    writeFileSync(result.filePath, bundle.data)
+    recordCarrier('runtime-log-export', `已保存 ${result.filePath}（${bundle.data.length} 字节，缺失 ${bundle.missing.length}）`)
+    shell.showItemInFolder(result.filePath)
+  } catch (error) {
+    recordCarrier('runtime-log-export-failed', error)
+    dialog.showErrorBox('导出运行日志失败', error instanceof Error ? error.message : '请稍后重试。')
+  } finally {
+    exportingRuntimeLogs = false
+  }
 }
 
 /** 进程回收失败的落盘记录：现场只能看到弹窗，底层原因需要留在 userData/logs 里可查。 */
@@ -287,7 +432,11 @@ function refreshTrayMenu(): void {
       },
     })
   }
-  items.push({ type: 'separator' }, { label: '退出软件', click: () => app.quit() })
+  items.push(
+    { label: '下载运行日志', click: () => { void exportRuntimeLogs() } },
+    { type: 'separator' },
+    { label: '退出软件', click: () => app.quit() },
+  )
   tray.setContextMenu(Menu.buildFromTemplate(items))
 }
 
@@ -1240,6 +1389,29 @@ function openWindow(url: string, connection: DesktopConnection = { mode: 'person
   const page = window
   disableSpellcheckDictionaryDownloads(page)
   trackWindowState(page)
+  // 页面层错误同样落盘：白屏、插件脚本报错、页面根本没加载出来时，这里是唯一现场。
+  page.webContents.on('did-fail-load', (_event, code, description, target, isMainFrame) => {
+    if (isMainFrame) recordCarrier('did-fail-load', `${code} ${description} ${target}`)
+  })
+  page.webContents.on('render-process-gone', (_event, details) => {
+    let url = ''
+    try { url = page.webContents.getURL() } catch { /* 已销毁 */ }
+    recordCarrier('web-contents-gone', `${url}\n${safeJson(details)}`)
+  })
+  page.webContents.on('preload-error', (_event, path, error) => {
+    recordCarrier('preload-error', `${path}\n${error.stack ?? error.message}`)
+  })
+  page.webContents.on('unresponsive', () => {
+    let url = ''
+    try { url = page.webContents.getURL() } catch { /* 已销毁 */ }
+    recordCarrier('unresponsive', url)
+  })
+  page.webContents.on('console-message', details => {
+    if (details.level !== 'error' && details.level !== 'warning') return
+    // 过滤 KaTeX 排版警告，避免几十条无害噪声淹掉真正的错误。
+    if (NOISY_CONSOLE.test(details.message)) return
+    recordCarrier('console', `${details.level} ${details.sourceId}:${details.lineNumber} ${details.message}`)
+  })
   entrySurface = carrier
   window.on('page-title-updated', event => {
     event.preventDefault()
@@ -1263,6 +1435,12 @@ function openWindow(url: string, connection: DesktopConnection = { mode: 'person
       if (workdshCommand(target) === 'check-update') {
         event.preventDefault()
         if (window === page) checkForUpdatesManually()
+        return
+      }
+      // 账号菜单的「下载运行日志」：同样走窄通道，由载体直接收集载体 + Host 日志。
+      if (workdshCommand(target) === 'runtime-logs') {
+        event.preventDefault()
+        if (window === page) void exportRuntimeLogs()
         return
       }
       try { if (new URL(target).origin === origin) return } catch { /* invalid navigation is refused */ }
@@ -1594,6 +1772,8 @@ async function startRuntime(home: string, connection: DesktopConnection, patches
       mkdirSync(directory, { recursive: true })
       const path = join(directory, startupFailureLogName(attempt))
       writeFileSync(path, runtimeFailureLog(ready, code, diagnosticOutput, cleanupFailed, attempt), { mode: 0o600 })
+      // 新记录写入后立刻执行一次限额清理，避免下次启动前短暂超过 50 份。
+      pruneDailyLogs()
       return `${detail}\n\n错误记录：${path}`
     } catch { return detail }
   }
@@ -1629,6 +1809,8 @@ async function startRuntime(home: string, connection: DesktopConnection, patches
           mkdirSync(directory, { recursive: true })
           crashLogPath = join(directory, runtimeCrashLogName(crashRecords))
           writeFileSync(crashLogPath, runtimeCrashLog(code, diagnosticOutput, crashRecords, decision === 'give-up' ? runtimeRestarts : decision.restart, RUNTIME_RESTART_LIMIT), { mode: 0o600 })
+          // 新记录写入后立刻执行一次限额清理，避免下次启动前短暂超过 50 份。
+          pruneDailyLogs()
         } catch { crashLogPath = undefined }
         if (decision === 'give-up') {
           process.stderr.write(`[runtime] 自动重启已达上限（${runtimeRestarts} 次），交回用户处理\n`)
@@ -2330,7 +2512,12 @@ function installConnectionMenu(): void {
   // 全中文菜单：内置 role 菜单的默认标签是英文，会造成中英混排，因此显式给出中文标签与中文子项。
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     ...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : []),
-    { label: '工具', submenu: [{ label: '终端命令 dsh（可选）…', click: () => { void manageCommand(join(process.resourcesPath, 'workdsh-runtime'), enterprise ? `${enterprise.login.actor.organizationName ?? '企业'} / ${enterprise.login.actor.displayName}` : (account ? `${account.login.user.displayName}（账号）` : '个人工作区')) } }] },
+    { label: '工具', submenu: [
+      { label: '终端命令 dsh（可选）…', click: () => { void manageCommand(join(process.resourcesPath, 'workdsh-runtime'), enterprise ? `${enterprise.login.actor.organizationName ?? '企业'} / ${enterprise.login.actor.displayName}` : (account ? `${account.login.user.displayName}（账号）` : '个人工作区')) } },
+      { type: 'separator' as const },
+      // 运行日志菜单不依赖 Host：主界面没起来、只有一个入口页时也能导出。
+      { label: '下载运行日志', click: () => { void exportRuntimeLogs() } },
+    ] },
     { label: '编辑', submenu: [
       { role: 'undo' as const, label: '撤销' },
       { role: 'redo' as const, label: '重做' },
@@ -2378,6 +2565,8 @@ if (desktopUserData) {
 app.setName('PoliceAssistant')
 // Windows 通知需要稳定的 AppUserModelId，与安装包 appId 保持一致。
 if (process.platform === 'win32') app.setAppUserModelId('io.techflag.dsh.ssh')
+// 诊断必须早于 whenReady：Chromium 启动期告警也才能落到 logs/chromium.log。
+installCarrierDiagnostics()
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {

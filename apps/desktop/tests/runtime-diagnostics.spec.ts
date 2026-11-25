@@ -88,8 +88,9 @@ it('never retries a startup failure that is not handle exhaustion', async () => 
 })
 
 it('keeps the first failure and the retry result in separate records', () => {
-  expect(startupFailureLogName(0)).toBe('runtime-failure.log')
-  expect(startupFailureLogName(1)).toBe('runtime-failure-retry-1.log')
+  const now = new Date(2026, 10, 25, 21, 29, 3, 120)
+  expect(startupFailureLogName(0, now)).toBe('runtime-failure-20261125-212903-120.log')
+  expect(startupFailureLogName(1, now)).toBe('runtime-failure-retry-20261125-212903-120-1.log')
   expect(runtimeFailureLog(false, 1, EMFILE_OUTPUT)).toContain('[首次启动]')
   expect(runtimeFailureLog(false, 1, EMFILE_OUTPUT, false, 1)).toContain('[第 2 次启动（句柄耗尽后重试）]')
   expect(runtimeFailureLog(false, 1, EMFILE_OUTPUT, false, 1)).toContain('EMFILE')
@@ -102,7 +103,8 @@ dsh: fatal load failure: RangeError: Maximum call stack size exceeded
     at Object.set (file:///C:/Users/u/AppData/Local/Programs/PoliceAssistant/resources/workdsh-runtime/profiles/workdsh/node_modules/@deepseek-ai/cordis/lib/index.js:151:19)`
 
 it('records a running-time crash separately from startup failures', () => {
-  expect(runtimeCrashLogName(2)).toBe('runtime-failure-crash-2.log')
+  const now = new Date(2026, 10, 25, 21, 28, 30, 45)
+  expect(runtimeCrashLogName(2, now)).toBe('runtime-failure-crash-20261125-212830-045-2.log')
   const log = runtimeCrashLog(1, STACK_OUTPUT, 2, 2, RUNTIME_RESTART_LIMIT)
   expect(log).toContain('[运行中异常退出]')
   expect(log).toContain('本机第 2 份崩溃记录')
