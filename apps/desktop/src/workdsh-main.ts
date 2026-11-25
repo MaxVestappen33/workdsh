@@ -1393,6 +1393,11 @@ function runtimeEnvironment(home: string): NodeJS.ProcessEnv {
     // 客户端身份：反馈上报等后台接口按客户端维度归档，Host 侧读这两个变量。
     WORKDSH_APP_ID: carrierAppId(),
     WORKDSH_APP_VERSION: app.getVersion(),
+    // 打包态标记：Host 侧据此启用内置资产完整性校验；开发态跳过，避免本地改技能被误判。
+    // 使用进程环境而非可改动的配置文件，不能让用户通过改配置绕过或伪造。
+    // 只能用 process.defaultApp 判断：开发态（Electron 二进制 + app 目录）下 app.isPackaged
+    // 也会报成 true，误开校验会让随包技能卡片显示「技能文件或安装清单缺失」。
+    WORKDSH_PACKAGED: process.defaultApp ? '0' : '1',
     // A packaged carrier embeds the WorkDSH entry point, but a development
     // Electron binary needs the app directory as the worker's first argument.
     // 这里只能用 process.defaultApp 判断：当前 Electron 在开发态（二进制 + app 目录）

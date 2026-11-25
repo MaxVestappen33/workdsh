@@ -99,6 +99,14 @@ function inside(root: string, target: string): boolean {
 }
 
 /**
+ * 打包态才启用内置资产完整性校验：开发态会直接改随包技能，校验只会误伤。
+ * 依据是载体启动 Host 时注入的进程环境 WORKDSH_PACKAGED，不读取任何可被修改的配置文件。
+ */
+function packagedRuntime(): boolean {
+  return process.env.WORKDSH_PACKAGED === '1';
+}
+
+/**
  * 调用期摘要缓存的失效指纹：只 stat、不读内容。
  *
  * 目录形态递归列出 `path\0size\0mtimeMs`（跳过清单自身、签名缓存与符号链接，
@@ -109,7 +117,7 @@ async function digestFingerprint(target: string, directoryBundle: boolean): Prom
   const hash = createHash('sha256');
   if (!directoryBundle) {
     const info = await stat(target);
-    hash.update(`${basename(target)}\0${info.size}\0${Math.round(info.mtimeMs)}\0`);
+    hash.update(`${basename(target)}\0${info.size}\0${Math.round(info.mtimeMs)}\0${Math.round(info.ctimeMs)}\0${info.ino}\0`);
     return hash.digest('hex');
   }
   const visit = async (directory: string, prefix: string, depth: number): Promise<void> => {
@@ -125,7 +133,7 @@ async function digestFingerprint(target: string, directoryBundle: boolean): Prom
       if (entry.isDirectory()) { await visit(path, rel, depth + 1); continue; }
       if (!entry.isFile()) continue;
       const info = await stat(path);
-      hash.update(`${rel}\0${info.size}\0${Math.round(info.mtimeMs)}\0`);
+      hash.update(`${rel}\0${info.size}\0${Math.round(info.mtimeMs)}\0${Math.round(info.ctimeMs)}\0${info.ino}\0`);
     }
   };
   await visit(target, '', 0);
@@ -357,6 +365,8 @@ export class SkillManager extends Service implements SkillManagementService {
     }
     /** 从市场安装的技能：列表阶段也要比一次内容摘要，被改过的技能在卡片上直接标为不可用。 */
     const marketInstalled = new Set<string>();
+    /** 打包态的内置技能：与市场安装同样做内容比对，避免随包文件被改后仍显示可用。 */
+    const builtinInstalled = new Set<string>();
     /** 闸门开启时不可显示的技能：磁盘上的市场外技能（用户手放/自建）一律不展示。 */
     const externalLocal = new Set<string>();
     const merged = await Promise.all(rows.map(async row => {
@@ -373,6 +383,8 @@ export class SkillManager extends Service implements SkillManagementService {
       try { manifest = await this.installManifest(row.name); } catch { manifest = undefined; }
       const assetId = manifest?.source === 'market' && manifest.assetId ? manifest.assetId : undefined;
       if (manifest?.source === 'market') marketInstalled.add(row.name);
+      // 内置随包技能在打包态同样做完整性投影，被篡改时卡片直接显示不可用。
+      if (manifest?.source === 'builtin' && packagedRuntime()) builtinInstalled.add(row.name);
       // 闸门开启时只允许市场安装与随包内置：磁盘上的其它技能（用户手放、自建）调用期同样会被拒。
       if (manifest?.source !== 'market' && manifest?.source !== 'builtin' && fileBacked.has(row.name)) externalLocal.add(row.name);
       const clientBuiltin = bundledNames.has(row.name.trim().toLowerCase()) || manifest?.source === 'builtin';
@@ -395,15 +407,16 @@ export class SkillManager extends Service implements SkillManagementService {
       : visible;
     // 市场来源技能每次都按缓存比对一次内容摘要：用户在本地改过文件后，卡片要立刻显示「不可用」
     // 而不是等到真正调用时才被调用期闸门拒绝。授权问题优先展示，两者都有时不叠加两条文案。
-    const verified = marketInstalled.size === 0 ? described : await Promise.all(described.map(async row => (
-      marketInstalled.has(row.name) ? { ...row, ...(await this.integrityStateOf(row.name)) } : row
+    const verified = marketInstalled.size === 0 && builtinInstalled.size === 0 ? described : await Promise.all(described.map(async row => (
+      marketInstalled.has(row.name) || builtinInstalled.has(row.name) ? { ...row, ...(await this.integrityStateOf(row.name)) } : row
     )));
     return verified.sort((a, b) => a.name.localeCompare(b.name));
   }
 
   /**
-   * 完整性状态：市场来源技能的内容与安装清单不一致时，卡片/详情要立刻显示「不可用」，
-   * 而不是等到真正调用才被调用期闸门拒绝。结果复用 `verifyInstalledDigests` 的指纹缓存。
+   * 完整性状态：市场来源（及打包态的内置随包技能）内容与安装清单不一致时，
+   * 卡片/详情要立刻显示「不可用」，而不是等到真正调用才被调用期闸门拒绝。
+   * 结果复用 `verifyInstalledDigests` 的指纹缓存。
    */
   private async integrityStateOf(name: string): Promise<Pick<ManagedSkillSummary, 'integrityState' | 'integrityReason'>> {
     let verdict: SkillDigestVerdict;
@@ -779,6 +792,24 @@ export class SkillManager extends Service implements SkillManagementService {
   }
 
   /**
+   * 解析随包技能的资源目录：这类技能不在受管目录里（落在 Profile 资源中），
+   * 只能按 provider 给出的路径定位。
+   *
+   * provider 给的是指令文件路径时取所在目录；虚拟 provider（如 experts 的
+   * workdsh-expert-manager）只给 resourceBase 目录、没有指令文件路径，此时直接用该目录。
+   * 两者都没有（或技能不存在）时返回 undefined。安装清单与完整性校验共用这一份解析，
+   * 避免「读清单」与「比摘要」两处对同一技能得出不同结论。
+   */
+  private async bundledSkillTarget(name: string): Promise<string | undefined> {
+    try {
+      const definition = await this.ctx.skills.get(name);
+      return definition?.path
+        ? dirname(definition.path)
+        : definition?.resourceBase?.kind === 'directory' ? definition.resourceBase.path : undefined;
+    } catch { return undefined; }
+  }
+
+  /**
    * 闸门用途：读取技能的安装清单。
    *
    * 目录形态读目录内的隐藏清单；单文件形态读同目录旁挂清单，并要求清单里记的文件摘要
@@ -789,17 +820,9 @@ export class SkillManager extends Service implements SkillManagementService {
     this.assertName(name);
     const entry = (await this.activeEntry(name)) ?? (await this.disabledEntry(name));
     if (!entry) {
-      // 随包技能不在受管目录里（落在 Profile 资源中）：按 provider 给出的路径读同目录清单。
+      // 随包技能不在受管目录里：按 bundledSkillTarget 给出的目录读同目录清单。
       // 不在这里兜底会把 office 系列当成「未登记」，闸门会在目录与调用两处全部拒绝。
-      // 虚拟 provider（如 experts 的 workdsh-expert-manager）只给 resourceBase 目录、没有指令文件路径，
-      // 此时直接用该目录读清单，否则内置技能会被整体判成「未上架」。
-      let directory: string | undefined;
-      try {
-        const definition = await this.ctx.skills.get(name);
-        directory = definition?.path
-          ? dirname(definition.path)
-          : definition?.resourceBase?.kind === 'directory' ? definition.resourceBase.path : undefined;
-      } catch { directory = undefined; }
+      const directory = await this.bundledSkillTarget(name);
       if (!directory) return undefined;
       const bundled = await readAssetManifest(directory);
       return bundled && bundled.assetType === 'skill' ? { ...bundled, assetType: 'skill' } : undefined;
@@ -874,22 +897,33 @@ export class SkillManager extends Service implements SkillManagementService {
   async verifyInstalledDigests(name: string): Promise<SkillDigestVerdict> {
     this.assertName(name);
     const entry = (await this.activeEntry(name)) ?? (await this.disabledEntry(name));
-    if (!entry) return { ok: false, reason: 'missing' };
+    // 受管目录里找不到时按随包内置解析：官方 office 技能与 WorkDSH 内置技能都落在
+    // Profile 资源目录，只认受管根会把它们判成 missing，卡片误报「技能文件或安装清单缺失」。
+    const directoryBundle = entry ? entry.directoryBundle : true;
+    const target = entry
+      ? entry.directoryBundle ? dirname(entry.file) : entry.file
+      : await this.bundledSkillTarget(name);
+    if (target === undefined) return { ok: false, reason: 'missing' };
     let manifest: AssetManifest | undefined;
     try {
-      manifest = entry.directoryBundle ? await readAssetManifest(dirname(entry.file)) : await readAssetFileManifest(entry.file);
+      manifest = directoryBundle ? await readAssetManifest(target) : await readAssetFileManifest(target);
     } catch {
       return { ok: false, reason: 'unreadable' };
     }
-    if (manifest === undefined || manifest.assetType !== 'skill') return { ok: false, reason: 'unreadable' };
-    if (manifest.source !== 'market') return { ok: true };
-    if (manifest.signature === undefined) return { ok: false, reason: 'signature-missing' };
+    if (manifest === undefined || manifest.assetType !== 'skill') {
+      // 随包内置技能可能本来就没有安装清单（如官方 office 技能）：没有基准就不做内容判定。
+      // 这类技能也不会进入列表的完整性投影，不能报「缺失/无法读取」制造新误报。
+      return entry ? { ok: false, reason: 'unreadable' } : { ok: true };
+    }
+    // 本地自建不参与；内置只在打包态校验，开发态跳过避免误伤本地改动。
+    if (manifest.source === 'local' || (manifest.source === 'builtin' && !packagedRuntime())) return { ok: true };
+    // 市场来源必须带签名块（装在验签关闭期的需要重装）；内置随包发布不要求签名。
+    if (manifest.source === 'market' && manifest.signature === undefined) return { ok: false, reason: 'signature-missing' };
     // 清单自身必须自洽：files 与 digest 对不上说明清单被改过，不能再当基准。
     if (assetManifestDigest(manifest.files) !== manifest.digest) return { ok: false, reason: 'manifest-mismatch' };
-    const target = entry.directoryBundle ? dirname(entry.file) : entry.file;
     let fingerprint: string;
     try {
-      fingerprint = await digestFingerprint(target, entry.directoryBundle);
+      fingerprint = await digestFingerprint(target, directoryBundle);
     } catch {
       return { ok: false, reason: 'unreadable' };
     }
@@ -898,7 +932,7 @@ export class SkillManager extends Service implements SkillManagementService {
     if (cached?.key === key) return cached.verdict;
     let verdict: SkillDigestVerdict;
     try {
-      const files = entry.directoryBundle ? await snapshotAssetFiles(target) : [await snapshotAssetFile(target)];
+      const files = directoryBundle ? await snapshotAssetFiles(target) : [await snapshotAssetFile(target)];
       verdict = assetManifestDigest(files) === manifest.digest ? { ok: true } : { ok: false, reason: 'digest-mismatch' };
     } catch {
       verdict = { ok: false, reason: 'unreadable' };
