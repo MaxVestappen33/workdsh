@@ -3,6 +3,7 @@ import type {
   MyListingListResult,
   MyListingQuery,
   MyListingSummary,
+  RemoteExpertApplyStatus,
   RemoteExpertListQuery,
   RemoteExpertListResult,
   RemoteExpertPackage,
@@ -11,6 +12,12 @@ import type {
   RemoteExpertType,
 } from 'workdsh-contracts';
 import { ExpertsError } from '../domain/values.js';
+import {
+  ASSET_SIGNATURE_REASONS,
+  AssetSignatureError,
+  parseAssetSignatureEnvelope,
+  type AssetSignatureEnvelope,
+} from 'workdsh-asset-signature';
 import { EXPERT_IMPORT_LIMITS } from './portability.js';
 import { DEFAULT_EXPERT_API_PATHS, type ExpertApiPaths } from './endpoints.js';
 
@@ -107,6 +114,77 @@ function scenesOf(row: Record<string, unknown>): RemoteExpertScene[] {
   return scenes;
 }
 
+/**
+ * 后台布尔/标记字段的归一化：
+ * - Java Integer 的 1/0（数字）与布尔 true/false 都要识别；
+ * - 字符串形态（"1"/"0"、"true"/"false"、"Y"/"N"）一并兼容；
+ * - 未知或缺省返回 undefined（界面据此不展示徽标）。
+ */
+function flagOf(value: unknown): boolean | undefined {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return undefined;
+    if (value === 1) return true;
+    if (value === 0) return false;
+    return undefined;
+  }
+  const text = str(value)?.toLowerCase();
+  if (text === '1' || text === 'true' || text === 'y') return true;
+  if (text === '0' || text === 'false' || text === 'n') return false;
+  return undefined;
+}
+
+/** isAuthorized 是后台的授权标记：只有明确为 Y/true 才算已授权，其余（含缺省）按未授权。 */
+const authorizedOf = (value: unknown): boolean => flagOf(value) === true;
+
+/** applyStatus：只接受四个已知取值，其它（含缺省）按 none（未申请）处理。 */
+function applyStatusOf(value: unknown): RemoteExpertApplyStatus {
+  const text = str(value)?.toLowerCase();
+  return text === 'pending' || text === 'approved' || text === 'rejected' ? text : 'none';
+}
+
+/**
+ * 后台签名可用状态：市场列表字段 `signatureAvailable`（布尔）与 `signatureReason`（字符串）。
+ * 闸门关闭期间后台恒下发 true；开启后按「无附件 / 非 zip / 无签名记录」给 false + 原因。
+ * 后台未下发该字段（旧版本）时返回 undefined，卡片不展示。
+ */
+function signatureStateOf(row: Record<string, unknown>): 'available' | 'unavailable' | undefined {
+  const flag = flagOf(row.signatureAvailable);
+  return flag === undefined ? undefined : flag ? 'available' : 'unavailable';
+}
+
+/**
+ * `sourceNodeList` 是后台下发的来源节点数组（DictModel 形态：label / text / title / nodeName）。
+ * 只取名称文案，去空去重并保持后台顺序；后台没有下发时退回 `sourceNode` 逗号串。
+ */
+function sourceNodesOf(row: Record<string, unknown>): string[] {
+  const names: string[] = [];
+  const seen = new Set<string>();
+  const add = (value: string | undefined) => {
+    const label = value?.trim();
+    if (!label || seen.has(label)) return;
+    // 字典值（一长串编号）不是节点名：只显示后台给出的文案，避免把编号当来源节点展示。
+    if (/^\d{6,}$/.test(label)) return;
+    seen.add(label);
+    names.push(label);
+  };
+  const dictText = str(row.sourceNodeList_dictText);
+  // 字典多选字段通常另有 `_dictText` 文案列：优先取文案，避免把字典值（一串编号）当成节点名展示。
+  if (dictText) for (const part of dictText.split(',')) add(part);
+  if (!names.length && Array.isArray(row.sourceNodeList)) {
+    for (const entry of row.sourceNodeList) {
+      if (typeof entry === 'string') { add(entry); continue; }
+      const item = record(entry);
+      add(str(item?.label) ?? str(item?.text) ?? str(item?.title) ?? str(item?.nodeName) ?? str(item?.name) ?? str(item?.dictText) ?? str(item?.value));
+    }
+  }
+  if (!names.length) {
+    const fallback = str(row.sourceNode) ?? str(row.sourceNode_dictText);
+    if (fallback) for (const part of fallback.split(',')) add(part);
+  }
+  return names;
+}
+
 function toSummary(row: Record<string, unknown>, expertType: RemoteExpertType): RemoteExpertSummary | undefined {
   // `status`: 1 draft / 2 pending / 3 listed / 4 rejected / 5 withdrawn.
   const status = str(row.status);
@@ -116,6 +194,9 @@ function toSummary(row: Record<string, unknown>, expertType: RemoteExpertType): 
   const name = str(row.name);
   if (!remoteId || !name) return undefined;
   const pkg = packageOf(row);
+  const builtin = flagOf(row.builtin) ?? flagOf(row.isNzzc);
+  const signatureState = signatureStateOf(row);
+  const signatureReason = str(row.signatureReason);
   return {
     remoteId,
     expertType,
@@ -138,6 +219,14 @@ function toSummary(row: Record<string, unknown>, expertType: RemoteExpertType): 
     scenes: scenesOf(row),
     ...(str(row.updateTime) ? { updatedAt: str(row.updateTime) } : {}),
     ...(pkg === undefined ? {} : { package: pkg }),
+    // 是否内置 / 公开状态 / 来源节点 / 授权状态 / 申请状态：后台已下发但此前被丢弃。
+    ...(builtin === undefined ? {} : { builtin }),
+    ...(flagOf(row.isPublic) === undefined ? {} : { isPublic: flagOf(row.isPublic) }),
+    sourceNodeList: sourceNodesOf(row),
+    authorized: authorizedOf(row.isAuthorized),
+    applyStatus: applyStatusOf(row.applyStatus),
+    ...(signatureState === undefined ? {} : { signatureState }),
+    ...(signatureReason === undefined ? {} : { signatureReason }),
   };
 }
 
@@ -154,6 +243,7 @@ function toMyListing(row: Record<string, unknown>, expertType: RemoteExpertType)
     expertType,
     name,
     description: str(row.description) ?? '',
+    ...(str(row.capability) ? { capability: str(row.capability) } : {}),
     version: str(row.version) ?? 'v1.0.0',
     status,
     statusLabel: LISTING_STATUS_LABELS[status] ?? (status || '未知'),
@@ -215,6 +305,10 @@ export class RemoteExpertCatalog {
         pageNo, pageSize, status: listedStatus,
         ...(query.keyword ? { keyword: query.keyword } : {}),
         ...(query.bizScene ? { bizScene: query.bizScene } : {}),
+        // 是否内置与授权/申请状态都由后台筛选；安装状态由客户端按本机台账过滤，不下发。
+        ...(query.builtin === undefined ? {} : { builtin: query.builtin ? '1' : '0' }),
+        ...(query.authStatus ? { authStatus: query.authStatus } : {}),
+        ...(query.applyStatus ? { applyStatus: query.applyStatus } : {}),
       }, signal);
     } catch (error) {
       throw remoteFailure(error);
@@ -357,5 +451,47 @@ export class RemoteExpertCatalog {
       throw new ExpertsError('experts/install-digest-mismatch', '专家包校验失败（摘要不一致），已拒绝安装。', { fileName: pkg.fileName });
     }
     return { bytes, digest };
+  }
+
+  /**
+   * 资产签名：按后台编号取签名 envelope。
+   *
+   * `assetType` 由专家形态决定（个人专家 `expert`、专家团 `expert_group`），
+   * 响应里的 assetType/assetId 必须与请求一致，防止把别的资产签名搬过来。
+   * 接口在类型不支持、资产不存在、无签名记录、签名为空、清单损坏时一律返回错误，
+   * 不会下发空签名；调用方据此 fail closed，安装流程不落盘。
+   */
+  async signature(expertType: RemoteExpertType, assetId: string, signal?: AbortSignal): Promise<AssetSignatureEnvelope> {
+    const id = str(assetId);
+    if (!id) throw new ExpertsError(ASSET_SIGNATURE_REASONS.missing, '缺少专家标识，无法获取资产签名。');
+    const expectedAssetType = expertType === 'team' ? 'expert_group' : 'expert';
+    const channel = this.backend();
+    if (!channel) throw new ExpertsError('experts/remote-unavailable', '当前环境未接入业务后台，无法获取资产签名。');
+    let value: unknown;
+    try {
+      value = await channel.get(this.paths.signature, { assetType: expectedAssetType, assetId: id }, signal);
+    } catch (error) {
+      throw remoteFailure(error);
+    }
+    try {
+      const envelope = parseAssetSignatureEnvelope(value);
+      if (envelope.assetType !== expectedAssetType) {
+        throw new ExpertsError(
+          ASSET_SIGNATURE_REASONS.assetMismatch,
+          `签名返回的资产类型是 ${envelope.assetType}，当前请求的是 ${expectedAssetType}。`,
+        );
+      }
+      if (envelope.assetId !== id) {
+        throw new ExpertsError(
+          ASSET_SIGNATURE_REASONS.assetMismatch,
+          `签名返回的资产编号是 ${envelope.assetId}，当前请求的是 ${id}。`,
+        );
+      }
+      return envelope;
+    } catch (error) {
+      if (error instanceof ExpertsError) throw error;
+      if (error instanceof AssetSignatureError) throw new ExpertsError(error.code, error.message);
+      throw new ExpertsError(ASSET_SIGNATURE_REASONS.invalid, '资产签名返回的数据无法识别，已拒绝安装。');
+    }
   }
 }

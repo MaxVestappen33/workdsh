@@ -1,4 +1,4 @@
-import { Button, CardSkeleton, cardSkeletonCss, Input, QueryOverlay, queryOverlayCss, Textarea } from 'workdsh-ui';
+import { applyStatusTone, Button, CardSkeleton, cardSkeletonCss, formatTagVersion, Input, QueryOverlay, queryOverlayCss, Textarea, TongyunTagSingle, tongyunTagSingleCss } from 'workdsh-ui';
 import { Icon, Modal, Select, type IconName } from 'workdsh-ui';
 import * as React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -239,31 +239,6 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
     if (!marketOn && (tab === 'market' || tab === 'applications')) setTab('local');
   }, [marketOn, tab]);
 
-  /**
-   * 切屏刷新：市场列表平时完全不做隐式轮询；只有用户点过申请/取消申请，
-   * 从后台回到本页时才补拉一次，之后继续回到「不自动查询」。
-   */
-  useEffect(() => {
-    // Electron 切回窗口通常只有 window focus，没有 visibilitychange，两个信号都听。
-    const onReturn = (): void => {
-      if (!pendingAuthRefresh.current) return;
-      pendingAuthRefresh.current = false;
-      if (tab === 'market' && marketOn) {
-        void loadMarket({ scenes, keyword: query, builtin: builtinFilter, install: installFilter, auth: authFilter, apply: applyFilter });
-      }
-    };
-    const onVisible = (): void => {
-      if (document.visibilityState !== 'visible') return;
-      onReturn();
-    };
-    document.addEventListener('visibilitychange', onVisible);
-    window.addEventListener('focus', onReturn);
-    return () => {
-      document.removeEventListener('visibilitychange', onVisible);
-      window.removeEventListener('focus', onReturn);
-    };
-  }, [tab, marketOn, loadMarket, scenes, query, builtinFilter, installFilter, authFilter, applyFilter]);
-
   /** 表单字典：技能类型 / 审批状态 / 来源节点 / 业务场景树。后台不可用时保持空，入口照常展示但表单会提示。 */
   const loadListingOptions = useCallback(async () => {
     if (!marketOn) return;
@@ -313,6 +288,39 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
     catch (cause) { console.error('[workdsh:skills:market-index]', cause); setAuthorized([]); setAuthorizedReady(false); }
   }, [management, marketOn]);
   useEffect(() => { void loadAuthorized(); }, [loadAuthorized]);
+
+  /**
+   * 切屏刷新：市场列表平时完全不做隐式轮询；只有用户点过申请/取消申请，
+   * 从后台回到本页时才补拉一次，之后继续回到「不自动查询」。
+   *
+   * 本地列表的「申请/取消申请」按钮读的是授权索引（`loadAuthorized`），不是本地快照，
+   * 所以无论当前在哪个页签，回来都必须重取索引——否则要等用户切一次页签或索引 TTL
+   * 过期，本地卡片上的申请状态才会变。
+   */
+  useEffect(() => {
+    // Electron 切回窗口通常只有 window focus，没有 visibilitychange，两个信号都听。
+    const onReturn = (): void => {
+      if (!pendingAuthRefresh.current) return;
+      pendingAuthRefresh.current = false;
+      void loadAuthorized(true);
+      if (!marketOn) return;
+      if (tab === 'market') {
+        void loadMarket({ scenes, keyword: query, builtin: builtinFilter, install: installFilter, auth: authFilter, apply: applyFilter });
+      } else if (tab === 'applications') {
+        void loadApplications({ keyword: query, status: applicationStatus });
+      }
+    };
+    const onVisible = (): void => {
+      if (document.visibilityState !== 'visible') return;
+      onReturn();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onReturn);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onReturn);
+    };
+  }, [tab, marketOn, loadMarket, loadAuthorized, loadApplications, scenes, query, builtinFilter, installFilter, authFilter, applyFilter, applicationStatus]);
 
   /**
    * 刷新：只重取当前页签真正展示的数据，避免一次点击同时打本地索引、市场页与快照校验。
@@ -587,8 +595,8 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
     setTab(next);
     if (next === 'market' && marketOn) void loadMarket({ scenes, keyword: query, builtin: builtinFilter, install: installFilter, auth: authFilter, apply: applyFilter });
     if (next === 'applications' && marketOn) void loadApplications({ keyword: query, status: applicationStatus });
-    // 本地页签的业务场景/内置属性来自授权索引：切回来时对齐一次。
-    if (next === 'local' && marketOn) void loadAuthorized();
+    // 本地页签的业务场景/内置属性/申请状态都来自授权索引：切回来时强制重取，不走 60s 缓存。
+    if (next === 'local' && marketOn) void loadAuthorized(true);
   };
   /** 是否内置是单选：胶囊栏只在「选中一个」与「全部」之间切换。 */
   const changeBuiltin = (next: readonly string[]) => {
@@ -871,10 +879,10 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
       {/* 与技能市场一致：第一行状态标签靠左，第二行操作按钮靠右。 */}
       <div className="market-card-foot">
         <div className="market-card-tags">
-          {version ? <span className="version-tag">{version}</span> : null}
-          {builtinOf(skill) ? <span className="builtin-pill">内置</span> : <span className="external-pill">非内置</span>}
-          {revoked ? <span className="apply-pill none">未授权</span> : null}
-          {revoked && applyRef ? <span className={`apply-pill ${applyRef}`}>{APPLY_LABEL[applyRef]}</span> : null}
+          {version ? <TongyunTagSingle>{formatTagVersion(version)}</TongyunTagSingle> : null}
+          <TongyunTagSingle tone={builtinOf(skill) ? 'gray' : 'cyan'}>{builtinOf(skill) ? '内置' : '非内置'}</TongyunTagSingle>
+          {revoked ? <TongyunTagSingle auth={false}>未授权</TongyunTagSingle> : null}
+          {revoked && applyRef ? <TongyunTagSingle tone={applyStatusTone(applyRef)}>{APPLY_LABEL[applyRef]}</TongyunTagSingle> : null}
         </div>
         <div className="market-card-actions">
           {/* 不可用的技能不展示「去试试」：试用只对当前真正可调用的技能有意义。 */}
@@ -904,12 +912,12 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
       <div className="market-card-foot">
         {/* 第一行：状态标签靠左；第二行：操作按钮靠右。 */}
         <div className="market-card-tags">
-          {entry.version ? <span className="version-tag">{entry.version}</span> : null}
-          <span className={entry.builtin ? 'builtin-pill' : 'external-pill'}>{entry.builtin ? '内置' : '非内置'}</span>
-          <span className={installed ? 'installed-pill' : 'uninstalled-pill'}>{installed ? '已安装' : '未安装'}</span>
+          {entry.version ? <TongyunTagSingle>{formatTagVersion(entry.version)}</TongyunTagSingle> : null}
+          <TongyunTagSingle tone={entry.builtin ? 'gray' : 'cyan'}>{entry.builtin ? '内置' : '非内置'}</TongyunTagSingle>
+          <TongyunTagSingle tone={installed ? 'green' : 'gray'}>{installed ? '已安装' : '未安装'}</TongyunTagSingle>
           {/* 授权状态只看 isAuthorized；申请状态只看 applyStatus，两者互不影响。 */}
-          <span className={`apply-pill ${authorized ? 'approved' : 'none'}`}>{authorized ? '已授权' : '未授权'}</span>
-          <span className={`apply-pill ${entry.applyStatus}`}>{APPLY_LABEL[entry.applyStatus]}</span>
+          <TongyunTagSingle auth={authorized}>{authorized ? '已授权' : '未授权'}</TongyunTagSingle>
+          <TongyunTagSingle tone={applyStatusTone(entry.applyStatus)}>{APPLY_LABEL[entry.applyStatus]}</TongyunTagSingle>
         </div>
         <div className="market-card-actions">
           {!installed && authorized
@@ -945,7 +953,7 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
     </article>;
   };
   return <section className="wd-skills" data-testid="workdsh-skills">
-    <style>{skillsCss + skillsActionsCss + skillsMarketCss + skillsListingCss + cardSkeletonCss + queryOverlayCss}</style>
+    <style>{skillsCss + skillsActionsCss + skillsMarketCss + skillsListingCss + cardSkeletonCss + tongyunTagSingleCss + queryOverlayCss}</style>
     {/* 面板内容整体滚动；查询覆盖层作为同级绝对定位层，才能始终罩满可视区并居中。 */}
     <div className="skill-panel-scroll" onScroll={event => {
       const node = event.currentTarget;
@@ -996,7 +1004,7 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
 
     {tab === 'local' ? <>
       {localSkeleton ? <div className="grid"><CardSkeleton /></div> : null}
-      {!busy && !visibleLocal.length ? <div className="empty"><strong>暂无技能</strong></div> : null}
+      {!busy && !visibleLocal.length ? <div className="empty"><span className="empty-text">{normalizedQuery || builtinFilter !== undefined || activeScenes.length ? '没有找到与查询条件匹配的技能' : '暂无技能数据'}</span></div> : null}
       {visibleLocal.length ? <div className="grid">{visibleLocal.map(renderSkillCard)}</div> : null}
     </> : tab === 'market' ? <>
       {marketError ? <p className="error" role="alert">{marketError}<Button className="secondary" disabled={marketBusy} onClick={() => void loadMarket(filter)}>重试</Button></p> : null}
@@ -1005,7 +1013,7 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
       {marketSkeleton ? <div className="grid"><CardSkeleton /></div> : null}
       {marketVisible ? <div className="grid">{marketEntries.map(renderMarketCard)}</div> : null}
       {marketVisible && !marketBusy ? <div className="market-foot" role="status">{marketMore ? <span className="muted">正在加载更多…</span> : market.hasMore ? <span className="muted">继续向下滚动加载更多</span> : <span className="muted">已加载全部 {marketEntries.length} 个技能</span>}</div> : null}
-      {marketEmpty ? <div className="empty"><strong>暂无技能</strong></div> : null}
+      {marketEmpty ? <div className="empty"><span className="empty-text">{normalizedQuery || builtinFilter !== undefined || activeScenes.length || installFilter !== undefined || authFilter !== undefined || applyFilter !== undefined ? '没有找到与查询条件匹配的技能' : '暂无技能数据'}</span></div> : null}
     </> : <>
       {applicationError ? <p className="error" role="alert">{applicationError}<Button className="secondary" disabled={applicationBusy} onClick={() => void loadApplications({ keyword: query, status: applicationStatus })}>重试</Button></p> : null}
       {applicationMoreError ? <p className="error" role="alert">{applicationMoreError}<Button className="secondary" disabled={applicationMore} onClick={() => void loadMoreApplications()}>重试</Button></p> : null}

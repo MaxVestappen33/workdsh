@@ -9,8 +9,8 @@ import { createHash } from 'node:crypto';
 
 export const ASSET_SIGNATURE_PAYLOAD_VERSION = 'workdsh-asset-signature-v1';
 export const ASSET_SIGNATURE_ALGO = 'Ed25519';
-/** 本期只对技能签名；其它资产类型不请求签名。 */
-export const ASSET_SIGNATURE_ASSET_TYPES = ['skill'] as const;
+/** 允许请求签名的资产类型：技能、专家、专家团。 */
+export const ASSET_SIGNATURE_ASSET_TYPES = ['skill', 'expert', 'expert_group'] as const;
 
 export const ASSET_SIGNATURE_MAX_FILES = 1000;
 export const ASSET_SIGNATURE_MAX_PATH_BYTES = 512;
@@ -136,8 +136,16 @@ export function sha256Hex(bytes: string | Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-/** 校验并规范化参与签名的文件集合：去重、按字节序排序。 */
-export function canonicalAssetSignatureFiles(files: readonly AssetSignatureFile[]): readonly AssetSignatureFile[] {
+/**
+ * 校验并规范化参与签名的文件集合：去重，默认按 UTF-8 字节序排序。
+ *
+ * `sort: false` 保留传入顺序——后台明确「files 的顺序就是签名顺序」的资产
+ * （专家/专家团）必须用它，重排会改变载荷导致验签失败。
+ */
+export function canonicalAssetSignatureFiles(
+  files: readonly AssetSignatureFile[],
+  options: { readonly sort?: boolean } = {},
+): readonly AssetSignatureFile[] {
   if (!Array.isArray(files)) throw invalid('文件列表不是数组');
   if (files.length > ASSET_SIGNATURE_MAX_FILES) throw invalid(`文件数超过 ${ASSET_SIGNATURE_MAX_FILES}：${files.length}`);
   const seen = new Set<string>();
@@ -149,7 +157,7 @@ export function canonicalAssetSignatureFiles(files: readonly AssetSignatureFile[
     if (typeof file.sha256 !== 'string' || !sha256Pattern.test(file.sha256)) throw invalid(`文件摘要无效：${path}`);
     return { path, size: file.size, sha256: file.sha256 };
   });
-  return rows.sort((left, right) => compareAssetPaths(left.path, right.path));
+  return options.sort === false ? rows : rows.sort((left, right) => compareAssetPaths(left.path, right.path));
 }
 
 /** 头部字段（assetType / assetId）：非空、无控制字符、无冒号、无首尾空白。 */
@@ -176,10 +184,12 @@ export function canonicalAssetSignaturePayload(input: {
   readonly assetType: string;
   readonly assetId: string;
   readonly files: readonly AssetSignatureFile[];
+  /** `false` 保留传入顺序（专家/专家团：后台 files 顺序即签名顺序）；默认排序。 */
+  readonly sortFiles?: boolean;
 }): Buffer {
   const assetType = headerField(input.assetType, 'assetType');
   const assetId = headerField(input.assetId, 'assetId');
-  const files = canonicalAssetSignatureFiles(input.files);
+  const files = canonicalAssetSignatureFiles(input.files, { sort: input.sortFiles !== false });
   const lines = [
     ASSET_SIGNATURE_PAYLOAD_VERSION,
     `assetType:${assetType}`,

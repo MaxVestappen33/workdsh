@@ -73,10 +73,31 @@ async function admitExpertAsset(
   throw new ExpertsError(denial.reason, denial.message);
 }
 
+/** Guard-installed persona/skill-root mounts for one Agent; released when its preset changes. */
+interface ExpertScopeInstall {
+  readonly digest: string;
+  readonly dispose: () => void;
+}
+
+const scopeInstalls = new WeakMap<Agent, ExpertScopeInstall>();
+
+/**
+ * Release the guard-installed persona and skill roots for one Agent.
+ *
+ * A preset switch replaces the composition scope; the extra mounts this guard
+ * created live on the Agent context itself, so they must be disposed explicitly
+ * or the new preset's own persona/skill providers collide with the stale ones.
+ */
+export function releaseExpertScope(agent: Agent): void {
+  const current = scopeInstalls.get(agent);
+  if (current === undefined) return;
+  scopeInstalls.delete(agent);
+  try { current.dispose(); } catch { /* best-effort disposal */ }
+}
+
 /** Asset admission and role composition only. No child driver, mailbox or Team state. */
 export function registerExpertExecutionGuard(ctx: Context, options: { agentsHome?: string } = {}): void {
   const agentsHome = resolveAgentsHome(options.agentsHome);
-  const installed = new WeakMap<Agent, string>();
 
   async function prepare(agent: Agent, signal: AbortSignal | undefined, creating: boolean): Promise<void> {
     const membership = ctx.agentTeams.tryMembership(agent);
@@ -107,7 +128,8 @@ export function registerExpertExecutionGuard(ctx: Context, options: { agentsHome
     const { revision } = role;
     await admitExpertAsset(ctx, role, membership, signal);
     if (root === agent && !revision.definition.team) return;
-    if (installed.get(agent) === revision.compositionDigest) return;
+    if (scopeInstalls.get(agent)?.digest === revision.compositionDigest) return;
+    releaseExpertScope(agent);
     signal?.throwIfAborted();
     // Read only our already verified immutable composition, not arbitrary plugins.
     const rows = (JSON.parse(await readExpertPreset(revision.presetRevisionRef, agentsHome)) as { plugins: { name?: string; config?: SkillFiles.Config }[] }).plugins;
@@ -115,15 +137,24 @@ export function registerExpertExecutionGuard(ctx: Context, options: { agentsHome
     if (!skills) throw new ExpertsError('experts/dependency-missing', '固定专家组合缺少技能目录。');
     const definition = revision.definition;
     const packageRoot = definition.packageDocuments ? join(expertPresetDir(revision.presetRevisionRef, agentsHome), 'expert-package') : undefined;
-    // The official Agent scope owns these providers and their disposal.
+    // The official Agent scope owns these providers and their disposal; one install
+    // record lets a preset switch release the previous pair before mounting the new one.
     const persona = agent.ctx.plugin(Persona, expertPersonaConfig({ definition, packageRoot, teamMembers: revision.teamMembers }));
-    ctx.effect(() => () => persona.dispose());
-    await persona;
     const skillFiles = agent.ctx.plugin(SkillFiles, skills);
-    ctx.effect(() => () => skillFiles.dispose());
+    let disposed = false;
+    const dispose = () => {
+      if (disposed) return;
+      disposed = true;
+      scopeInstalls.delete(agent);
+      persona.dispose();
+      skillFiles.dispose();
+    };
+    scopeInstalls.set(agent, { digest: revision.compositionDigest, dispose });
+    ctx.effect(() => dispose, 'experts.agentScope');
+    await persona;
+    signal?.throwIfAborted();
     await skillFiles;
     signal?.throwIfAborted();
-    installed.set(agent, revision.compositionDigest);
   }
 
   ctx.on('agent/created', async ({ agent, signal }) => { await prepare(agent, signal, true); });

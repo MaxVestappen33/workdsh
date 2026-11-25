@@ -13,7 +13,6 @@ import type {
 import { ExpertsError } from '../domain/values.js';
 import type { ExpertsManager } from './experts-manager.js';
 import { EXPERT_IMPORT_LIMITS, buildExport } from './portability.js';
-import { filterVisible } from './visibility.js';
 
 /**
  * Exact Fetch transport for the expert Host service (D04 / P1-02).
@@ -37,7 +36,7 @@ type Endpoint =
   | 'request-publish-confirmation' | 'confirm-publish' | 'publish'
   | 'set-availability' | 'set-preference' | 'prepare-execution' | 'create-execution'
   | 'consume-handoff' | 'prepare-handoff' | 'create-handoff' | 'preview-import'
-  | 'commit-import' | 'export' | 'operation' | 'verify-binding'
+  | 'commit-import' | 'export' | 'operation' | 'verify-binding' | 'switch-expert' | 'clear-expert'
   | 'remote-list' | 'install' | 'uninstall' | 'installations'
   | 'listing-options' | 'submit-listing' | 'delete-expert' | 'my-listings' | 'withdraw-listing' | 'admin-sso';
 
@@ -52,12 +51,40 @@ const strArray = (value: unknown): string[] | undefined =>
 const oneOf = <T extends string>(value: unknown, allowed: readonly T[]): T | undefined =>
   typeof value === 'string' && (allowed as readonly string[]).includes(value) ? (value as T) : undefined;
 
-function publicFailure(error: unknown): ConnectionRpcResult<never> {
+function errorCodeOf(error: unknown): string | undefined {
+  const record = error as { code?: unknown; data?: { code?: unknown } } | undefined;
+  const value = record?.code ?? record?.data?.code;
+  return typeof value === 'string' ? value : undefined;
+}
+
+/** Failures that a user can act on without reading internal logs. */
+const READABLE_FAILURES: Readonly<Record<string, string>> = {
+  'agent-preset/locked': '该会话已开始对话，无法切换专家；请新建会话后重新召唤。',
+  'agent-preset/not-found': '目标专家的组合预设未注册或已失效，请重新发布或重装该专家后再试。',
+  'agent-preset/invalid': '目标专家的组合预设无法加载，请检查其依赖后重新发布。',
+  'experts/preset-broken': '目标专家的组合预设已失效，请重新发布后再试。',
+  'experts/preset-drift': '目标专家的组合预设内容已变化，请重新发布后再试。',
+  'experts/session-started': '该会话已开始对话，无法切换或取消专家；请新建会话后重新召唤。',
+};
+
+function publicFailure(ctx: Context, error: unknown): ConnectionRpcResult<never> {
   if (error instanceof DOMException && error.name === 'AbortError') return fail('experts/request-cancelled', '操作已取消。');
   if (error instanceof AssetGateDenied) return fail(error.code, error.message);
   if (error instanceof ExpertsError) return { ok: false, error: { code: error.code, message: error.message, details: error.details ?? {} } };
-  const code = error instanceof Error && error.message.startsWith('experts/') ? error.message : 'experts/internal';
-  return fail(code, '专家操作失败，请重试。');
+  const code = errorCodeOf(error);
+  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  // Unknown failures used to collapse into one generic sentence with no trace. Keep the
+  // stack in the host log and the real reason in the response so the next report is actionable.
+  try {
+    const logger = (ctx as unknown as { logger?: { warn(message: string): void } }).logger;
+    logger?.warn(`[workdsh-experts] ${code ?? 'unknown'}: ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
+  } catch { /* logging must never mask the original failure */ }
+  if (code !== undefined && READABLE_FAILURES[code] !== undefined) {
+    return { ok: false, error: { code, message: READABLE_FAILURES[code], details: {} } };
+  }
+  if (message.startsWith('experts/')) return fail(message, '专家操作失败，请重试。');
+  const detail = message.trim();
+  return fail(code ?? 'experts/internal', detail ? `专家操作失败：${detail}` : '专家操作失败，请重试。');
 }
 
 /**
@@ -69,6 +96,10 @@ type GateAssetType = 'skill' | 'mcp' | 'expert' | 'expert_group' | 'model' | 'pr
 type GateAuditAction = 'install' | 'enable' | 'restore' | 'uninstall' | 'delete';
 interface AssetGateLike {
   enabled(assetType: GateAssetType): boolean;
+  /** 触发式校验：进市场页/刷新/写操作完成后做一次 revision 比对；旧版闸门没有该方法时跳过。 */
+  refreshNow?(): Promise<void>;
+  /** 强制刷新快照（绕过节流）；旧版闸门没有该方法时不做授权变更重试。 */
+  refreshSnapshotForced?(signal?: AbortSignal): Promise<boolean>;
   decide(request: { assetType: GateAssetType; assetId: string; usage: 'read' | 'use' | 'write' }): Promise<{ allow: boolean; reason: string; message: string }>;
   /** 拿不到后台编号时的拒绝结果：原因码与文案由闸门统一维护。 */
   unlisted(): { reason: string; message: string };
@@ -143,11 +174,37 @@ async function auditedWrite<T>(ctx: Context, meta: WriteAuditMeta, run: () => Pr
   }
 }
 
+/**
+ * 可被「刷新快照」修复的拒绝原因：授权刚在后台变更时，本地快照还没同步到，
+ * 强制刷新一次通常就能放行；签名、完整性、策略类拒绝不在其中。
+ */
+const REFRESHABLE_GATE_REASONS = new Set<string>([
+  'gate/denied-not-entitled',
+  'gate/denied-expired',
+  'gate/denied-snapshot-stale',
+  'gate/denied-no-snapshot',
+]);
+
+/**
+ * 写操作（安装、启用）前判授权；闸门关闭时直接放行。
+ * 与技能市场的 requireAsset 同口径：命中快照未同步的拒绝时先强制刷新一次再重判，
+ * 消除「审批刚通过就点安装」的失败窗口；刷新失败时明确告知刷新失败，而不是谎报没权限。
+ */
 async function requireAsset(ctx: Context, assetType: GateAssetType, assetId: string): Promise<void> {
   const gate = assetGate(ctx);
   if (!gate?.enabled(assetType)) return;
-  const decision = await gate.decide({ assetType, assetId, usage: 'write' });
-  if (!decision.allow) throw new AssetGateDenied(decision.reason, decision.message);
+  const request = { assetType, assetId, usage: 'write' as const };
+  const decision = await gate.decide(request);
+  if (decision.allow) return;
+  if (!gate.refreshSnapshotForced || !REFRESHABLE_GATE_REASONS.has(decision.reason))
+    throw new AssetGateDenied(decision.reason, decision.message);
+  const refreshed = await gate.refreshSnapshotForced();
+  if (!refreshed) throw new AssetGateDenied(decision.reason, '授权状态刷新失败，请稍后重试。');
+  const retried = await gate.decide(request);
+  if (retried.allow) return;
+  throw new AssetGateDenied(retried.reason, REFRESHABLE_GATE_REASONS.has(retried.reason)
+    ? '授权尚未生效，请稍后再试。'
+    : retried.message);
 }
 
 /** Boundary sanitizer: keep only well-typed definition fields so the domain layer validates instead of crashing. */
@@ -235,6 +292,7 @@ function listQuery(payload: unknown): ExpertListQuery {
   const cursor = str(input.cursor);
   const limit = typeof input.limit === 'number' && Number.isFinite(input.limit) ? input.limit : undefined;
   return {
+    ...(input.refresh === true ? { refresh: true } : {}),
     ...(expertType === undefined ? {} : { expertType }),
     ...(search === undefined ? {} : { search }),
     ...(origin === undefined ? {} : { origin }),
@@ -399,27 +457,43 @@ async function dispatch(ctx: Context, manager: ExpertsManager, actor: ActorConte
         if (!sessionId) return fail('experts/invalid-request', '请求缺少会话标识。');
         return ok(await manager.verifyBinding(actor, sessionId, signal));
       }
+      case 'switch-expert': {
+        const sessionId = str(input?.sessionId);
+        const expertId = str(input?.expertId);
+        if (!sessionId || !expertId) return fail('experts/invalid-request', '请求缺少会话或专家标识。');
+        return ok(await manager.switchExpert(actor, sessionId, expertId, str(input?.revisionId), signal));
+      }
+      case 'clear-expert': {
+        const sessionId = str(input?.sessionId);
+        if (!sessionId) return fail('experts/invalid-request', '请求缺少会话标识。');
+        return ok(await manager.clearExpert(actor, sessionId, signal));
+      }
       case 'remote-list': {
         const expertType = oneOf(input?.expertType, ['agent', 'team'] as const);
         const keyword = str(input?.keyword);
         const bizScene = str(input?.bizScene);
+        // 授权状态与申请状态白名单：与后台 applyStatus 同口径。
+        const authStatus = oneOf(input?.authStatus, ['Y', 'N'] as const);
+        const applyStatus = oneOf(input?.applyStatus, ['none', 'pending', 'approved', 'rejected'] as const);
+        const builtin = bool(input?.builtin);
         const pageNo = typeof input?.pageNo === 'number' && Number.isFinite(input.pageNo) ? input.pageNo : undefined;
         const pageSize = typeof input?.pageSize === 'number' && Number.isFinite(input.pageSize) ? input.pageSize : undefined;
-        const result = await manager.remoteList(actor, {
+        // 进市场页先做一次触发式快照校验（闸门内部有节流）：刚上架/刚授权的条目不必等轮询。
+        const gate = assetGate(ctx);
+        if (gate && (gate.enabled('expert') || gate.enabled('expert_group'))) {
+          try { await gate.refreshNow?.(); } catch { /* 刷新失败沿用现有快照，不阻断列表 */ }
+        }
+        // 不再做授权二次过滤：后台已放开未授权条目返回，由界面展示状态并给出申请入口。
+        return ok(await manager.remoteList(actor, {
           ...(expertType === undefined ? {} : { expertType }),
           ...(keyword === undefined ? {} : { keyword }),
           ...(bizScene === undefined ? {} : { bizScene }),
+          ...(builtin === undefined ? {} : { builtin }),
+          ...(authStatus === undefined ? {} : { authStatus }),
+          ...(applyStatus === undefined ? {} : { applyStatus }),
           ...(pageNo === undefined ? {} : { pageNo }),
           ...(pageSize === undefined ? {} : { pageSize }),
-        }, signal);
-        // 二次过滤：未授权的条目不下发给 UI；市场行本身就是后台资产，编号直接取后台字段。
-        return ok({
-          ...result,
-          items: await filterVisible(ctx.reflect.get('workdshAssetGate') as AssetGateLike | undefined, result.items, item => ({
-            assetType: item.expertType === 'agent' ? 'expert' : 'expert_group',
-            manifest: () => ({ source: 'market' as const, assetId: item.remoteId }),
-          })),
-        });
+        }, signal));
       }
       case 'install': {
         const expertType = oneOf(input?.expertType, ['agent', 'team'] as const);
@@ -508,7 +582,7 @@ async function dispatch(ctx: Context, manager: ExpertsManager, actor: ActorConte
         return fail('experts/unknown-endpoint', '未知的专家管理操作。');
     }
   } catch (error) {
-    return publicFailure(error);
+    return publicFailure(ctx, error);
   }
 }
 
@@ -555,7 +629,7 @@ export function registerExpertsConnection(ctx: Context): void {
         return json(await dispatch(ctx, manager, actor, body.endpoint, body.payload, request.signal));
       } catch (error) {
         if (error instanceof SyntaxError) return json(fail('experts/invalid-request', '专家管理请求格式无效。'), 400);
-        return json(publicFailure(error));
+        return json(publicFailure(ctx, error));
       }
     }),
   }));
@@ -577,7 +651,7 @@ export function registerExpertsConnection(ctx: Context): void {
         const stagedId = await manager.stageImport(fileName, request.body, request.signal);
         return json(ok({ uploadedArtifactRef: stagedId }));
       } catch (error) {
-        return json(publicFailure(error));
+        return json(publicFailure(ctx, error));
       }
     }),
   }));
@@ -609,7 +683,7 @@ export function registerExpertsConnection(ctx: Context): void {
           },
         });
       } catch (error) {
-        return json(publicFailure(error));
+        return json(publicFailure(ctx, error));
       }
     }),
   }));

@@ -141,8 +141,6 @@ export const connectorCss = `${modalCss}
 @keyframes wd-connector-spin{to{transform:rotate(360deg)}}
 /* 开关槽位：启停期间原地显示加载态，保持开关所在位置不跳动。 */
 .wd-connectors .switch-loading{flex:none;display:grid;place-items:center;width:34px;height:34px}
-.wd-connectors .installed-pill{flex:none;padding:4px 10px;border-radius:999px}
-.wd-connectors .installed-pill{background:var(--dsw-alias-bg-layer-1);color:#55ce63;font-size:12px;font-weight:500}
 .wd-connectors .auth-reason{overflow:hidden;margin:8px 0 0;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}
 .wd-connectors .market-foot{display:flex;justify-content:center;padding:22px 0 6px;color:var(--dsw-alias-label-tertiary);font-size:12px}
 /* 列表/卡片区：覆盖层只罩这一块，顶部页签与筛选保持可点。 */
@@ -158,6 +156,7 @@ export const connectorCss = `${modalCss}
 .wd-connectors .empty{padding:64px 20px;text-align:center;color:var(--dsw-alias-label-tertiary)}
 .wd-connectors .empty strong{display:block;margin-bottom:6px}
 .wd-connectors .empty strong{color:var(--dsw-alias-label-secondary);font-size:16px}
+.wd-connectors .empty .empty-text{display:block;font-size:14px;font-weight:400;color:var(--dsw-alias-label-tertiary)}
 
 /* ------------------------------------------------------------ 详情弹窗 */
 /* 弹窗自身不滚动：上方信息区（图标、标题、说明、指标）固定，只有下方工具清单滚动，
@@ -266,33 +265,15 @@ export const connectorCss = `${modalCss}
 .wd-connectors .market-action.primary:hover:not(:disabled){border-color:var(--dsw-alias-border-l2);background:#43454a;color:var(--dsw-alias-label-primary-inverted)}
 .wd-connectors .market-action.danger{border-color:#800000;background:#800000;color:#fff;font-weight:600}
 .wd-connectors .market-action.danger:hover:not(:disabled){border-color:#800000;background:#800000;color:#fff;opacity:.88}
-/* 状态标签：浅底 + 同系文字 + 1px 同系描边 + 4px 小圆角。 */
-.wd-connectors .market-card .builtin-pill,.wd-connectors .market-card .external-pill,.wd-connectors .market-card .installed-pill,
-.wd-connectors .market-card .uninstalled-pill,.wd-connectors .market-card .apply-pill,.wd-connectors .market-card .version-tag{display:inline-flex;align-items:center;flex:none;height:20px;padding:0 5px;border:1px solid transparent;border-radius:4px;font-size:12px;line-height:18px;font-weight:400;white-space:nowrap}
-.wd-connectors .market-card .version-tag,.wd-connectors .market-card .builtin-pill,.wd-connectors .market-card .uninstalled-pill{background:whitesmoke;border-color:white;color:#434343}
-.wd-connectors .market-card .external-pill{background:#e6fffb;border-color:#87e8de;color:#08979c}
-.wd-connectors .market-card .installed-pill{background:#f6ffed;border-color:#b7eb8f;color:#389e0d}
-.wd-connectors .market-card .apply-pill.none{background:#f5f5f5;border-color:#d9d9d9;color:#434343}
-.wd-connectors .market-card .apply-pill.pending{background:#e6f4ff;border-color:#91caff;color:#0958d9}
-.wd-connectors .market-card .apply-pill.approved{background:#f6ffed;border-color:#b7eb8f;color:#389e0d}
-.wd-connectors .market-card .apply-pill.rejected{background:#fff2f0;border-color:#ffccc7;color:#cf1322}
+/* 状态标签统一由 workdsh-ui 的 TongyunTagSingle 渲染。 */
 /* 本地卡片复用同一套标签与操作区，但只有未授权时才出现。 */
 .wd-connectors .card .market-card-foot .market-action{height:26px;min-height:26px;line-height:24px;font-size:12px}
 /* 本地卡片版式与市场卡片一致：场景行 → 描述两行 → 标签行 → 状态行 → 操作行。 */
 .wd-connectors .local-card>.tag{display:block;overflow:hidden;height:18px;margin:8px 0 0;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;text-overflow:ellipsis;white-space:nowrap}
 .wd-connectors .local-card>.tag.is-empty{visibility:hidden}
-.wd-connectors .local-card>.market-card-tags{flex-wrap:wrap;margin-top:8px}
+.wd-connectors .local-card>.market-card-tags{margin-top:8px}
 /* 状态行由 card-foot 的 margin-top:auto 顶到底部，操作行固定在其下方。 */
 .wd-connectors .local-card>.market-card-actions{padding-top:10px}
-.wd-connectors .local-card .builtin-pill,.wd-connectors .local-card .external-pill,.wd-connectors .local-card .apply-pill,
-.wd-connectors .local-card .version-tag,.wd-connectors .local-card .installed-pill,.wd-connectors .local-card .uninstalled-pill{display:inline-flex;align-items:center;flex:none;height:20px;padding:0 5px;border:1px solid transparent;border-radius:4px;font-size:12px;line-height:18px;font-weight:400;white-space:nowrap}
-.wd-connectors .local-card .version-tag,.wd-connectors .local-card .builtin-pill,.wd-connectors .local-card .uninstalled-pill{background:whitesmoke;border-color:white;color:#434343}
-.wd-connectors .local-card .external-pill{background:#e6fffb;border-color:#87e8de;color:#08979c}
-.wd-connectors .local-card .installed-pill{background:#f6ffed;border-color:#b7eb8f;color:#389e0d}
-.wd-connectors .local-card .apply-pill.none{background:#f5f5f5;border-color:#d9d9d9;color:#434343}
-.wd-connectors .local-card .apply-pill.pending{background:#e6f4ff;border-color:#91caff;color:#0958d9}
-.wd-connectors .local-card .apply-pill.approved{background:#f6ffed;border-color:#b7eb8f;color:#389e0d}
-.wd-connectors .local-card .apply-pill.rejected{background:#fff2f0;border-color:#ffccc7;color:#cf1322}
 .wd-connectors .local-card .market-action{height:26px;min-height:26px;line-height:24px;font-size:12px}
 .wd-connectors .empty span.muted{display:block;margin-top:4px;font-size:13px}
 

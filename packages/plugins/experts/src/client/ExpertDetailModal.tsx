@@ -88,6 +88,13 @@ export function ExpertDetailModal({ expertId, management, acting, onClose, onSum
   const readiness = READINESS[detail.readiness] ?? READINESS.unknown;
   const revisionId = expert.publishedRevisionRef?.revisionId;
   const canSummon = detail.canUse && !isDraft && expert.availability === 'enabled' && detail.readiness === 'ready' && detail.executionBlocked === undefined;
+  /** 与卡片同一口径的异常态：授权或完整性任一不通过都展示原因并阻止召唤。 */
+  const assetState = detail.integrityState
+    ? (detail.integrityState === 'unsigned' ? '需重新安装' : '校验失败')
+    : detail.authState === 'revoked' ? '已失效'
+      : detail.authState === 'reinstall' ? '需重新安装'
+        : detail.authState === 'unauthorized' ? '未授权' : undefined;
+  const assetReason = detail.integrityReason ?? detail.authReason;
   const kindLabel = definition.team ? '专家团' : '专家';
   const versionLabel = revision ? `版本 ${revision.revisionId.slice(0, 10)}` : '草稿';
 
@@ -127,6 +134,10 @@ export function ExpertDetailModal({ expertId, management, acting, onClose, onSum
 
     {detail.executionBlocked === 'approval-required' && <div className="notice warn" role="status" style={{ marginTop: 20 }}>
       <div className="notice-body"><strong>需上架审核并安装后才能使用</strong><span>自建专家不能直接召唤。请在专家市场上架并通过审核后，从市场安装再使用。</span></div>
+    </div>}
+
+    {assetState && <div className={`notice ${detail.integrityState && detail.integrityState !== 'unsigned' ? 'error' : 'warn'}`} role="status" style={{ marginTop: 20 }}>
+      <div className="notice-body"><strong>{assetState}</strong><span>{assetReason ?? '当前状态不可召唤，请按提示处理后重试。'}</span></div>
     </div>}
 
     {definition.description && <p className="detail-desc" style={{ marginTop: 20 }}>{definition.description}</p>}

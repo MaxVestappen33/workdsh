@@ -1000,6 +1000,9 @@ importers:
       react:
         specifier: 19.2.4
         version: 19.2.4
+      workdsh-asset-signature:
+        specifier: workspace:*
+        version: link:../../asset-signature
       workdsh-contracts:
         specifier: workspace:*
         version: link:../../contracts

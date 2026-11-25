@@ -55,6 +55,22 @@ export const expertInstallManifestSchema = z.object({
   installedAt: iso,
   version: bounded.optional(),
   digest: bounded.optional(),
+  /** 业务场景名称（逗号连接）：安装时从市场条目写入，旧安装允许缺省。 */
+  bizScene: bounded.optional(),
+  /** 来源节点名称：安装时从市场条目写入，旧安装允许缺省。 */
+  sourceNode: bounded.optional(),
+  /** 公开状态：安装时从市场条目写入，旧安装允许缺省。 */
+  isPublic: z.boolean().optional(),
+  /** 专家说明（后台 capability）：安装时从市场条目写入，旧安装允许缺省。 */
+  capability: bounded.optional(),
+  /** 后台签名块：验签通过后写入，字段与技能安装清单一致；旧安装允许缺省。 */
+  signature: z.object({
+    payloadVersion: bounded,
+    algo: bounded,
+    keyId: bounded,
+    digest: bounded,
+    signature: bounded,
+  }).optional(),
 });
 
 const expertSchema: z.ZodType<Expert> = z.object({

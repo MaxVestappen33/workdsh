@@ -33,6 +33,11 @@ export interface ExpertApiPaths {
   dict: string;
   /** 生成后台管理系统单点登录加密参数。 */
   adminSsoParams: string;
+  /**
+   * 资产签名接口：安装专家/专家团时按 `assetType=expert|expert_group` 取签名 envelope。
+   * 与技能签名共用同一个后台端点；取不到签名或结构不符时安装直接拒绝（fail closed）。
+   */
+  signature: string;
 }
 
 /** 后台 desktop-client 命名空间的既有约定；未注入配置时使用。 */
@@ -49,6 +54,7 @@ export const DEFAULT_EXPERT_API_PATHS: ExpertApiPaths = {
   nodes: '/desktop-client/queryAiNodeList',
   dict: '/desktop-client/getDictItems',
   adminSsoParams: '/sys/generateCasLoginParams',
+  signature: '/desktop-client/asset/queryAssetSignature',
 };
 
 /**

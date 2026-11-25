@@ -119,7 +119,8 @@ export function MyApplications({ management, kind, keyword, reloadKey = 0 }: MyA
               </span>
             </div>
           </div>
-          <p className="desc">{item.description || <span className="muted">（暂无简介）</span>}</p>
+          {/* 与卡片同口径：优先后台「专家说明」（capability）；历史申请行缺失时才退回 description。 */}
+          <p className="desc">{item.capability || item.description || <span className="muted">（暂无简介）</span>}</p>
           <div className="domain-tags">{(item.tags ?? []).slice(0, 3).map(tag => <span key={tag}>{tag}</span>)}</div>
           {item.listingReason && <p className="application-note">上架说明：{item.listingReason}</p>}
           {item.status === '4' && item.offlineReason && <p className="application-note error-text">驳回原因：{item.offlineReason}</p>}

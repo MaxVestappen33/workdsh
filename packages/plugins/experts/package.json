@@ -68,6 +68,7 @@
     "@types/react": "19.2.14",
     "react": "19.2.4",
     "workdsh-contracts": "workspace:*",
+    "workdsh-asset-signature": "workspace:*",
     "workdsh-ui": "workspace:*",
     "@deepseek-ai/dsh-agent-preset-registry": "0.2.1-rc.5",
     "@deepseek-ai/dsh-client-ui-primitives": "0.2.1-rc.5"

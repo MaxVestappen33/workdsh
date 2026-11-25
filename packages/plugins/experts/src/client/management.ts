@@ -45,6 +45,16 @@ export const EXPERT_ADMIN_SSO = {
   team: { menuId: '1990210000000000002', bizParams: { postLoginAction: 'addExpertGroup' } },
 } as const;
 
+/**
+ * 专家/专家团授权「申请 / 取消申请」的后台菜单与业务参数：沿用技能市场的单点登录通道。
+ * assetType 按专家类型在调用时注入（agent → expert、team → expert_group），assetId 取后台主键。
+ */
+export const EXPERT_AUTH_SSO = {
+  menuId: '1990042000000000020',
+  apply: { postLoginAction: 'assetApply' },
+  cancel: { postLoginAction: 'assetApplyCancel' },
+} as const;
+
 /** 单点跳转结果：degraded 时只拿到纯登录地址，界面据此提示。 */
 export interface AdminSsoTarget {
   readonly url: string;
@@ -175,6 +185,12 @@ export function createExpertManagementClient(ctx: Context, lifetime?: AbortSigna
       invoke<ExpertDraft>('commit-import', { importPlanId, previewDigest, operationId }, signal, 60_000),
     operation: (operationId: string, signal?: AbortSignal) => invoke<Operation>('operation', { operationId }, signal),
     verifyBinding: (sessionId: string, signal?: AbortSignal) => invoke<ExecutionBinding>('verify-binding', { sessionId }, signal),
+    /** Switch a blank bound Session to another expert; a started Session rejects with `experts/session-started`. */
+    switchExpert: (sessionId: string, expertId: string, revisionId?: string, signal?: AbortSignal) =>
+      invoke<ExecutionBinding>('switch-expert', { sessionId, expertId, ...(revisionId === undefined ? {} : { revisionId }) }, signal, 60_000),
+    /** Clear the expert binding of a blank Session and return it to the standard preset. */
+    clearExpert: (sessionId: string, signal?: AbortSignal) =>
+      invoke<{ sessionId: string; cleared: boolean }>('clear-expert', { sessionId }, signal, 60_000),
     /** Backend catalog (read-only). `available:false` means no business backend binding. */
     remoteList: (query: RemoteExpertListQuery = {}, signal?: AbortSignal) =>
       invoke<RemoteExpertListResult>('remote-list', query, signal, 60_000),
@@ -195,6 +211,9 @@ export function createExpertManagementClient(ctx: Context, lifetime?: AbortSigna
     /** Backend admin console SSO URL for the current expert kind. */
     adminSso: (expertType: 'agent' | 'team', signal?: AbortSignal) =>
       invoke<AdminSsoTarget>('admin-sso', EXPERT_ADMIN_SSO[expertType], signal, 60_000),
+    /** 按指定菜单生成单点地址：授权申请/取消申请复用同一通道，业务参数由调用方给出。 */
+    adminSsoFor: (menuId: string, bizParams: Record<string, string>, signal?: AbortSignal) =>
+      invoke<AdminSsoTarget>('admin-sso', { menuId, bizParams }, signal, 60_000),
     /** Streaming upload of an export package; returns the staged artifact reference for preview/commit. */
     stageImport: (file: File, signal?: AbortSignal) =>
       request<{ uploadedArtifactRef: string }>(importPath, {

@@ -1,4 +1,4 @@
-import { Button, CardSkeleton, cardSkeletonCss, Icon, Input, Modal, QueryOverlay, queryOverlayCss } from 'workdsh-ui';
+import { Button, CardSkeleton, cardSkeletonCss, Icon, Input, Modal, QueryOverlay, queryOverlayCss, tongyunTagSingleCss } from 'workdsh-ui';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots';
 import type { ConnectorApplyStatus, MarketCategory, MarketIndexItem, MarketItem } from '../market.js';
@@ -244,11 +244,26 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
    * 切屏刷新：市场列表平时完全不做隐式轮询；只有用户点过申请/取消申请，
    * 从后台回到本页时才补拉一次，之后继续回到「不自动查询」。
    */
+  /**
+   * 全量授权索引：本地实例的授权/申请状态只能来自后台索引；
+   * 取不到时保持为空，界面退回只显示本机闸门给出的 authState，不伪造授权状态。
+   * `force` 为真时绕过宿主索引缓存（回跳、切回本地页签、手动刷新）。
+   */
+  const loadIndex = useCallback(async (force = false) => {
+    if (!marketOn) { setMarketIndex([]); return; }
+    try { setMarketIndex(await management.marketIndex(force)); }
+    catch (cause) { console.error('[workdsh:connectors:market-index]', cause); setMarketIndex([]); }
+  }, [management, marketOn]);
+  useEffect(() => { void loadIndex(); }, [loadIndex]);
+
   useEffect(() => {
     // Electron 切回窗口通常只有 window focus，没有 visibilitychange，两个信号都听。
     const onReturn = (): void => {
       if (!pendingAuthRefresh.current) return;
       pendingAuthRefresh.current = false;
+      // 回跳后不论页签都强制重取授权索引：本地卡片的申请状态只来自索引，且索引有 TTL。
+      void loadIndex(true);
+      void refresh(true);
       if (tab === 'market' && marketOn) void loadMarket(filter);
     };
     const onVisible = (): void => {
@@ -261,18 +276,7 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('focus', onReturn);
     };
-  }, [tab, marketOn, loadMarket, filter]);
-
-  /**
-   * 全量授权索引：本地实例的授权/申请状态只能来自后台索引；
-   * 取不到时保持为空，界面退回只显示本机闸门给出的 authState，不伪造授权状态。
-   */
-  const loadIndex = useCallback(async (force = false) => {
-    if (!marketOn) { setMarketIndex([]); return; }
-    try { setMarketIndex(await management.marketIndex(force)); }
-    catch (cause) { console.error('[workdsh:connectors:market-index]', cause); setMarketIndex([]); }
-  }, [management, marketOn]);
-  useEffect(() => { void loadIndex(); }, [loadIndex]);
+  }, [tab, marketOn, loadMarket, filter, loadIndex, refresh]);
 
   // 轮询器读 ref 里的最新任务快照：安装态自身的变化不该重置计时器。
   useEffect(() => {
@@ -631,6 +635,8 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
     window.clearTimeout(queryTimerRef.current);
     // 用户主动点页签：保留已选业务场景/内置/状态条件，按当前筛选重新取数。
     if (next === 'market' && marketOn) void loadMarket(filter);
+    // 切回本地：强制重取授权索引并静默重拉本地实例，避免卡片仍显示回跳前的申请状态。
+    if (next === 'local') { void refresh(true); void loadIndex(true); }
   };
   const changeCategory = (next: readonly string[]) => {
     setCategories(next);
@@ -738,7 +744,7 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
         if (node.scrollHeight - node.scrollTop - node.clientHeight < MARKET_SCROLL_THRESHOLD) void loadMoreMarket();
       }}
     >
-      <style>{connectorCss + cardSkeletonCss + queryOverlayCss}</style>
+      <style>{connectorCss + cardSkeletonCss + tongyunTagSingleCss + queryOverlayCss}</style>
       <header className="cap-header">
         <button type="button" className="nav-toggle" onClick={toggleNavigation} aria-label="切换导航">导航</button>
         {capabilityTabs.map(([key, label]) => {
@@ -935,14 +941,9 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
         ) : null}
         {empty ? (
           <div className="empty">
-            <strong>{tab === 'local' ? '暂无已安装的 MCP' : '暂无 MCP'}</strong>
-            <span className="muted">
-              {tab === 'local'
-                ? '去「MCP市场」安装，或在设置里添加自定义 MCP。'
-                : (query.trim() || activeCategories.length || builtinFilter !== undefined || installFilter || authFilter || applyFilter
-                  ? '换个关键词或调整筛选条件再试。'
-                  : '后台暂无可用的 MCP。')}
-            </span>
+            <span className="empty-text">{query.trim() || activeCategories.length || builtinFilter !== undefined || installFilter !== undefined || authFilter !== undefined || applyFilter !== undefined
+              ? '没有找到与查询条件匹配的连接器'
+              : '暂无连接器数据'}</span>
           </div>
         ) : null}
         {overlayVisible ? <QueryOverlay /> : null}

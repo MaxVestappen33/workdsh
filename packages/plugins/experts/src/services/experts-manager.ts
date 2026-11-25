@@ -1,10 +1,11 @@
 import { definitionFromDocuments, parseExpertDocument } from '../authoring/documents.js';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, lstat, rm, writeFile } from 'node:fs/promises';
 import type { ConnectorManagementService } from 'workdsh-contracts';
 import { Context, Service } from '@deepseek-ai/cordis';
 import type { KvTable } from '@deepseek-ai/dsh-storage-domain';
+import type { Agent } from '@deepseek-ai/dsh-agent';
 import type { SessionCreateRequest, SessionCreateValue } from '@deepseek-ai/dsh-api-session-controller';
 import { expertPresetDir, readExpertPreset, registerExpertPreset, resolveAgentsHome } from '../runtime/preset-compiler.js';
 import {
@@ -61,6 +62,7 @@ import type {
   PublishReceipt,
   RemoteExpertListQuery,
   RemoteExpertListResult,
+  RemoteExpertSummary,
   RemoteInstallRequest,
   ResourceOwner,
   SkillRevisionRef,
@@ -75,11 +77,13 @@ import { TtlStore } from '../runtime/plans.js';
 import { definitionDigest, normalizeDefinition, validateDefinition, teamDefinitionSchema } from '../domain/definition.js';
 import { codePointLength, digestOf, shortDigest, sha256 } from '../domain/digest.js';
 import { DEFAULT_TEMPLATES } from '../domain/templates.js';
-import { assertUploadWithinLimit, buildExport, preflightPackage } from './portability.js';
+import { assertUploadWithinLimit, buildExport, packageSignatureFiles, preflightPackage } from './portability.js';
 import { installationsDomainSpec, installationKey } from '../storage/installations.js';
 import { RemoteExpertCatalog, type BackendChannelLike } from './remote-catalog.js';
 import { resolveExpertApiPaths, type ExpertApiPaths } from './endpoints.js';
 import { resolveInstallManifest } from './visibility.js';
+import { verifyAssetSignature } from 'workdsh-asset-signature';
+import { releaseExpertScope } from '../runtime/execution-guard.js';
 
 /**
  * The single Host domain service for experts (D04 / P1-02, expert module 0.1).
@@ -103,6 +107,15 @@ interface SessionAccess {
   create(request: SessionCreateRequest, signal?: AbortSignal): Promise<SessionCreateValue>;
 }
 
+/**
+ * 会话查询的最小读取面（官方 `ctx.sessionQuery`）：只用来判断绑定会话是否仍存在、
+ * 是否发过用户消息，不引入完整查询契约。
+ */
+interface SessionQueryLike {
+  listSessions(signal?: AbortSignal): Promise<readonly { readonly header: { readonly id: string } }[]>;
+  listEvents(sessionId: string): Promise<readonly { readonly type: string }[]>;
+}
+
 declare module '@deepseek-ai/cordis' {
   interface Context {
     workdshIdentity: IdentityService;
@@ -120,6 +133,17 @@ const HANDOFF_TTL_MS = 10 * 60 * 1000;
 const STAGED_IMPORT_PATTERN = /^[a-z0-9-]{1,64}$/;
 /** 本地开发默认的后台管理系统单点入口；打包时由 workdsh-app.json 覆盖。 */
 const DEFAULT_ADMIN_SSO_URL = 'http://localhost:3100/clientSSO';
+/** 验签开关开启后，市场专家缺少签名块（装于关闭期间）时给用户看的文案。 */
+const SIGNATURE_REINSTALL_MESSAGE = '该专家安装于签名校验关闭期间，请重新安装。';
+/** 列表完整性校验的内存缓存上限：只做展示层的重复读取优化，不落盘。 */
+const INTEGRITY_CACHE_LIMIT = 64;
+/** 绑定会话计数的短期缓存时长：列表逐行统计时避免反复解压同一批会话日志。 */
+const BOUND_SESSION_CACHE_MS = 5_000;
+
+type IntegrityProjection = {
+  readonly integrityState?: 'modified' | 'missing' | 'unreadable' | 'unsigned';
+  readonly integrityReason?: string;
+};
 
 interface StagedImport {
   readonly fileName: string;
@@ -295,6 +319,8 @@ declare module '@deepseek-ai/cordis' { interface Context { workdshConnectors: Co
 /** 闸门服务的最小结构面：专家插件不直接依赖 asset-gate，未接入时全部退回无闸门行为。 */
 interface AssetGateProbe {
   enabled(assetType: string): boolean;
+  /** 验签开关（主闸门 + assetSignature 同时开启）；未实现的提供方视为关闭。 */
+  signatureEnabled?(): boolean;
   revoked(assetType: string, assetId: string): boolean;
   clearRevoked(assetType: string, assetId: string): void;
   revocationReason(): { readonly reason: string; readonly message: string };
@@ -338,7 +364,7 @@ export interface ExpertsManagerOptions {
 
 export class ExpertsManager extends Service implements ExpertsService {
   static inject = [
-    'loader', 'storageDomain', 'agentPresets', 'sessionController',
+    'loader', 'storageDomain', 'agentPresets', 'sessionController', 'agents', 'sessionQuery',
     'workdshIdentity', 'workdshAccess', 'workdshAudit', 'workdshSessionAccess', 'workdshSkills',
   ];
 
@@ -359,6 +385,14 @@ export class ExpertsManager extends Service implements ExpertsService {
   private readonly handoffPlans = new TtlStore<HandoffPlan>(PLAN_TTL_MS);
   private readonly importPreviews = new TtlStore<ImportPreviewRecord>(PLAN_TTL_MS);
   private readonly stagedImports = new TtlStore<StagedImport>(PLAN_TTL_MS);
+  /**
+   * 列表完整性缓存：键 = 修订号 + 安装清单摘要 + 预设目录指纹（路径/大小/mtime/ctime/inode）。
+   * 文件一变指纹即变、重装改摘要即变，因此缓存不会掩盖篡改；只服务列表展示，
+   * 启用与召唤仍各自强制重算，签名验签也从不走这里的 mtime 短路。
+   */
+  private readonly integrityCache = new Map<string, { readonly key: string; readonly projection: IntegrityProjection }>();
+  /** 绑定会话计数的短期缓存：键为专家编号，值为「仍存在且已发过消息」的会话数。 */
+  private readonly boundSessionCountCache = new Map<string, { readonly count: number; readonly at: number }>();
   private readonly stagingRoot: string;
   private readonly agentsHome: string;
   private connectors?: ConnectorManagementService;
@@ -782,16 +816,104 @@ export class ExpertsManager extends Service implements ExpertsService {
   }
 
   /** 列表授权状态：只对市场来源且对应子闸门开启的资产计算。 */
-  private async authStateOf(expert: Expert): Promise<{ readonly authState?: 'unauthorized' | 'revoked'; readonly authReason?: string }> {
+  private async authStateOf(expert: Expert): Promise<{ readonly authState?: 'unauthorized' | 'revoked' | 'reinstall'; readonly authReason?: string }> {
     const manifest = this.installManifestOf(expert.id);
-    if (manifest?.source !== 'market' || !manifest.assetId) return {};
+    if (!manifest) return {};
+    // 市场安装但清单缺后台编号：无法校验授权，按“需重新安装”处理（fail-closed）。
+    if (manifest.source === 'market' && !manifest.assetId) {
+      return { authState: 'reinstall', authReason: '安装记录缺少后台资产编号，无法校验授权，请从市场重新安装。' };
+    }
+    if (manifest.source !== 'market' || !manifest.assetId) return {};
     const gate = this.gateProbe();
     if (!gate?.enabled(manifest.assetType)) return {};
+    // 验签开关开启但清单没有签名块：专家装于关闭期间，只能重新安装（复用 integrityState 通道）。
+    if (gate.signatureEnabled?.() === true && manifest.signature === undefined) {
+      return { authState: 'reinstall', authReason: SIGNATURE_REINSTALL_MESSAGE };
+    }
     if (gate.revoked(manifest.assetType, manifest.assetId)) {
       return { authState: 'revoked', authReason: gate.revocationReason().message };
     }
     const decision = await gate.decide({ assetType: manifest.assetType, assetId: manifest.assetId, usage: 'use' });
     return decision.allow ? {} : { authState: 'unauthorized', authReason: decision.message };
+  }
+
+  /**
+   * 完整性判定（与召唤时的校验同源）：比对安装清单摘要、预设文件哈希与包文件内容。
+   * 只对市场安装的资产执行；本地自建/内置不参与，避免把“没有清单”误报为篡改。
+   *
+   * 列表展示走内存缓存：键为修订号 + 组合摘要 + 预设目录指纹，文件一变指纹即变；
+   * 启用与召唤各自强制重算（`setAvailability` / `verifyRevision`），不经过这里，
+   * 签名验签更不会复用这里的 mtime 短路。
+   */
+  private async integrityStateOf(expert: Expert): Promise<IntegrityProjection> {
+    const manifest = this.installManifestOf(expert.id);
+    if (manifest?.source !== 'market') return {};
+    const ref = expert.publishedRevisionRef;
+    if (!ref) return {};
+    const revision = this.revisionsTable().get(keys.revision(ref.expertId, ref.revisionId));
+    if (!revision) return {};
+    if (manifest.digest && revision.compositionDigest !== manifest.digest) {
+      return { integrityState: 'modified', integrityReason: '安装记录与已发布内容不一致，可能被本地修改，请从市场重新安装。' };
+    }
+    // 预设目录指纹：任一路径/大小/mtime/ctime/inode 变化都会让缓存失效。
+    let fingerprint: string;
+    try {
+      fingerprint = await this.presetFingerprint(revision.presetRevisionRef);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT') return { integrityState: 'missing', integrityReason: '专家预设文件已丢失，请从市场重新安装。' };
+      return { integrityState: 'unreadable', integrityReason: '专家预设无法读取，请检查本地文件后重试或重新安装。' };
+    }
+    const key = `${revision.revisionId}\0${revision.compositionDigest}\0${fingerprint}`;
+    const cached = this.integrityCache.get(revision.revisionId);
+    if (cached?.key === key) return cached.projection;
+    const projection = await this.computeIntegrity(revision);
+    this.integrityCache.delete(revision.revisionId);
+    this.integrityCache.set(revision.revisionId, { key, projection });
+    while (this.integrityCache.size > INTEGRITY_CACHE_LIMIT) {
+      const oldest = this.integrityCache.keys().next().value;
+      if (oldest === undefined) break;
+      this.integrityCache.delete(oldest);
+    }
+    return projection;
+  }
+
+  /** 缓存未命中时重算一次完整性：预设内容摘要 + 包文件内容。 */
+  private async computeIntegrity(revision: ExpertRevision): Promise<IntegrityProjection> {
+    let text: string;
+    try { text = await readExpertPreset(revision.presetRevisionRef, this.agentsHome); }
+    catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT') return { integrityState: 'missing', integrityReason: '专家预设文件已丢失，请从市场重新安装。' };
+      return { integrityState: 'unreadable', integrityReason: '专家预设无法读取，请检查本地文件后重试或重新安装。' };
+    }
+    if (sha256(text) !== revision.compositionDigest) {
+      return { integrityState: 'modified', integrityReason: '专家预设内容已被修改，请从市场重新安装。' };
+    }
+    if (revision.definition.packageDocuments || revision.definition.packageAssets) {
+      try { await verifyPackageFiles(expertPresetDir(revision.presetRevisionRef, this.agentsHome), revision.definition.packageDocuments ?? {}, revision.definition.packageAssets); }
+      catch { return { integrityState: 'modified', integrityReason: '专家包文件与安装记录不一致，可能被本地修改，请从市场重新安装。' }; }
+    }
+    return {};
+  }
+
+  /**
+   * 预设目录指纹：与技能侧同一套思路（路径、大小、mtime、ctime、inode），只在内存里比较。
+   * 专供列表缓存失效判断；签名验签不复用它做短路。
+   */
+  private async presetFingerprint(presetId: string): Promise<string> {
+    const root = expertPresetDir(presetId, this.agentsHome);
+    const parts: string[] = [];
+    const walk = async (dir: string, prefix: string): Promise<void> => {
+      for (const name of await readdir(dir)) {
+        const rel = prefix ? `${prefix}/${name}` : name;
+        const info = await lstat(join(dir, name));
+        if (info.isDirectory()) await walk(join(dir, name), rel);
+        else parts.push(`${rel}\0${info.size}\0${Math.round(info.mtimeMs)}\0${Math.round(info.ctimeMs)}\0${info.ino}\0`);
+      }
+    };
+    await walk(root, '');
+    return parts.join('');
   }
 
   /**
@@ -873,7 +995,7 @@ export class ExpertsManager extends Service implements ExpertsService {
     if (!revision) return 'unknown';
     if (this.unavailablePresets.has(revision.presetRevisionRef)) return 'broken';
     if (revision.definition.packageDocuments) {
-      try { await verifyPackageFiles(expertPresetDir(revision.presetRevisionRef, this.agentsHome), revision.definition.packageDocuments, revision.definition.packageAssets); }
+      try { await verifyPackageFiles(expertPresetDir(revision.presetRevisionRef, this.agentsHome), revision.definition.packageDocuments ?? {}, revision.definition.packageAssets); }
       catch { return 'missing-dependency'; }
     }
     for (const ref of Object.values(revision.teamMembers ?? {})) {
@@ -901,9 +1023,17 @@ export class ExpertsManager extends Service implements ExpertsService {
     readiness: ExpertReadiness,
     preference: ExpertPreference | undefined,
     caps: { canUse: boolean; canEdit: boolean; canManage: boolean },
-    auth?: { readonly authState?: 'unauthorized' | 'revoked'; readonly authReason?: string },
+    auth?: { readonly authState?: 'unauthorized' | 'revoked' | 'reinstall'; readonly authReason?: string },
+    integrity?: { readonly integrityState?: 'modified' | 'missing' | 'unreadable' | 'unsigned'; readonly integrityReason?: string },
   ): ExpertSummary {
     const definition = draft.definition;
+    const manifest = this.installManifestOf(expert.id);
+    // 展示口径以后台运营为准：本进程内刚从市场条目刷新到的名称/图标优先，其次安装时落盘的快照；
+    // 两者都缺省（后台不可达、没有对应条目或本地自建）时，前端回退包内定义，避免显示空白。
+    const live = manifest?.assetId ? this.marketMeta.get(manifest.assetId.trim().toLowerCase()) : undefined;
+    const displayName = live?.name ?? manifest?.displayName;
+    const displayIcon = live?.icon ?? manifest?.displayIcon;
+    const displayColor = live?.color ?? manifest?.displayColor;
     return {
       id: expert.id,
       expertType: definition.team ? 'team' : 'agent',
@@ -915,8 +1045,8 @@ export class ExpertsManager extends Service implements ExpertsService {
       origin: expert.origin,
       availability: expert.availability,
       ...(expert.publishedRevisionRef === undefined ? {} : { publishedRevisionRef: expert.publishedRevisionRef }),
-      // 授权失效时即使记录仍是 enabled 也不可召唤；用户启用位保持原样，恢复授权后自动还原。
-      canUse: caps.canUse && auth?.authState !== 'revoked',
+      // 授权/完整性异常时即使记录仍是 enabled 也不可召唤；用户启用位保持原样。
+      canUse: caps.canUse && auth?.authState === undefined && integrity?.integrityState === undefined,
       canEdit: caps.canEdit,
       canManage: caps.canManage,
       readiness,
@@ -926,7 +1056,118 @@ export class ExpertsManager extends Service implements ExpertsService {
       installedFromCatalog: this.isInstalledExpert(expert.id),
       ...(this.executionBlockOf(expert.id) === undefined ? {} : { executionBlocked: 'approval-required' as const }),
       ...(auth?.authState ? { authState: auth.authState, ...(auth.authReason ? { authReason: auth.authReason } : {}) } : {}),
+      ...(integrity?.integrityState ? { integrityState: integrity.integrityState, ...(integrity.integrityReason ? { integrityReason: integrity.integrityReason } : {}) } : {}),
+      // 安装清单快照：业务场景/来源节点/公开状态只在市场安装时写入，本地自建专家保持缺省。
+      ...(manifest?.assetId ? { assetId: manifest.assetId } : {}),
+      ...(manifest?.bizScene ? { bizScene: manifest.bizScene.split(',').map(item => item.trim()).filter(item => item.length > 0) } : {}),
+      ...(manifest?.sourceNode ? { sourceNode: manifest.sourceNode } : {}),
+      ...(manifest?.isPublic === undefined ? {} : { isPublic: manifest.isPublic }),
+      // 卡片简介统一读后台「专家说明」（capability）：市场安装的记录取安装清单快照。
+      ...(manifest?.capability ? { capability: manifest.capability } : {}),
+      ...(manifest?.source === 'builtin' ? { builtin: true } : {}),
+      ...(displayName === undefined ? {} : { displayName }),
+      ...(displayIcon === undefined ? {} : { displayIcon }),
+      ...(displayColor === undefined ? {} : { displayColor }),
     };
+  }
+
+  /**
+   * 市场元数据缓存：后台编号 → 授权/申请状态与内置属性。
+   * 市场列表与回填都会写入，本地列表按 assetId 命中后补齐展示，不额外发请求。
+   */
+  private readonly marketMeta = new Map<string, { readonly authorized: boolean; readonly applyStatus: NonNullable<ExpertSummary['applyStatus']>; readonly builtin?: boolean; readonly name?: string; readonly icon?: string; readonly color?: string }>();
+
+  /**
+   * 本地列表的市场状态补齐：只对被撤权/未授权的市场安装专家回查一次后台。
+   * 用户自建、随包内置或没有后台编号的记录完全不发请求；失败时原样返回，不阻断列表。
+   *
+   * `refresh` 为真时跳过缓存直接回查后台（SSO 回跳、切回本地页签、手动刷新），
+   * 否则缓存命中即返回，避免每次列表都打后台。
+   */
+  private async withMarketMeta(summary: ExpertSummary, signal?: AbortSignal, refresh = false): Promise<ExpertSummary> {
+    const assetId = summary.assetId?.trim().toLowerCase();
+    if (!assetId) return summary;
+    const cached = this.marketMeta.get(assetId);
+    const cachedSummary = (): ExpertSummary => ({ ...summary, applyStatus: cached?.applyStatus ?? summary.applyStatus ?? 'none', ...(cached?.builtin === undefined ? {} : { builtin: cached.builtin }) });
+    if (cached && !refresh) return cachedSummary();
+    if (summary.authState === undefined) return cached ? cachedSummary() : summary;
+    try {
+      const remote = await this.remote.find(summary.expertType === 'team' ? 'team' : 'agent', summary.assetId as string, signal);
+      if (!remote) return cached ? cachedSummary() : summary;
+      this.rememberMarketMeta(remote);
+      return { ...summary, applyStatus: remote.applyStatus, ...(remote.builtin === undefined ? {} : { builtin: remote.builtin }) };
+    } catch {
+      // 回查失败只影响授权状态展示，保持列表可用；有缓存时用缓存值兜底。
+      return cached ? cachedSummary() : summary;
+    }
+  }
+
+  private rememberMarketMeta(remote: RemoteExpertSummary): void {
+    const key = remote.remoteId.trim().toLowerCase();
+    if (!key) return;
+    this.marketMeta.set(key, {
+      authorized: remote.authorized,
+      applyStatus: remote.applyStatus,
+      ...(remote.builtin === undefined ? {} : { builtin: remote.builtin }),
+      ...(remote.name ? { name: remote.name } : {}),
+      ...(remote.icon ? { icon: remote.icon } : {}),
+      ...(remote.color ? { color: remote.color } : {}),
+    });
+  }
+
+  /** 一次性回填的并发守卫：首轮完成（或确定无需回填）后不再重复请求后台。 */
+  private detailsBackfill?: Promise<void>;
+
+  /**
+   * 联网时回填旧安装的业务场景 / 来源节点 / 公开状态。
+   *
+   * 早期版本的安装清单没有这三个字段，只能按后台编号重新取一次市场条目补齐；
+   * 失败不阻断列表（下次列表刷新还会再试），成功后同一进程内不再重复。
+   */
+  private async ensureInstallDetailsBackfilled(signal?: AbortSignal): Promise<void> {
+    if (this.detailsBackfill) { await this.detailsBackfill; return; }
+    const task = (async () => {
+      try {
+        if (!(await this.remote.available())) return;
+        let failed = 0;
+        for (const [, expert] of this.expertsTable().entries()) {
+          signal?.throwIfAborted();
+          if (expert.teamParentId) continue;
+          const manifest = expert.installManifest;
+          if (manifest?.source !== 'market' || !manifest.assetId) continue;
+          if (manifest.bizScene !== undefined && manifest.sourceNode !== undefined && manifest.isPublic !== undefined && manifest.capability !== undefined && manifest.displayName !== undefined) continue;
+          try {
+            const remote = await this.remote.find(manifest.assetType === 'expert_group' ? 'team' : 'agent', manifest.assetId, signal);
+            if (!remote) { failed += 1; continue; }
+            this.rememberMarketMeta(remote);
+            const bizScene = remote.scenes.map(scene => scene.label.trim()).filter(label => label.length > 0).join(',');
+            const sourceNode = remote.sourceNodeList.join(',');
+            await this.expertsTable().update(keys.expert(expert.id), row => ({
+              ...row,
+              installManifest: {
+                ...(row.installManifest ?? manifest),
+                ...(bizScene ? { bizScene } : {}),
+                ...(sourceNode ? { sourceNode } : {}),
+                ...(remote.isPublic === undefined ? {} : { isPublic: remote.isPublic }),
+                ...(remote.capability ? { capability: remote.capability } : {}),
+                // 旧安装补后台展示名称/图标；后台不可达时保留缺省，前端回退包内定义。
+                ...(remote.name ? { displayName: remote.name } : {}),
+                ...(remote.icon ? { displayIcon: remote.icon } : {}),
+                ...(remote.color ? { displayColor: remote.color } : {}),
+              },
+            }));
+          } catch {
+            failed += 1;
+          }
+        }
+        // 有失败时释放守卫，下一次列表刷新再尝试；全部成功或没有待回填项则本进程内只做一次。
+        if (failed > 0) this.detailsBackfill = undefined;
+      } catch {
+        this.detailsBackfill = undefined;
+      }
+    })();
+    this.detailsBackfill = task;
+    await task;
   }
 
   private catalogRevision(rows: readonly Expert[]): string {
@@ -998,6 +1239,8 @@ export class ExpertsManager extends Service implements ExpertsService {
       throw new ExpertsError('experts/invalid-request', `每页数量必须在 1 至 ${EXPERT_LIMITS.listMaxLimit} 之间。`);
     }
     await this.ensureSeeded(actor, signal);
+    // 旧安装的展示字段按后台编号回填一次：联网时补齐，失败不影响列表。
+    await this.ensureInstallDetailsBackfilled(signal);
     signal?.throwIfAborted();
 
     const search = query.search?.trim().toLowerCase();
@@ -1034,7 +1277,9 @@ export class ExpertsManager extends Service implements ExpertsService {
       const caps = this.capabilities(actor, row.expert);
       const revisionId = row.expert.publishedRevisionRef?.revisionId;
       const rowReadiness: ExpertReadiness = revisionId ? (readinessByRevision.get(revisionId) ?? 'unknown') : 'unknown';
-      return this.toSummary(row.expert, row.draft, rowReadiness, row.preference, caps, await this.authStateOf(row.expert));
+      const [auth, integrity] = await Promise.all([this.authStateOf(row.expert), this.integrityStateOf(row.expert)]);
+      const summary = this.toSummary(row.expert, row.draft, rowReadiness, row.preference, caps, auth, integrity);
+      return this.withMarketMeta(summary, signal, query.refresh === true);
     }));
     const nextOffset = offset + page.length;
     await this.audit(actor, 'experts.list', undefined, 'succeeded', 'experts/list-succeeded', { count: String(items.length), total: String(rows.length) });
@@ -1058,14 +1303,18 @@ export class ExpertsManager extends Service implements ExpertsService {
     const revision = targetRevisionId === undefined ? undefined : this.loadRevision(expertId, targetRevisionId);
     const readiness = await this.computeReadiness(revision, actor, signal);
     const caps = this.capabilities(actor, expert);
+    const [auth, integrity] = await Promise.all([this.authStateOf(expert), this.integrityStateOf(expert)]);
     await this.audit(actor, 'experts.get', expertId, 'succeeded', 'experts/get-succeeded');
     return {
       expert, draft,
       ...(revision === undefined ? {} : { revision }),
       readiness,
-      canUse: caps.canUse, canEdit: caps.canEdit, canManage: caps.canManage,
+      // 与列表同口径：授权或完整性异常时详情也不允许召唤。
+      canUse: caps.canUse && auth.authState === undefined && integrity.integrityState === undefined, canEdit: caps.canEdit, canManage: caps.canManage,
       installedFromCatalog: this.isInstalledExpert(expertId),
       ...(this.executionBlockOf(expertId) === undefined ? {} : { executionBlocked: 'approval-required' as const }),
+      ...(auth.authState ? { authState: auth.authState, ...(auth.authReason ? { authReason: auth.authReason } : {}) } : {}),
+      ...(integrity.integrityState ? { integrityState: integrity.integrityState, ...(integrity.integrityReason ? { integrityReason: integrity.integrityReason } : {}) } : {}),
     };
   }
 
@@ -1515,6 +1764,10 @@ export class ExpertsManager extends Service implements ExpertsService {
     // so 0.1 does not require a content-bound confirmation proof here; `_proof` is reserved.
     const manifest = this.installManifestOf(expertId);
     const gate = this.gateProbe();
+    // 本地自建（无市场安装清单、非内置）已不受支持：只允许查看/导出/删除，不允许再启用。
+    if (availability === 'enabled' && expert.origin === 'personal' && manifest === undefined && !this.isInstalledExpert(expertId)) {
+      throw new ExpertsError('experts/unsupported-local', '本地自建专家已不受支持，请从专家市场安装后使用。');
+    }
     // 启用前摘要校验：专家/专家团没有文件清单，只能比对安装清单记录的组合摘要。
     if (availability === 'enabled' && gate?.enabled(manifest?.assetType ?? 'expert')
       && manifest?.source === 'market' && manifest.assetId && manifest.digest) {
@@ -1748,6 +2001,161 @@ export class ExpertsManager extends Service implements ExpertsService {
   }
 
   /**
+   * Switch an already-bound Session to another expert revision in place.
+   *
+   * The official runtime only accepts a preset change before the Session's first
+   * turn (`agent-preset/locked` afterwards), so a started conversation must keep
+   * the create-a-new-Session path. The binding row is rewritten in the same call:
+   * the execution guard compares it against the Session's own preset projection.
+   */
+  async switchExpert(
+    actor: ActorContext,
+    sessionId: string,
+    expertId: string,
+    revisionId: string | undefined,
+    signal?: AbortSignal,
+  ): Promise<ExecutionBinding> {
+    signal?.throwIfAborted();
+    assertActorContext(actor);
+    const binding = this.bindingsTable().get(keys.binding(sessionId));
+    if (!binding) throw new ExpertsError('experts/not-found', '该 Session 未绑定任何专家，无法切换。', { reason: 'unbound' });
+    this.assertBindingOwner(actor, binding);
+    if (binding.delegation) throw new ExpertsError('experts/unsupported-capability', '旧版专家团执行器已退役，无法切换。');
+    const expert = this.loadExpert(expertId);
+    if (!this.isVisible(actor, expert)) throw new ExpertsError('experts/not-found', '未找到该专家。');
+    await this.authorize(actor, 'experts.switch-expert', expert, signal);
+    if (expert.availability === 'archived') throw new ExpertsError('experts/archived', '专家已归档，无法切换。');
+    if (expert.availability === 'disabled') throw new ExpertsError('experts/disabled', '专家已停用，无法切换。');
+    this.assertExecutable(expertId);
+    const targetRevisionId = revisionId ?? expert.publishedRevisionRef?.revisionId;
+    if (targetRevisionId === undefined) throw new ExpertsError('experts/not-published', '专家尚未发布，无法切换。');
+    // Each later step carries its own stage name: an unexpected throw must say which
+    // layer failed instead of collapsing into one generic sentence.
+    let stage = '读取目标专家修订';
+    let agent: Agent | undefined;
+    try {
+      const revision = await this.ensureCurrentExecutionRevision(actor, this.loadRevision(expertId, targetRevisionId), signal);
+      stage = '检查目标专家依赖';
+      const readiness = await this.computeReadiness(revision, actor, signal);
+      if (readiness !== 'ready') {
+        throw new ExpertsError('experts/unavailable', '目标专家依赖尚未就绪，请修复后再切换。', { readiness });
+      }
+      // Switching never relies on a previous summon having registered this immutable
+      // composition: verify the frozen package, then register the exact preset digest.
+      stage = '注册目标专家组合';
+      await this.verifyRevision(actor, revision, signal);
+      await registerExpertPreset(this.ctx, revision.presetRevisionRef, revision.compositionDigest, this.agentsHome);
+      stage = '定位当前会话';
+      agent = this.liveAgent(sessionId, '切换专家');
+      const next: ExecutionBinding = {
+        ...binding,
+        expertRevisionRef: { expertId, revisionId: revision.revisionId },
+        presetRevisionRef: revision.presetRevisionRef,
+        compositionDigest: revision.compositionDigest,
+        skillRevisionRefs: revision.dependencyLock,
+      };
+      if (binding.presetRevisionRef !== revision.presetRevisionRef) {
+        stage = '切换会话专家组合';
+        await this.selectPreset(agent, revision.presetRevisionRef, '切换专家');
+        // The new composition owns fresh persona/skill providers; drop the old pair.
+        releaseExpertScope(agent);
+      }
+      stage = '写入专家绑定';
+      try {
+        await this.enqueue(() => this.bindingsTable().put(keys.binding(sessionId), next));
+      } catch (error) {
+        // Never leave the Session on a preset its binding row does not describe.
+        await this.selectPreset(agent, binding.presetRevisionRef, '恢复专家').catch(() => undefined);
+        throw error;
+      }
+      this.forgetBoundSessionCount([binding.expertRevisionRef.expertId, expertId]);
+      stage = '记录专家使用';
+      await this.touchLastUsed(actor, expertId);
+      await this.audit(actor, 'experts.switch-expert', expertId, 'succeeded', 'experts/switch-expert-succeeded', { sessionId, preset: revision.presetRevisionRef });
+      return next;
+    } catch (error) {
+      throw this.stageFailure('切换专家', stage, error);
+    }
+  }
+
+  /**
+   * Return a blank bound Session to the official standard preset and drop the binding.
+   * A started conversation cannot be cleared: its preset is part of running history.
+   */
+  async clearExpert(actor: ActorContext, sessionId: string, signal?: AbortSignal): Promise<{ readonly sessionId: string; readonly cleared: boolean }> {
+    signal?.throwIfAborted();
+    assertActorContext(actor);
+    const binding = this.bindingsTable().get(keys.binding(sessionId));
+    if (!binding) throw new ExpertsError('experts/not-found', '该 Session 未绑定任何专家。', { reason: 'unbound' });
+    this.assertBindingOwner(actor, binding);
+    if (binding.delegation) throw new ExpertsError('experts/unsupported-capability', '旧版专家团执行器已退役，无法取消。');
+    const expert = this.loadExpert(binding.expertRevisionRef.expertId);
+    await this.authorize(actor, 'experts.clear-expert', expert, signal);
+    const agent = this.liveAgent(sessionId, '取消专家');
+    let stage = '解析标准模式';
+    try {
+      const standard = await this.resolveBasePreset(signal);
+      stage = '切回标准模式';
+      await this.selectPreset(agent, standard, '取消专家');
+      releaseExpertScope(agent);
+      stage = '移除专家绑定';
+      try {
+        await this.enqueue(() => this.bindingsTable().delete(keys.binding(sessionId)));
+      } catch (error) {
+        // Leave the Session and its binding describing the same composition.
+        await this.selectPreset(agent, binding.presetRevisionRef, '恢复专家').catch(() => undefined);
+        throw error;
+      }
+      this.forgetBoundSessionCount([binding.expertRevisionRef.expertId]);
+      stage = '记录专家使用';
+      await this.audit(actor, 'experts.clear-expert', expert.id, 'succeeded', 'experts/clear-expert-succeeded', { sessionId });
+      return { sessionId, cleared: true };
+    } catch (error) {
+      throw this.stageFailure('取消专家', stage, error);
+    }
+  }
+
+  /** Name the failing layer of an in-place preset change and keep its stack in the host log. */
+  private stageFailure(verb: string, stage: string, error: unknown): Error {
+    if (error instanceof ExpertsError) return error;
+    const code = (error as { code?: unknown } | undefined)?.code;
+    const cause = error instanceof Error ? error.message : String(error);
+    try {
+      const logger = (this.ctx as unknown as { logger?: { warn(message: string): void } }).logger;
+      logger?.warn(`[workdsh-experts] ${verb}失败于「${stage}」${code === undefined ? '' : `（${String(code)}）`}：${error instanceof Error ? error.stack ?? cause : cause}`);
+    } catch { /* logging is best-effort */ }
+    return new ExpertsError('experts/internal', `${verb}失败（${stage}）：${cause.trim() || '未知错误'}。`, {
+      stage,
+      ...(code === undefined ? {} : { cause: String(code) }),
+    });
+  }
+
+  private assertBindingOwner(actor: ActorContext, binding: ExecutionBinding): void {
+    if (binding.owner.ownerPrincipalId !== actor.principalId || binding.owner.organizationId !== actor.organizationId) {
+      throw new ExpertsError('experts/forbidden', '没有权限修改该任务的专家绑定。');
+    }
+  }
+
+  /** Only a live Agent can change its preset; a closed Session has nothing to recompose. */
+  private liveAgent(sessionId: string, verb: string): Agent {
+    const agent = this.ctx.agents.get(sessionId as SessionId);
+    if (!agent) throw new ExpertsError('experts/unavailable', `该会话当前未打开，无法${verb}；请先打开会话后重试。`);
+    return agent;
+  }
+
+  /** Commit an official preset change, translating the runtime's first-turn lock. */
+  private async selectPreset(agent: Agent, presetId: string, verb: string): Promise<void> {
+    try {
+      await this.ctx.agentPresets.select(agent, presetId);
+    } catch (error) {
+      if ((error as { code?: unknown }).code === 'agent-preset/locked') {
+        throw new ExpertsError('experts/session-started', `该会话已开始对话，无法${verb}；请新建会话后重新召唤。`, { reason: 'started' });
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Store a one-shot draft handoff (never auto-sent); empty text stages nothing.
    * The handoff id doubles as the one-shot challenge the Client must echo back to
    * `consumeHandoff`; the Host cannot observe the native input draft version, so the
@@ -1963,6 +2371,15 @@ export class ExpertsManager extends Service implements ExpertsService {
   // ── local import / export ───────────────────────────────────────────────
 
   /**
+   * 丢弃暂存包：注销登记并删除暂存目录。验签失败、取签名失败等「不落盘」路径都走这里，
+   * 保证磁盘上不会残留未通过校验的专家包。
+   */
+  private async discardStaged(stagedId: string): Promise<void> {
+    this.stagedImports.delete(stagedId);
+    await rm(join(this.stagingRoot, stagedId), { recursive: true, force: true }).catch(() => undefined);
+  }
+
+  /**
    * Stage an uploaded `.expert.zip` into a private, per-deployment directory and
    * return a short-lived staged id for `previewImport`. Not part of the public
    * ExpertsService contract; the Connection transport calls it on the concrete
@@ -2123,11 +2540,20 @@ export class ExpertsManager extends Service implements ExpertsService {
     const result = await this.remote.list(query, signal);
     await this.audit(actor, 'experts.remote-list', undefined, 'succeeded', 'experts/remote-list-succeeded', { count: String(result.items.length), total: String(result.total) });
     if (!result.available) return result;
+    // 市场页的授权/申请状态与内置属性留一份缓存：本地列表不需要再额外请求后台。
+    for (const item of result.items) this.rememberMarketMeta(item);
+    const installationIds = result.items
+      .map((item) => this.installationFor(item.expertType, item.remoteId)?.expertId)
+      .filter((id): id is string => id !== undefined);
+    const boundCounts = await this.boundSessionCounts(installationIds, signal);
     return {
       ...result,
       items: result.items.map((item) => {
         const installation = this.installationFor(item.expertType, item.remoteId);
         if (!installation) return item;
+        // 市场卡直接展示后台条目字段；同时把最新名称/图标刷进安装清单快照，
+        // 让本地卡在后台可达时也跟随运营口径（写失败不影响列表）。
+        void this.syncDisplaySnapshot(installation.expertId, item);
         return {
           ...item,
           installed: {
@@ -2135,11 +2561,32 @@ export class ExpertsManager extends Service implements ExpertsService {
             version: installation.version,
             status: installation.status,
             updateAvailable: installation.version !== item.version,
-            boundSessions: this.boundSessionCount([installation.expertId]),
+            boundSessions: boundCounts.get(installation.expertId) ?? 0,
           },
         };
       }),
     };
+  }
+
+  /** 把后台条目的展示名称/图标同步进安装清单，供本地卡在重启/离线后继续使用后台口径。 */
+  private async syncDisplaySnapshot(expertId: string, remote: RemoteExpertSummary): Promise<void> {
+    try {
+      const row = this.expertsTable().get(keys.expert(expertId));
+      const manifest = row?.installManifest;
+      if (!row || manifest?.source !== 'market') return;
+      if (manifest.displayName === remote.name && manifest.displayIcon === remote.icon && manifest.displayColor === remote.color) return;
+      await this.expertsTable().update(keys.expert(expertId), current => ({
+        ...current,
+        installManifest: {
+          ...(current.installManifest ?? manifest),
+          ...(remote.name ? { displayName: remote.name } : {}),
+          ...(remote.icon ? { displayIcon: remote.icon } : {}),
+          ...(remote.color ? { displayColor: remote.color } : {}),
+        },
+      }));
+    } catch {
+      // 展示同步失败不影响市场列表返回，本地卡继续用已有快照或包内定义。
+    }
   }
 
   /** Ledger of the assets this member submitted for review. */
@@ -2205,8 +2652,10 @@ export class ExpertsManager extends Service implements ExpertsService {
       if (!expert || !this.isVisible(actor, expert)) continue;
       rows.push(row);
     }
-    await this.audit(actor, 'experts.list-installations', undefined, 'succeeded', 'experts/list-installations-succeeded', { count: String(rows.length) });
-    return rows;
+    const boundCounts = await this.boundSessionCounts(rows.map((row) => row.expertId), signal);
+    const withCounts = rows.map((row) => ({ ...row, boundSessions: boundCounts.get(row.expertId) ?? 0 }));
+    await this.audit(actor, 'experts.list-installations', undefined, 'succeeded', 'experts/list-installations-succeeded', { count: String(withCounts.length) });
+    return withCounts;
   }
 
   /**
@@ -2236,6 +2685,34 @@ export class ExpertsManager extends Service implements ExpertsService {
     if (existing && existing.owner.ownerPrincipalId !== actor.principalId) throw new ExpertsError('experts/forbidden', '该专家由其他成员安装，无法覆盖。');
     const { bytes, digest } = await this.remote.download(remote.package, signal);
     const stagedId = await this.stageImport(remote.package.fileName, bytes, signal);
+    // 验签开关开启（主闸门 + assetSignature）：下载 → 暂存 → 取签名 → 自行重算清单 → 按 keyId
+    // 选内置公钥验 Ed25519；验签不通过一律丢弃暂存，任何内容都不会落到最终安装目录。
+    let signature: ExpertInstallManifest['signature'];
+    if (this.gateProbe()?.signatureEnabled?.() === true) {
+      try {
+        const envelope = await this.remote.signature(request.expertType, request.remoteId, signal);
+        // 文件清单由客户端按下载到的 zip 自行重算（manifest.json 作为普通文件计入，只排除 .workdsh-install.json）。
+        const verdict = verifyAssetSignature({
+          envelope,
+          expectedAssetType: request.expertType === 'team' ? 'expert_group' : 'expert',
+          expectedAssetId: request.remoteId,
+          files: packageSignatureFiles(bytes),
+          // 后台契约：files 的顺序就是签名顺序，客户端禁止重排。
+          preserveFileOrder: true,
+        });
+        if (!verdict.ok) throw new ExpertsError(verdict.code, verdict.message);
+        signature = {
+          payloadVersion: envelope.payloadVersion,
+          algo: envelope.algo,
+          keyId: envelope.keyId,
+          digest: envelope.digest,
+          signature: envelope.signature,
+        };
+      } catch (error) {
+        await this.discardStaged(stagedId);
+        throw error;
+      }
+    }
     const preview = await this.previewImport(actor, stagedId, signal);
     if (preview.issues.length > 0) {
       throw new ExpertsError('experts/install-invalid', '专家包未通过校验，无法安装。', { issues: preview.issues });
@@ -2273,6 +2750,9 @@ export class ExpertsManager extends Service implements ExpertsService {
     const publishedRevision = expert.publishedRevisionRef
       ? this.revisionsTable().get(keys.revision(expertId, expert.publishedRevisionRef.revisionId))
       : undefined;
+    // 业务场景 / 来源节点 / 公开状态随安装一起落本地：离线或后台不可用时仍能展示与筛选。
+    const bizScene = remote.scenes.map(scene => scene.label.trim()).filter(label => label.length > 0).join(',');
+    const sourceNode = remote.sourceNodeList.join(',');
     await this.expertsTable().update(keys.expert(expertId), (row) => ({
       ...row,
       installManifest: {
@@ -2282,9 +2762,19 @@ export class ExpertsManager extends Service implements ExpertsService {
         installedAt: existing?.installedAt ?? now,
         version: remote.version,
         ...(publishedRevision ? { digest: publishedRevision.compositionDigest } : {}),
+        ...(bizScene ? { bizScene } : {}),
+        ...(sourceNode ? { sourceNode } : {}),
+        ...(remote.isPublic === undefined ? {} : { isPublic: remote.isPublic }),
+        ...(remote.capability ? { capability: remote.capability } : {}),
+        // 后台运营展示口径随安装落盘：后台不可达时本地卡仍显示后台条目的名称/图标。
+        ...(remote.name ? { displayName: remote.name } : {}),
+        ...(remote.icon ? { displayIcon: remote.icon } : {}),
+        ...(remote.color ? { displayColor: remote.color } : {}),
+        ...(signature ? { signature } : {}),
       },
       updatedAt: now,
     }));
+    this.rememberMarketMeta(remote);
     const installation: ExpertInstallation = {
       remoteKey, remoteId: request.remoteId, expertType: request.expertType, expertId,
       version: remote.version, fileName: remote.package.fileName, sourceUrl: remote.package.url,
@@ -2319,7 +2809,7 @@ export class ExpertsManager extends Service implements ExpertsService {
     const deletedExpertIds = [installation.expertId, ...[...this.expertsTable().entries()]
       .filter(([, row]) => row.teamParentId === installation.expertId)
       .map(([id]) => id)];
-    const boundSessions = this.boundSessionCount(deletedExpertIds);
+    const boundSessions = await this.boundSessionCount(deletedExpertIds, signal);
     await this.enqueue(async () => {
       await this.deleteLocalExpert(installation.expertId, signal);
       await this.installationsTable().delete(remoteKey);
@@ -2344,7 +2834,7 @@ export class ExpertsManager extends Service implements ExpertsService {
     await this.authorize(actor, 'experts.delete-expert', expert, signal);
     const deleteManifest = this.installManifestOf(expert.id);
     const deletedExpertIds = this.deletionIds(expertId);
-    const boundSessions = this.boundSessionCount(deletedExpertIds);
+    const boundSessions = await this.boundSessionCount(deletedExpertIds, signal);
     await this.enqueue(async () => {
       await this.deleteLocalExpert(expertId, signal);
       for (const [key, row] of [...this.installationsTable().entries()]) {
@@ -2379,6 +2869,7 @@ export class ExpertsManager extends Service implements ExpertsService {
       for (const [key, binding] of [...this.bindingsTable().entries()]) {
         if (binding.expertRevisionRef.expertId === id) await this.bindingsTable().delete(key);
       }
+      this.forgetBoundSessionCount([id]);
       await this.draftsTable().delete(keys.draft(id));
       await this.expertsTable().delete(keys.expert(id));
       for (const presetId of presetIds) {
@@ -2581,13 +3072,127 @@ export class ExpertsManager extends Service implements ExpertsService {
     return 'expert';
   }
 
-  private boundSessionCount(expertIds: readonly string[]): number {
-    const ids = new Set(expertIds);
-    let total = 0;
-    for (const [, binding] of this.bindingsTable().entries()) {
-      if (ids.has(binding.expertRevisionRef.expertId)) total += 1;
+  /**
+   * 绑定会话计数：只统计「会话仍存在且至少发过一条 `user/message`」的绑定。
+   *
+   * 绑定行只代表召唤过：创建后没发消息的空白会话，以及会话删除后残留的绑定行，
+   * 都不应算作「正在使用该专家」。这里按官方 `ctx.sessionQuery` 的真实会话列表过滤，
+   * 并把会话已不存在的绑定行就地剪除；查询能力不可用时退回旧的「绑定行数」口径，
+   * 宁可多报也不把卸载影响面说小。
+   */
+  private async boundSessionCounts(expertIds: readonly string[], signal?: AbortSignal): Promise<ReadonlyMap<string, number>> {
+    const ids = [...new Set(expertIds)];
+    const counts = new Map<string, number>();
+    if (ids.length === 0) return counts;
+    const now = Date.now();
+    const pending = new Set<string>();
+    for (const id of ids) {
+      const cached = this.boundSessionCountCache.get(id);
+      if (signal === undefined && cached !== undefined && now - cached.at < BOUND_SESSION_CACHE_MS) {
+        counts.set(id, cached.count);
+        continue;
+      }
+      counts.set(id, 0);
+      pending.add(id);
     }
+    if (pending.size === 0) return counts;
+
+    const rows: Array<{ readonly key: string; readonly sessionId: string; readonly expertId: string; readonly createdAt: string }> = [];
+    for (const [key, binding] of [...this.bindingsTable().entries()]) {
+      const expertId = binding.expertRevisionRef.expertId;
+      if (!pending.has(expertId)) continue;
+      rows.push({ key, sessionId: String(binding.sessionId), expertId, createdAt: binding.createdAt });
+    }
+    if (rows.length === 0) {
+      for (const id of pending) this.boundSessionCountCache.set(id, { count: 0, at: Date.now() });
+      return counts;
+    }
+
+    const query = this.sessionQuery();
+    const fallback = (): ReadonlyMap<string, number> => {
+      for (const row of rows) counts.set(row.expertId, (counts.get(row.expertId) ?? 0) + 1);
+      return counts;
+    };
+    if (query === undefined) return fallback();
+
+    const snapshotAt = Date.now();
+    let existing: Set<string> | undefined;
+    try {
+      existing = new Set((await query.listSessions(signal)).map((record) => String(record.header.id)));
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      existing = undefined;
+    }
+    if (existing === undefined) return fallback();
+
+    const live: Array<{ readonly sessionId: string; readonly expertId: string }> = [];
+    for (const row of rows) {
+      if (existing.has(row.sessionId)) {
+        live.push({ sessionId: row.sessionId, expertId: row.expertId });
+        continue;
+      }
+      // 取列表快照时刚建好的会话可能还没进入快照：这类新绑定既不剪也不计。
+      const createdAt = Date.parse(row.createdAt);
+      if (Number.isFinite(createdAt) && createdAt >= snapshotAt) continue;
+      await this.bindingsTable().delete(row.key);
+      this.ctx.logger.info(`专家：清理会话已不存在的绑定（${row.expertId} / ${row.sessionId}）。`);
+    }
+
+    // 逐个读取事件类型判断是否发过用户消息；读不到时保守按「已使用」计入。
+    const used = new Map<string, boolean>();
+    await Promise.all([...new Set(live.map((row) => row.sessionId))].map(async (sessionId) => {
+      try {
+        const events = await query.listEvents(sessionId);
+        used.set(sessionId, events.some((event) => event.type === 'user/message'));
+      } catch {
+        used.set(sessionId, true);
+      }
+    }));
+    for (const row of live) {
+      if (used.get(row.sessionId) !== true) continue;
+      counts.set(row.expertId, (counts.get(row.expertId) ?? 0) + 1);
+    }
+    const stampedAt = Date.now();
+    for (const id of pending) this.boundSessionCountCache.set(id, { count: counts.get(id) ?? 0, at: stampedAt });
+    return counts;
+  }
+
+  /** 单一口径的便捷封装：多专家计数求和。 */
+  private async boundSessionCount(expertIds: readonly string[], signal?: AbortSignal): Promise<number> {
+    const counts = await this.boundSessionCounts(expertIds, signal);
+    let total = 0;
+    for (const count of counts.values()) total += count;
     return total;
+  }
+
+  /** 丢弃指定专家的计数缓存，让绑定变化后的下一次统计立刻生效。 */
+  private forgetBoundSessionCount(expertIds: readonly string[]): void {
+    for (const id of expertIds) this.boundSessionCountCache.delete(id);
+  }
+
+  /** 官方会话查询服务；插件未提供时返回 undefined（计数退回绑定行数口径）。 */
+  private sessionQuery(): SessionQueryLike | undefined {
+    try {
+      return this.ctx.reflect.get('sessionQuery') as SessionQueryLike | undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * 会话删除后的绑定清理（由会话回收插件在删除成功后调用）。
+   *
+   * 绑定表与会话生命周期分属两个插件，删除会话不会自动清绑定；不清理就会累积
+   * 指向已销毁会话的孤儿行，把卸载提示里的会话数越拖越大。
+   */
+  async releaseSessionBindings(sessionIds: readonly string[]): Promise<void> {
+    for (const sessionId of sessionIds) {
+      const key = keys.binding(sessionId);
+      const binding = this.bindingsTable().get(key);
+      if (binding === undefined) continue;
+      await this.bindingsTable().delete(key);
+      this.forgetBoundSessionCount([binding.expertRevisionRef.expertId]);
+    }
   }
 
   async operation(actor: ActorContext, operationId: string, signal?: AbortSignal): Promise<Operation> {

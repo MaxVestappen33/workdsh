@@ -217,18 +217,7 @@ export const skillsMarketCss = `${modalCss}
 /* 本地卡片的「去试试」沿用市场主按钮：黑底白字。 */
 .wd-skills .market-action.primary{border-color:var(--dsw-alias-border-l2);background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-inverted);font-weight:600}
 .wd-skills .market-action.primary:hover:not(:disabled){border-color:var(--dsw-alias-border-l2);background:#43454a;color:var(--dsw-alias-label-primary-inverted)}
-/* 状态标签：对齐 ant-design-vue 的 a-tag 观感（浅底 + 同系文字 + 1px 同系描边 + 4px 小圆角）。 */
-.wd-skills .builtin-pill,.wd-skills .external-pill,.wd-skills .installed-pill,.wd-skills .uninstalled-pill,.wd-skills .apply-pill,.wd-skills .version-tag{display:inline-flex;align-items:center;flex:none;height:20px;padding:0 5px;border:1px solid transparent;border-radius:4px;font-size:12px;line-height:18px;font-weight:400;white-space:nowrap}
-/* 版本号与「内置」统一为中性灰；「非内置」为 cyan；「已安装」green、「未安装」与版本号同灰。 */
-.wd-skills .version-tag,.wd-skills .builtin-pill,.wd-skills .uninstalled-pill{background:whitesmoke;border-color:white;color:#434343}
-.wd-skills .external-pill{background:#e6fffb;border-color:#87e8de;color:#08979c}
-.wd-skills .installed-pill{background:#f6ffed;border-color:#b7eb8f;color:#389e0d}
-/* 申请状态：gray 未授权、processing 申请中、success 已通过、error 未通过。 */
-.wd-skills .apply-pill.none{background:#f5f5f5;border-color:#d9d9d9;color:#434343}
-.wd-skills .apply-pill.pending{background:#e6f4ff;border-color:#91caff;color:#0958d9}
-.wd-skills .apply-pill.approved{background:#f6ffed;border-color:#b7eb8f;color:#389e0d}
-.wd-skills .apply-pill.rejected{background:#fff2f0;border-color:#ffccc7;color:#cf1322}
-.wd-skills .auth-pill{flex:none;padding:4px 10px;border-radius:999px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-state-warning-primary,var(--dsw-alias-brand-primary));font-size:12px;font-weight:500;white-space:nowrap}
+/* 状态标签统一由 workdsh-ui 的 TongyunTagSingle 渲染（20px / 4px 圆角 / 12px 字号）。 */
 .wd-skills .auth-reason{display:block;margin-top:6px;color:var(--dsw-alias-label-tertiary);font-size:12px}
 .wd-skills .market-foot{display:flex;justify-content:center;padding:22px 0 6px;color:var(--dsw-alias-label-tertiary);font-size:12px}
 /* 查询覆盖层样式由 workdsh-ui 共用；它相对面板定位，因此始终在可视区正中。 */
@@ -241,6 +230,7 @@ export const skillsMarketCss = `${modalCss}
 .wd-skills .notice{color:var(--dsw-alias-state-success-primary)}
 .wd-skills .empty .muted{display:block;margin-top:6px}
 .wd-skills .empty .muted{font-size:12px}
+.wd-skills .empty .empty-text{display:block;font-size:14px;font-weight:400;color:var(--dsw-alias-label-tertiary)}
 .skill-detail-dialog .detail-title .slug{margin:0 0 12px}
 .skill-detail-dialog .detail-title .slug{font:13px/20px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--dsw-alias-label-tertiary)}
 /* 技能弹框沿用公共 Modal（.wd-dialog）外壳；用更高特异性只收窄技能相关弹框并紧凑化内部，不改公共默认值。 */

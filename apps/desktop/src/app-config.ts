@@ -183,7 +183,7 @@ export const APP_CONFIG_DEFAULTS: AppConfig = {
     assetGatePolicyPath: '/desktop-client/asset/queryGatePolicy',
     assetGateSnapshotPath: '/desktop-client/asset/queryEntitlementSnapshot',
     assetGateReportPath: '/desktop-client/asset/reportGateAudit',
-    /** 资产签名：按 assetType/assetId 取签名 envelope（本期只用于技能）。 */
+    /** 资产签名：按 assetType/assetId 取签名 envelope（技能、专家、专家团共用）。 */
     assetGateSignaturePath: '/desktop-client/asset/queryAssetSignature',
   },
 }

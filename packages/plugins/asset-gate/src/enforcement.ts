@@ -183,7 +183,7 @@ const argumentName = (value: unknown): string | undefined => {
  * 因此未授权的资产仍然返回 `denied-not-entitled`，不会因为内容问题改变拒绝语义。
  *
  * 边界：
- * - `builtin` 放行：随包发布，开发/打包环境会直接改文件，调用期校验只会误伤；
+ * - `builtin` 只在打包态校验（开发态会改随包文件，跳过避免误伤）；
  * - `local` 到不了这里：上一步已按「未上架/未登记」拒绝；
  * - 市场来源没有签名块 → `denied-signature-missing`（装在验签关闭期，需重装）；
  * - 内容被改 / 清单损坏 / 宿主未提供校验能力 → `denied-integrity-broken`（fail-closed）。
@@ -195,8 +195,11 @@ async function integrityDenial(
   name: string,
   manifest: InstallManifestLike | undefined,
 ): Promise<GateDenial | undefined> {
-  if (manifest?.source !== 'market') return undefined;
-  if (gate.signatureEnabled?.() !== true) return undefined;
+  const builtin = manifest?.source === 'builtin';
+  if (manifest?.source !== 'market' && !builtin) return undefined;
+  // 内置只在打包态校验（开发态会直接改随包文件）；市场仍以验签子闸门为准。
+  if (builtin && process.env.WORKDSH_PACKAGED !== '1') return undefined;
+  if (!builtin && gate.signatureEnabled?.() !== true) return undefined;
   const assetId = typeof manifest.assetId === 'string' && manifest.assetId.trim() ? manifest.assetId.trim() : undefined;
   const broken = (reasonCode: string): GateDenial => ({
     reason: gateReasonMessage(reasonCode), code: reasonCode, assetType: 'skill', ...(assetId ? { assetId } : {}),

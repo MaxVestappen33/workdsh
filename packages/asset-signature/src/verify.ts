@@ -38,11 +38,16 @@ export type AssetSignatureVerdict =
 
 export interface VerifyAssetSignatureInput {
   readonly envelope: AssetSignatureEnvelope;
-  /** 当前安装位置应有的资产类型（本期固定 `skill`）与后台编号。 */
+  /** 当前安装位置应有的资产类型（`skill` / `expert` / `expert_group`）与后台编号。 */
   readonly expectedAssetType: string;
   readonly expectedAssetId: string;
   /** 磁盘上的实际文件集合（暂存区或已安装目录的快照）。 */
   readonly files: readonly AssetSignatureFile[];
+  /**
+   * 保留服务端 files 的给定顺序。专家/专家团的接口契约明确「files 顺序即签名顺序，禁止重排」，
+   * 必须传 true；技能沿用字节序排序的既有口径，默认 false。
+   */
+  readonly preserveFileOrder?: boolean;
   /** 测试或未来轮换用的公钥表；缺省使用内置表。 */
   readonly publicKeys?: Readonly<Record<string, string>>;
   /** 本地缓存 envelope 的取回时间（毫秒）；提供时执行 24 小时新鲜期检查。 */
@@ -96,11 +101,13 @@ export function verifyAssetSignature(input: VerifyAssetSignatureInput): AssetSig
   }
 
   // 4) 规范化服务端签名文件集合并重建载荷（用服务端 files，不用本地扫描结果）。
+  //    专家/专家团要求保留后台给定顺序（顺序即签名顺序），技能仍按字节序排序。
+  const sort = input.preserveFileOrder !== true;
   let signedFiles: readonly AssetSignatureFile[];
   let payload: Buffer;
   try {
-    signedFiles = canonicalAssetSignatureFiles(envelope.files);
-    payload = canonicalAssetSignaturePayload({ assetType: envelope.assetType, assetId: envelope.assetId, files: signedFiles });
+    signedFiles = canonicalAssetSignatureFiles(envelope.files, { sort });
+    payload = canonicalAssetSignaturePayload({ assetType: envelope.assetType, assetId: envelope.assetId, files: signedFiles, sortFiles: sort });
   } catch (error) {
     if (error instanceof AssetSignatureError) return failure('invalid', error.detail ?? error.message);
     return failure('invalid', detailOf(error));

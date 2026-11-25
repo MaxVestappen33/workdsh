@@ -49,6 +49,11 @@ interface AuditLike {
   append(event: Record<string, unknown>): Promise<void>
 }
 
+/** 专家服务只需要「删除会话后清绑定」这一面；未安装专家插件时整体跳过。 */
+interface ExpertsLike {
+  releaseSessionBindings(sessionIds: readonly string[]): Promise<void>
+}
+
 const json = (body: unknown, status = 200): Response =>
   Response.json(body, { status, headers: NO_STORE })
 
@@ -122,6 +127,7 @@ async function remove(ctx: HostContext, request: Request): Promise<Response> {
   const sessions = ctx.get('sessions') as { get(id: string): unknown } | undefined
   const registry = ctx.get('workspaceRegistry') as RegistryLike | undefined
   const audit = ctx.get('workdshAudit') as AuditLike | undefined
+  const experts = ctx.get('workdshExperts') as ExpertsLike | undefined
   if (identity === undefined || persistence === undefined) {
     return failure(503, 'session/unavailable', '会话服务尚未就绪，请稍后重试。')
   }
@@ -243,6 +249,14 @@ async function remove(ctx: HostContext, request: Request): Promise<Response> {
     await rm(join(home, 'storages', 'session_projcache', 'sessions', `${id}.json`), { force: true }).catch((error) => {
       warn(ctx, `会话删除：删除投影缓存失败（${error instanceof Error ? error.message : String(error)}）。`)
     })
+  }
+
+  // 绑定表与会话生命周期分属两个插件：会话真正删除后必须清掉专家绑定，否则会残留
+  // 指向已销毁会话的孤儿行，让卸载提示里的会话数越拖越大。清理失败不回滚删除。
+  try {
+    await experts?.releaseSessionBindings(ids)
+  } catch (error) {
+    warn(ctx, `会话删除：清理专家绑定失败（${error instanceof Error ? error.message : String(error)}）。`)
   }
 
   // 回收站只是回滚窗口，全部校验通过后立即永久删除。

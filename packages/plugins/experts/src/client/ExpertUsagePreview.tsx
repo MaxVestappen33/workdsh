@@ -10,9 +10,12 @@ export type ExpertUsagePreviewProps = {
 
 /** Read-only review of the exact saved definition; does not prepare or run a task. */
 export function ExpertUsagePreview({ definition, dependencyLock }: ExpertUsagePreviewProps) {
+  // 预览只呈现制作文件正文：剥离开头 YAML frontmatter（与 TeamOverview 同口径），
+  // 无 frontmatter 时原样返回；只影响展示，不改变 definition 与发布提交内容。
+  const body = definition.agentDocument ? definition.agentDocument.replace(/^---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/, '') : '';
   return <section className="usage-preview" aria-label="专家使用预览">
     <header><span className="preview-avatar" aria-hidden>{definition.avatarRef?.startsWith('data:image/') ? <img src={definition.avatarRef} alt="" /> : definition.name.trim().charAt(0) || '专'}</span><div><h3>{definition.name}</h3><p>{definition.description}</p></div></header>
-    {definition.agentDocument ? <div className="prose-block" style={{ whiteSpace: 'pre-wrap' }}>{definition.agentDocument}</div> : <ExpertWorkSummary definition={definition} />}
+    {body ? <div className="prose-block" style={{ whiteSpace: 'pre-wrap' }}>{body}</div> : <ExpertWorkSummary definition={definition} />}
     <TeamContent team={definition.team} />
     {definition.tags.length > 0 && <><h3>擅长领域</h3><div className="preview-tags">{definition.tags.map(tag => <span key={tag}>{tag}</span>)}</div></>}
     <h3>试试这样问我</h3>

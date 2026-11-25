@@ -253,6 +253,7 @@ it('injects expert catalog, listing and shared upload paths as one experts patch
     skillUploadPath: '/desktop-client/upload',
     skillListingNodePath: '/desktop-client/queryAiNodeList',
     skillDictPath: '/desktop-client/getDictItems',
+    assetGateSignaturePath: '/desktop-client/asset/queryAssetSignature',
   }))
   expect(patch).toBeTruthy()
   const rows = load(readFileSync(patch!, 'utf8')) as { id: string, config: { paths: Record<string, unknown> } }[]
@@ -270,6 +271,7 @@ it('injects expert catalog, listing and shared upload paths as one experts patch
     upload: '/desktop-client/upload',
     nodes: '/desktop-client/queryAiNodeList',
     dict: '/desktop-client/getDictItems',
+    signature: '/desktop-client/asset/queryAssetSignature',
   })
 })
 

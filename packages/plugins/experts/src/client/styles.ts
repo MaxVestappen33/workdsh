@@ -38,25 +38,8 @@ export const expertsCss = `${modalCss}
 .wd-experts .work-types button.active{color:var(--dsw-alias-label-primary)}
 .wd-experts .work-types span{margin-left:10px}
 .wd-experts .work-types span{font-size:12px;color:var(--dsw-alias-label-tertiary);font-weight:400}
-.wd-experts .create-menu{position:relative}
-.wd-experts .create-menu summary{list-style:none;cursor:pointer}
-.wd-experts .create-menu summary{border-radius:8px;padding:9px 14px}
-.wd-experts .create-menu summary::-webkit-details-marker{display:none}
-.wd-experts .create-menu>div{position:absolute;right:0;top:calc(100% + 8px);width:180px;z-index:20}
-.wd-experts .create-menu>div{background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;padding:8px;box-shadow:0 12px 28px var(--dsw-alias-bg-mask-2)}
-.wd-experts .create-menu button{display:block;width:100%;text-align:left}
-.wd-experts .create-menu button{border:0;background:transparent}
 .wd-experts .domain-tags{display:flex;gap:6px;flex-wrap:wrap}
 .wd-experts .domain-tags span{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-tertiary);font-size:11px;border-radius:4px;padding:3px 7px}
-.wd-experts .create-card{display:flex;align-items:center;justify-content:center;gap:12px}
-.wd-experts .create-card{min-height:220px;color:var(--dsw-alias-label-tertiary);font-size:14px}
-.wd-experts .create-card>span{font-size:46px;font-weight:400;line-height:1}
-.wd-experts .filter-tabs{display:flex;gap:7px;align-items:center;overflow:auto;margin:0 0 18px}
-.wd-experts .filter-tabs{padding:0 0 2px}
-.wd-experts .filter-tabs button{white-space:nowrap}
-.wd-experts .filter-tabs button{border:0;background:transparent}
-.wd-experts .filter-tabs button.active{background:var(--dsw-alias-interactive-bg-hover)}
-.wd-experts .filter-tabs button:disabled{color:var(--dsw-alias-label-dimmed)}
 /* 应用场景筛选：与技能市场同款胶囊（全部 = 不筛选）。 */
 .wd-experts .scene-bar{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 16px}
 .wd-experts .scene-bar button{padding:6px 12px;border:0;border-radius:9px;background:transparent;color:var(--dsw-alias-label-secondary);white-space:nowrap}
@@ -74,18 +57,24 @@ export const expertsCss = `${modalCss}
 .wd-experts .counts{margin:0 0 16px}
 .wd-experts .counts{font-size:12px;color:var(--dsw-alias-label-tertiary)}
 .wd-experts .counts.error{color:var(--dsw-alias-state-error-primary)}
+/* 成功提示沿用技能市场口径：与计数同一行、只换颜色，不再额外占一块可关闭提示卡。 */
+.wd-experts .counts.notice{display:block;margin:0 0 16px;padding:0;border:0;background:transparent;font-size:12px;color:var(--dsw-alias-state-success-primary)}
+/* 市场条目安装失败：卡片底部就地展示（对齐技能市场 card-error），最多两行截断。 */
+.wd-experts .card-error{overflow:hidden;margin:8px 0 0;color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:18px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 /* Loading line only: centered like the skill market footer, so no placeholder cards. */
 .wd-experts .remote-status{display:flex;justify-content:center;padding:22px 0 6px;color:var(--dsw-alias-label-tertiary);font-size:12px}
 /* 列表/卡片区：覆盖层只罩这一块，顶部页签、搜索与筛选保持可点。 */
 .wd-experts .expert-content{position:relative;min-height:120px}
-.wd-experts .grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}
+.wd-experts .grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:22px}
 .wd-experts .card{position:relative;min-width:0;display:flex;flex-direction:column;gap:12px}
-.wd-experts .card{border-radius:17px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);min-height:150px;padding:24px}
+.wd-experts .card{border-radius:18px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);min-height:150px;padding:14px}
+/* 骨架卡与真实卡片同规格（14px 内边距、18px 圆角），加载态与列表不错位。 */
+.wd-experts .wd-card-skeleton.v-avatar{min-height:150px;padding:14px;border-radius:18px}
 .wd-experts .card:hover{border-color:var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2)}
 .wd-experts .card.draft{border-style:dashed}
 .wd-experts .card.unavailable{opacity:.62}
-.wd-experts .card-top{display:flex;align-items:flex-start;gap:12px;min-width:0}
-.wd-experts .card-open{display:flex;align-items:flex-start;gap:12px;min-width:0;flex:1;text-align:left}
+.wd-experts .card-top{display:flex;align-items:flex-start;gap:14px;min-width:0}
+.wd-experts .card-open{display:flex;align-items:flex-start;gap:14px;min-width:0;flex:1;text-align:left}
 .wd-experts .card-open{padding:0;border:0;background:transparent}
 .wd-experts .card-open:hover:not(:disabled){background:transparent}
 .wd-experts .avatar{display:inline-grid;place-items:center;width:46px;flex:none;overflow:hidden}
@@ -94,9 +83,12 @@ export const expertsCss = `${modalCss}
 .wd-experts .avatar img{height:100%}
 .wd-experts .card-title{min-width:0;flex:1}
 .wd-experts .card-title strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.wd-experts .card-title strong{font-weight:600;font-size:15px}
+.wd-experts .card-title strong{font-weight:600;font-size:17px}
 .wd-experts .card-meta{display:block;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .wd-experts .card-meta{font-size:12px;color:var(--dsw-alias-label-tertiary)}
+/* 第二行状态标签：来源节点 + 公开状态，单行排列，窄宽度裁切而不撑破卡片。 */
+.wd-experts .card-meta-tags{display:flex;flex-wrap:nowrap;align-items:center;gap:6px;min-width:0;margin-top:4px;overflow:hidden}
+.wd-experts .card-meta-tags .wd-tag-single{flex:0 1 auto;min-width:0;overflow:hidden}
 .wd-experts .card p.desc{margin:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .wd-experts .card p.desc{font-size:12px;line-height:20px;color:var(--dsw-alias-label-secondary)}
 .wd-experts .card-foot{display:flex;align-items:center;gap:8px;margin-top:auto;flex-wrap:wrap}
@@ -106,9 +98,6 @@ export const expertsCss = `${modalCss}
 .wd-experts .badge.warn{color:var(--dsw-alias-state-warn-primary);border-color:var(--dsw-alias-state-warn-primary)}
 .wd-experts .card p.auth-reason{margin:6px 0 0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
 .wd-experts .badge.bad{color:var(--dsw-alias-state-error-primary);border-color:var(--dsw-alias-state-warn-primary)}
-.wd-experts .pin{margin-left:auto}
-.wd-experts .pin{background:transparent;border:0;min-height:28px;padding:2px 6px;font-size:15px;color:var(--dsw-alias-label-dimmed)}
-.wd-experts .pin.on{color:var(--dsw-alias-state-warn-primary)}
 .wd-experts .more-button{width:34px}
 .wd-experts .more-button{min-height:30px;padding:0;border:0;font-size:18px;background:transparent;color:var(--dsw-alias-label-secondary)}
 .wd-experts .card-actions{position:relative}
@@ -123,6 +112,7 @@ export const expertsCss = `${modalCss}
 .wd-experts .empty{padding:64px 20px}
 .wd-experts .empty strong{display:block;margin-bottom:8px}
 .wd-experts .empty strong{font-size:16px}
+.wd-experts .empty .empty-text{display:block;font-size:14px;font-weight:400;color:var(--dsw-alias-label-tertiary)}
 .wd-experts .empty .empty-actions{display:flex;gap:10px;justify-content:center;margin-top:18px}
 .wd-experts .skeleton{background-size:200% 100%;animation:wd-shimmer 1.3s infinite}
 .wd-experts .skeleton{border-radius:17px;border:1px solid var(--dsw-alias-border-l2);background:linear-gradient(100deg,var(--dsw-alias-bg-layer-1) 30%,var(--dsw-alias-bg-layer-2) 50%,var(--dsw-alias-bg-layer-1) 70%);min-height:150px}
@@ -249,7 +239,9 @@ export const expertsCss = `${modalCss}
 .publish-dialog .usage-preview header{display:flex;align-items:flex-start;gap:16px}
 .publish-dialog .usage-preview header>div{min-width:0}
 .publish-dialog .preview-avatar{flex-shrink:0;display:grid;place-items:center;width:56px}
-.publish-dialog .preview-avatar{height:56px;border-radius:50%;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-brand-text);font-size:24px}
+.publish-dialog .preview-avatar{height:56px;border-radius:50%;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-brand-text);font-size:24px;overflow:hidden}
+/* 图片头像按容器裁切，避免按原始尺寸溢出、压住标题与正文。 */
+.publish-dialog .preview-avatar img{display:block;width:100%;height:100%;object-fit:cover}
 .publish-dialog .usage-preview h3{margin:20px 0 8px}
 .publish-dialog .usage-preview h3{font-size:15px;color:var(--dsw-alias-label-primary)}
 .publish-dialog .usage-preview header h3{margin:0 0 8px}
@@ -452,3 +444,73 @@ export const expertsCss = `${modalCss}
 .sso-dialog .sso-dialog-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:8px}
 ${controlsCss}
 `;
+
+/**
+ * 专家/专家团管理页新增的二级页签与市场卡片样式。
+ * 全部限定在 .wd-experts 下，避免与技能、连接器、模型页面的共用组件相互影响。
+ */
+export const expertsMarketCss = `
+@layer workdsh-business {
+/* 二级页签：我的 / 市场，样式参照技能管理的 source-tabs + 标题行。 */
+.wd-experts .section-head.has-tabs{border-bottom:0;padding-bottom:8px;margin-bottom:0}
+.wd-experts .source-tabs{display:flex;gap:26px;margin:0 0 18px;border-bottom:1px solid var(--dsw-alias-border-l2)}
+.wd-experts .source-tabs button{display:inline-flex;align-items:center;gap:6px;padding:11px 2px;margin-bottom:-1px}
+.wd-experts .source-tabs button{border:0;border-bottom:2px solid transparent;border-radius:0;background:transparent;min-height:0;color:var(--dsw-alias-label-secondary)}
+.wd-experts .source-tabs button:hover:not(:disabled){background:transparent;color:var(--dsw-alias-label-primary)}
+.wd-experts .source-tabs button.active{border-bottom-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-primary);font-weight:600}
+.wd-experts .source-tabs i{display:inline-grid;place-items:center;min-width:28px;height:22px;padding:0 9px;border-radius:999px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);font-size:14px;font-style:normal;font-weight:600;line-height:1;font-variant-numeric:tabular-nums}
+.wd-experts .source-tabs button:hover i,.wd-experts .source-tabs button.active i{color:var(--dsw-alias-label-primary)}
+
+/* 筛选行：每组的标签与胶囊同排，窄屏自动换行。 */
+.wd-experts .skill-filters{display:flex;flex-wrap:wrap;align-items:center;gap:10px 18px;margin:0 0 18px;min-width:0;max-width:100%}
+.wd-experts .filter-group{display:flex;align-items:center;gap:7px;min-width:0;max-width:100%;flex:0 1 auto}
+.wd-experts .filter-group.scenes-filter{flex:1 1 260px;min-width:0}
+.wd-experts .filter-label{flex:none;font-size:13px;font-weight:600;color:var(--dsw-alias-label-secondary)}
+.wd-experts .skill-filters .category-bar{margin:0;min-width:0;gap:5px}
+.wd-experts .skill-filters .category-tabs{gap:2px}
+.wd-experts .skill-filters .category-tabs button[data-category],.wd-experts .skill-filters .more-btn{min-height:28px;padding:3px 9px;font-size:13px;line-height:20px;border-radius:7px}
+.wd-experts .filter-group.scenes-filter .category-bar{flex:1}
+
+/* 胶囊筛选栏与「更多」浮层：交互与技能市场一致。 */
+.wd-experts .category-bar{position:relative;display:flex;align-items:center;gap:7px;margin:0 0 18px;min-width:0}
+.wd-experts .category-tabs{display:flex;gap:4px;min-width:0;overflow:hidden}
+.wd-experts .category-tabs button[data-category],.wd-experts .more-btn{padding:6px 12px;border:0;border-radius:9px;background:transparent;color:var(--dsw-alias-label-secondary);white-space:nowrap}
+.wd-experts .category-tabs button[data-category]:hover,.wd-experts .more-btn:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.wd-experts .category-tabs button[data-category].active{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);font-weight:600}
+.wd-experts .category-tabs button[hidden],.wd-experts .more-wrap[hidden],.wd-experts .more-panel[hidden]{display:none}
+.wd-experts .more-wrap{position:relative;flex:none;display:inline-flex}
+.wd-experts .more-btn{display:inline-flex;align-items:center;gap:5px}
+.wd-experts .more-btn .more-count{display:inline-grid;place-items:center;min-width:16px;height:16px;padding:0 5px;border-radius:999px;background:var(--dsw-alias-brand-primary);color:#fff;font-size:11px;font-style:normal;font-weight:600;line-height:1}
+.wd-experts .more-btn .chev{display:inline-flex;transition:transform .12s ease}
+.wd-experts .more-btn.open .chev{transform:rotate(180deg)}
+.wd-experts .more-panel{position:absolute;top:calc(100% + 8px);right:0;z-index:30;min-width:168px;padding:8px;border:1px solid var(--dsw-alias-border-l2);border-radius:14px;background:var(--dsw-alias-bg-layer-2);box-shadow:var(--dsw-elevation-panel)}
+.wd-experts .more-panel button{display:block;width:100%;padding:9px 12px;text-align:left;white-space:nowrap;border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary)}
+.wd-experts .more-panel button:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.wd-experts .more-panel button.active{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);font-weight:600}
+
+/* 六行卡片：场景行、标签行、操作行都与技能市场同构。 */
+.wd-experts .skill-scene{display:block;overflow:hidden;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;text-overflow:ellipsis;white-space:nowrap}
+/* 卡片图标对齐技能市场：46px；字母头像是圆形深色底，图片头像为 12px 圆角 + 描边。 */
+.wd-experts .card .detail-avatar{display:grid;place-items:center;width:46px;height:46px;flex:none;overflow:hidden;border-radius:50%;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-brand-text);font-size:19px;font-weight:700;line-height:1;text-transform:uppercase}
+.wd-experts .card .detail-avatar.has-image{border-radius:12px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1)}
+.wd-experts .card .detail-avatar img{display:block;width:100%;height:100%;object-fit:cover}
+/* 标签行：由 workdsh-ui 的 TongyunTagScrollRow 接管（单行 + 溢出翻页）；状态标签统一走 TongyunTagSingle。 */
+.wd-experts .market-card-foot{display:flex;flex-direction:column;align-items:stretch;gap:8px;margin-top:auto;padding-top:10px}
+.wd-experts .market-card-tags{display:flex;flex-wrap:nowrap;align-items:center;gap:6px;min-width:0;overflow:hidden}
+.wd-experts .market-card-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px}
+.wd-experts .market-action{display:inline-flex;align-items:center;justify-content:center;flex:none;min-height:28px;height:28px;padding:0 12px;border-radius:6px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font-size:13px;line-height:26px;white-space:nowrap}
+.wd-experts .market-action:hover:not(:disabled){background:var(--dsw-alias-bg-layer-3)}
+.wd-experts .market-action:disabled{opacity:.45}
+.wd-experts .market-action.primary{border-color:var(--dsw-alias-border-l2);background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-inverted);font-weight:600}
+.wd-experts .market-action.primary:hover:not(:disabled){border-color:var(--dsw-alias-border-l2);background:#43454a;color:var(--dsw-alias-label-primary-inverted)}
+.wd-experts .market-action.danger{border-color:#800000;background:#800000;color:#fff;font-weight:600}
+.wd-experts .market-action.danger:hover:not(:disabled){border-color:#800000;background:#800000;color:#fff;opacity:.88}
+.wd-experts .market-card-actions .install{min-height:28px;padding:0 12px;border-radius:6px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-inverted);font-size:13px;font-weight:600;white-space:nowrap}
+.wd-experts .market-card-actions .install:hover:not(:disabled){background:#43454a;color:var(--dsw-alias-label-primary-inverted)}
+.wd-experts .install:disabled,.wd-experts .summon:disabled{background:var(--dsw-alias-bg-layer-3);border-color:var(--dsw-alias-border-l2);color:var(--dsw-alias-label-dimmed);opacity:.6}
+
+/* 滚动加载的底部提示与哨兵：与技能市场同位置。 */
+.wd-experts .market-foot{display:flex;justify-content:center;padding:22px 0 6px;color:var(--dsw-alias-label-tertiary);font-size:12px}
+}
+`;
+

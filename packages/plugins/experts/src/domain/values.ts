@@ -68,6 +68,8 @@ export function actionAccess(action: ExpertAction): AccessAction {
     case 'experts.create-execution':
     case 'experts.prepare-handoff':
     case 'experts.create-handoff':
+    case 'experts.switch-expert':
+    case 'experts.clear-expert':
       return 'use';
     default:
       return 'read';

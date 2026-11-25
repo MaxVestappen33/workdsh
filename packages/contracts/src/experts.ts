@@ -138,6 +138,28 @@ export interface ExpertInstallManifest {
   readonly installedAt: string;
   readonly version?: string;
   readonly digest?: string;
+  /** 业务场景名称（后台 bizSceneList 的文案，多个用英文逗号连接）：安装时从市场条目写入。 */
+  readonly bizScene?: string;
+  /** 来源节点名称：安装时从市场条目写入。 */
+  readonly sourceNode?: string;
+  /** 公开状态：安装时从市场条目写入；缺省表示未知。 */
+  readonly isPublic?: boolean;
+  /** 专家说明（后台 `capability` 字段）：安装时从市场条目写入；旧安装允许缺省。 */
+  readonly capability?: string;
+  /** 后台条目的展示名称：安装时/联网回填时写入；后台不可达或没有条目时回退包内定义。 */
+  readonly displayName?: string;
+  /** 后台条目的展示图标（URL）：同上。 */
+  readonly displayIcon?: string;
+  /** 后台条目的图标底色：图标缺失时用于首字头像。 */
+  readonly displayColor?: string;
+  /** 后台签名块：字段与技能清单的签名块一致，验签通过后写入；旧安装缺省。 */
+  readonly signature?: {
+    readonly payloadVersion: string;
+    readonly algo: string;
+    readonly keyId: string;
+    readonly digest: string;
+    readonly signature: string;
+  };
 }
 
 /** The mutable expert record. `revision` is the CAS token; `draftRevision` tracks the editable draft. */
@@ -190,7 +212,16 @@ export interface ExpertSummary {
   readonly id: string;
   readonly name: string;
   readonly description: string;
+  /** 专家说明（后台 `capability`）：市场安装的记录来自安装清单快照；本地自建没有该字段。 */
+  readonly capability?: string;
   readonly avatarRef?: string;
+  /**
+   * 后台运营展示口径：已安装的市场条目优先展示后台条目的名称/图标；
+   * 后台不可达或没有对应条目时缺省，前端回退包内定义的 `name`/`avatarRef`。
+   */
+  readonly displayName?: string;
+  readonly displayIcon?: string;
+  readonly displayColor?: string;
   readonly origin: ExpertOrigin;
   readonly availability: ExpertAvailability;
   readonly publishedRevisionRef?: ExpertRevisionRef;
@@ -205,9 +236,24 @@ export interface ExpertSummary {
   readonly installedFromCatalog: boolean;
   /** Set when execution is refused although the expert is ready (e.g. not installed). */
   readonly executionBlocked?: 'approval-required';
-  /** 授权状态：`unauthorized` 未授权；`revoked` 授权失效后被闸门自动停用。 */
-  readonly authState?: 'unauthorized' | 'revoked';
+  /** 授权状态：`unauthorized` 未授权；`revoked` 授权失效；`reinstall` 安装清单不完整需重新安装。 */
+  readonly authState?: 'unauthorized' | 'revoked' | 'reinstall';
   readonly authReason?: string;
+  /** 完整性状态：`modified` 文件被修改；`missing` 组件缺失；`unreadable` 无法读取；`unsigned` 缺签名需重装。 */
+  readonly integrityState?: 'modified' | 'missing' | 'unreadable' | 'unsigned';
+  readonly integrityReason?: string;
+  /** 市场安装清单里的后台资产编号：授权申请/取消申请按它跳转。 */
+  readonly assetId?: string;
+  /** 业务场景名称（安装清单快照）：本地自建专家没有该项，界面留空不展示。 */
+  readonly bizScene?: readonly string[];
+  /** 来源节点（安装清单快照）：本地自建专家没有该项。 */
+  readonly sourceNode?: string;
+  /** 公开状态（安装清单快照）：本地自建专家没有该项。 */
+  readonly isPublic?: boolean;
+  /** 是否内置：随包内置（安装清单 source=builtin）或市场条目标记为内置。 */
+  readonly builtin?: boolean;
+  /** 授权申请状态：仅被撤权/未授权的市场安装专家会回查后台补齐。 */
+  readonly applyStatus?: RemoteExpertApplyStatus;
 }
 
 /** Full detail returned by `get`. */
@@ -221,6 +267,11 @@ export interface ExpertDetail {
   readonly canManage: boolean;
   readonly installedFromCatalog: boolean;
   readonly executionBlocked?: 'approval-required';
+  /** 与列表同一口径的授权/完整性状态：详情页据此禁用召唤并展示原因。 */
+  readonly authState?: 'unauthorized' | 'revoked' | 'reinstall';
+  readonly authReason?: string;
+  readonly integrityState?: 'modified' | 'missing' | 'unreadable' | 'unsigned';
+  readonly integrityReason?: string;
 }
 
 /** Durable Session → expert-revision binding. Reserved before task creation; never re-bound. */
@@ -278,6 +329,8 @@ export interface ExpertListQuery {
   readonly categoryId?: string;
   readonly cursor?: string;
   readonly limit?: number;
+  /** 强制回查后台授权/申请状态，跳过 Host 的市场元数据缓存（SSO 回跳、切回本地页签时使用）。 */
+  readonly refresh?: boolean;
 }
 
 export interface ExpertListResult {
@@ -398,6 +451,9 @@ export interface ConfirmationRequest {
 
 export type RemoteExpertType = 'agent' | 'team';
 
+/** 后台授权申请状态：与后台 applyStatus 同口径，缺省按 none（未申请）。 */
+export type RemoteExpertApplyStatus = 'none' | 'pending' | 'approved' | 'rejected';
+
 /** Package descriptor supplied by the backend list row (never a credential). */
 export interface RemoteExpertPackage {
   readonly fileName: string;
@@ -437,6 +493,24 @@ export interface RemoteExpertSummary {
   readonly scenes: readonly RemoteExpertScene[];
   readonly updatedAt?: string;
   readonly package?: RemoteExpertPackage;
+  /** 后台「是否内置」：缺省表示后台没给出该属性，界面不显示内置徽标。 */
+  readonly builtin?: boolean;
+  /** 后台「是否公开」：缺省表示未知。 */
+  readonly isPublic?: boolean;
+  /** 后台来源节点名称列表（sourceNodeList 归一化后的文案）：为空表示后台没有下发。 */
+  readonly sourceNodeList: readonly string[];
+  /** 后台授权状态（isAuthorized）：只有明确为 Y/true 才算已授权。 */
+  readonly authorized: boolean;
+  /** 后台授权申请状态（applyStatus）：缺省或未知按 none。 */
+  readonly applyStatus: RemoteExpertApplyStatus;
+  /**
+   * 后台下发的资产签名可用状态（市场字段 `signatureAvailable`）：闸门关闭期间恒为 available；
+   * 开启后「无附件 / 非 zip / 无签名记录」为 unavailable，并在 `signatureReason` 给出原因。
+   * 卡片与详情直接展示；旧版后台未下发时不展示。
+   */
+  readonly signatureState?: 'available' | 'unavailable';
+  /** 后台下发的签名不可用原因（市场字段 `signatureReason`）。 */
+  readonly signatureReason?: string;
   /** Present when this row is installed locally. */
   readonly installed?: ExpertInstallationSummary;
 }
@@ -468,6 +542,8 @@ export interface ExpertInstallation {
   readonly owner: ResourceOwner;
   readonly installedAt: string;
   readonly updatedAt: string;
+  /** Host 读取时按当前绑定会话计算的占用数（不落库），用于卸载确认弹窗提示。 */
+  readonly boundSessions?: number;
 }
 
 export interface RemoteExpertListQuery {
@@ -475,6 +551,12 @@ export interface RemoteExpertListQuery {
   readonly keyword?: string;
   /** Comma-joined `bizScene` ids; the backend expands parent scenes itself. */
   readonly bizScene?: string;
+  /** 是否内置：下发为 `builtin`（1 是、0 否）；缺省表示不筛选。 */
+  readonly builtin?: boolean;
+  /** 授权状态：下发为 `authStatus`（Y 已授权、N 未授权）；缺省表示不筛选。 */
+  readonly authStatus?: 'Y' | 'N';
+  /** 授权申请状态：下发为 `applyStatus`；缺省表示不筛选。 */
+  readonly applyStatus?: RemoteExpertApplyStatus;
   readonly pageNo?: number;
   readonly pageSize?: number;
 }
@@ -563,6 +645,8 @@ export interface MyListingSummary {
   readonly expertType: RemoteExpertType;
   readonly name: string;
   readonly description: string;
+  /** 专家说明（后台 `capability`）：与市场/我的专家同口径，后台按 AiExpert 整行下发。 */
+  readonly capability?: string;
   readonly version: string;
   /** 1 draft / 2 pending / 3 listed / 4 rejected / 5 withdrawn. */
   readonly status: string;
@@ -687,6 +771,8 @@ export interface ExpertsService {
   submitListing(actor: ActorContext, request: ExpertListingRequest, signal?: AbortSignal): Promise<string>;
   /** Hard delete a self-made expert and every local file it owns. */
   deleteExpert(actor: ActorContext, expertId: string, context: MutationContext, signal?: AbortSignal): Promise<DeleteExpertReceipt>;
+  /** 会话删除成功后清理其专家绑定行；由会话回收插件调用，幂等且不要求 actor。 */
+  releaseSessionBindings(sessionIds: readonly string[]): Promise<void>;
   /** Ledger of the assets this member submitted for review (`queryMyListing*List`). */
   myListings(actor: ActorContext, query: MyListingQuery, signal?: AbortSignal): Promise<MyListingListResult>;
   /** Withdraw a pending application; returns the backend message. */
@@ -702,4 +788,5 @@ export type ExpertAction =
   | 'experts.commit-import' | 'experts.export' | 'experts.operation' | 'experts.verify-binding'
   | 'experts.remote-list' | 'experts.install' | 'experts.uninstall' | 'experts.list-installations'
   | 'experts.listing-options' | 'experts.submit-listing' | 'experts.delete-expert'
-  | 'experts.my-listings' | 'experts.withdraw-listing';
+  | 'experts.my-listings' | 'experts.withdraw-listing'
+  | 'experts.switch-expert' | 'experts.clear-expert';

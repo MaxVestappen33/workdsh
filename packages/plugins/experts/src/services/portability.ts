@@ -7,6 +7,7 @@ import type {
 } from 'workdsh-contracts';
 import { ExpertsError } from '../domain/values.js';
 import { byteLength, digestOf, sha256Bytes } from '../domain/digest.js';
+import type { AssetSignatureFile } from 'workdsh-asset-signature';
 import { normalizeDefinition, validateDefinition } from '../domain/definition.js';
 import { authoringDocuments, definitionFromDocuments } from '../authoring/documents.js';
 
@@ -34,6 +35,8 @@ export const EXPERT_SCHEMA_VERSION = 1;
 
 const MANIFEST_FILE = 'manifest.json';
 const EXPERT_FILE = 'expert.json';
+/** 客户端安装清单（旁挂文件）：不属于专家包内容，签名清单里剔除。 */
+const INSTALL_MANIFEST_FILE = '.workdsh-install.json';
 
 const MAX_ZIP_BYTES = 10 * 1024 * 1024;
 const MAX_UNCOMPRESSED_BYTES = 20 * 1024 * 1024;
@@ -294,6 +297,30 @@ export function preflightPackage(zipBytes: Uint8Array): {
     issues,
     previewDigest,
   };
+}
+
+/**
+ * 专家包签名文件清单：客户端自行重算，与后台签名口径一致。
+ *
+ * `manifest.json` 按普通文件对待——对它的原始字节算 sha256 计入清单，签名不写回包内；
+ * 唯一排除的是客户端安装清单 `.workdsh-install.json`（旁挂记录，不是包内容，任意层级都剔除）。
+ * 目录条目（以 `/` 结尾）不参与。解压失败抛错，由安装流程 fail closed。
+ */
+export function packageSignatureFiles(zipBytes: Uint8Array): AssetSignatureFile[] {
+  let entries: Unzipped;
+  try {
+    entries = unzipSync(zipBytes);
+  } catch {
+    invalid('专家包不是有效的 zip 压缩包，无法计算签名清单。');
+  }
+  const files: AssetSignatureFile[] = [];
+  for (const [path, bytes] of Object.entries(entries)) {
+    if (path.endsWith('/')) continue;
+    if (path.split('/').pop() === INSTALL_MANIFEST_FILE) continue;
+    assertSafeRelativePath(path);
+    files.push({ path, size: byteCount(bytes), sha256: sha256Bytes(bytes) });
+  }
+  return files;
 }
 
 /**

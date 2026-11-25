@@ -1,4 +1,5 @@
 import { useState, type MouseEvent } from 'react';
+import { applyStatusTone, formatTagVersion, TongyunTagSingle } from 'workdsh-ui';
 import type { ConnectorApplyStatus, MarketItem } from '../../market.js';
 import type { ConnectorSummary } from '../../shared.js';
 
@@ -167,10 +168,10 @@ export function LocalMcpCard({ row, category, market, marketRef, builtin, busy, 
       </small>
       <p className="card-desc">{row.description || 'MCP 服务'}</p>
       <div className="market-card-tags">
-        {version ? <span className="version-tag">v{version.replace(/^v/iu, '')}</span> : null}
-        {builtin ? <span className="builtin-pill">内置</span> : <span className="external-pill">非内置</span>}
-        {blocked ? <span className="apply-pill none">未授权</span> : null}
-        {blocked && applyStatus ? <span className={`apply-pill ${applyStatus}`}>{APPLY_LABEL[applyStatus]}</span> : null}
+        {version ? <TongyunTagSingle>{formatTagVersion(version)}</TongyunTagSingle> : null}
+        <TongyunTagSingle tone={builtin ? 'gray' : 'cyan'}>{builtin ? '内置' : '非内置'}</TongyunTagSingle>
+        {blocked ? <TongyunTagSingle auth={false}>未授权</TongyunTagSingle> : null}
+        {blocked && applyStatus ? <TongyunTagSingle tone={applyStatusTone(applyStatus)}>{APPLY_LABEL[applyStatus]}</TongyunTagSingle> : null}
       </div>
       {/* 授权异常原因就地展示（闸门统一文案）：与技能的提示位一致，不自己拼文案。 */}
       {row.authState && row.authReason ? <p className="auth-reason">{row.authReason}</p> : null}
@@ -253,11 +254,11 @@ export function MarketMcpCard({ entry, category, installed, installing, failure,
       <div className="market-card-foot">
         {/* 第一行：状态标签靠左；第二行：操作按钮靠右。 */}
         <div className="market-card-tags">
-          {entry.version ? <span className="version-tag">{entry.version}</span> : null}
-          {entry.builtin === undefined ? null : <span className={entry.builtin ? 'builtin-pill' : 'external-pill'}>{entry.builtin ? '内置' : '非内置'}</span>}
-          <span className={installed ? 'installed-pill' : 'uninstalled-pill'}>{installed ? '已安装' : '未安装'}</span>
-          <span className={`apply-pill ${authorized ? 'approved' : 'none'}`}>{authorized ? '已授权' : '未授权'}</span>
-          <span className={`apply-pill ${entry.applyStatus}`}>{APPLY_LABEL[entry.applyStatus]}</span>
+          {entry.version ? <TongyunTagSingle>{formatTagVersion(entry.version)}</TongyunTagSingle> : null}
+          {entry.builtin === undefined ? null : <TongyunTagSingle tone={entry.builtin ? 'gray' : 'cyan'}>{entry.builtin ? '内置' : '非内置'}</TongyunTagSingle>}
+          <TongyunTagSingle tone={installed ? 'green' : 'gray'}>{installed ? '已安装' : '未安装'}</TongyunTagSingle>
+          <TongyunTagSingle auth={authorized}>{authorized ? '已授权' : '未授权'}</TongyunTagSingle>
+          <TongyunTagSingle tone={applyStatusTone(entry.applyStatus)}>{APPLY_LABEL[entry.applyStatus]}</TongyunTagSingle>
         </div>
         <div className="market-card-actions">
           {!installed && authorized

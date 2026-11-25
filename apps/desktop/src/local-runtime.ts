@@ -405,6 +405,7 @@ export function desktopExpertMarketPatch(home: string, server: ServerConfig): st
     ['nodes', server.skillListingNodePath],
     ['dict', server.skillDictPath],
     ['adminSsoParams', server.adminSsoParamsPath],
+    ['signature', server.assetGateSignaturePath],
   ] as const).flatMap(([name, value]) => (typeof value === 'string' && /^\//u.test(value) ? [[name, value] as const] : []))
   const ssoUrl = typeof server.adminSsoUrl === 'string' && /^https?:\/\//u.test(server.adminSsoUrl) ? server.adminSsoUrl : undefined
   if (rows.length === 0 && ssoUrl === undefined) return undefined

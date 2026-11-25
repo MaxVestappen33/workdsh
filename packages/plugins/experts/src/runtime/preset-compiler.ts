@@ -89,7 +89,16 @@ export function expertPresetDir(presetId: string, agentsHome?: string): string {
   return join(resolveAgentsHome(agentsHome), '.workdsh-state', 'experts', 'presets', presetId);
 }
 
-const registrations = new WeakMap<Context, Map<string, Promise<void>>>();
+/**
+ * Preset ids registered on the host's preset registry.
+ *
+ * Keyed by id alone, intentionally not by a Context: `ctx.agentPresets` hands out a fresh
+ * context-tracking wrapper on every access, so a WeakMap keyed on either the Context or that
+ * wrapper misses and re-registers an id the registry already owns — the official registry then
+ * rejects it with `Duplicate agent preset`. Ids are content-addressed (`presetIdFor`), so an id
+ * present here always names exactly this frozen composition.
+ */
+const registrations = new Map<string, Promise<void>>();
 
 /** Restore only the frozen declaration; never recompile an existing revision against a new base. */
 export async function readExpertPreset(presetId: string, agentsHome?: string): Promise<string> {
@@ -103,16 +112,25 @@ export async function readExpertPreset(presetId: string, agentsHome?: string): P
 export async function registerExpertPreset(ctx: Context, presetId: string, expectedDigest: string, agentsHome?: string): Promise<void> {
   const text = await readExpertPreset(presetId, agentsHome);
   if (sha256(text) !== expectedDigest) throw Object.assign(new Error('专家预设内容已变化，请重新发布。'), { code: 'experts/preset-drift' });
-  let pending = registrations.get(ctx);
-  if (!pending) { pending = new Map(); registrations.set(ctx, pending); }
-  if (!pending.has(presetId)) {
-    const definition = JSON.parse(text) as PresetDefinition;
-    if (definition.id !== presetId) throw Object.assign(new Error('专家预设内容已变化，请重新发布。'), { code: 'experts/preset-drift' });
-    const promise = ctx.agentPresets.register(definition).then(dispose => { ctx.effect(() => dispose); });
-    pending.set(presetId, promise);
-    promise.catch(() => { pending!.delete(presetId); });
+  const definition = JSON.parse(text) as PresetDefinition;
+  if (definition.id !== presetId) throw Object.assign(new Error('专家预设内容已变化，请重新发布。'), { code: 'experts/preset-drift' });
+  if (!registrations.has(presetId)) {
+    const register = async (): Promise<void> => {
+      // Authoritative check: a host restart, an earlier boot restore or a concurrent caller may
+      // already own this content-addressed id on the shared registry.
+      const known = await ctx.agentPresets.list().then(rows => rows.some(row => row.id === presetId), () => false);
+      if (known) return;
+      const dispose = await ctx.agentPresets.register(definition);
+      ctx.effect(() => dispose, 'experts.presetRegistration');
+    };
+    const promise = register().catch(error => {
+      // Two callers can pass the check together; the losing register is the same composition.
+      if (!String((error as Error | undefined)?.message ?? '').startsWith('Duplicate agent preset')) throw error;
+    });
+    registrations.set(presetId, promise);
+    promise.catch(() => { registrations.delete(presetId); });
   }
-  await pending.get(presetId);
+  await registrations.get(presetId);
 }
 
 export async function compileExpertPreset(ctx: Context, input: CompileInput, agentsHome?: string): Promise<CompiledPreset> {
