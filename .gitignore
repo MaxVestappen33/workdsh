@@ -53,3 +53,6 @@ apps/desktop/build/official-release-cache/
 
 # Project-local corepack cache (created when the shared cache is not writable).
 /.corepack-home/
+# Local tooling scratch directories (HTML share packages, date-stamped exports).
+/.trae-html-share-packages/
+/2026-11-24/
