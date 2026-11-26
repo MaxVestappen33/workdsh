@@ -107,8 +107,8 @@ declare module '@deepseek-ai/cordis' { interface Context { workdshSkillMarket: S
 /** 市场是宿主侧能力：绑定缺失时整体降级为不可用，不影响技能插件加载。 */
 export class SkillMarketService extends Service implements SkillMarket {
   private client?: SkillMarketClient;
-  /** 授权技能索引缓存：进程内缓存，TTL 过后重新翻页取全。 */
-  private cachedIndex?: { readonly at: number; readonly rows: readonly SkillMarketAuthorized[] };
+  /** 授权技能索引缓存：进程内缓存，TTL 过后重新翻页取全；闸门状态变化时立即失效。 */
+  private cachedIndex?: { readonly at: number; readonly rows: readonly SkillMarketAuthorized[]; readonly enforced: boolean };
   /** 市场安装记录文件（条目 id → 本机技能名），用于列表里的「已安装」判定。 */
   private readonly recordFile = installRecordFile();
 
@@ -189,11 +189,25 @@ export class SkillMarketService extends Service implements SkillMarket {
   /** `refresh` 为真时跳过短 TTL 缓存：用户点「刷新」后内置属性必须立即反映后台最新值。 */
   async index(signal?: AbortSignal, refresh?: boolean): Promise<readonly SkillMarketAuthorized[]> {
     const now = Date.now();
-    if (!refresh && this.cachedIndex && now - this.cachedIndex.at < INDEX_TTL_MS) return this.cachedIndex.rows;
+    const enforced = this.gateEnforced();
+    // 闸门状态纳入缓存键：关闸后不得继续用开闸期间取回的授权索引展示授权状态。
+    if (!refresh && this.cachedIndex && this.cachedIndex.enforced === enforced && now - this.cachedIndex.at < INDEX_TTL_MS) {
+      return this.cachedIndex.rows;
+    }
     const rows = await (await this.client_()).index(signal);
-    this.cachedIndex = { at: now, rows };
+    this.cachedIndex = { at: now, rows, enforced };
     await this.syncBuiltin(rows);
     return rows;
+  }
+
+  /** 技能子闸门是否开启；闸门服务不可用时按关闭处理（不做授权判定）。 */
+  private gateEnforced(): boolean {
+    try {
+      const gate = this.ctx.reflect.get('workdshAssetGate') as { enabled?(assetType: string): boolean } | undefined;
+      return gate?.enabled?.('skill') === true;
+    } catch {
+      return false;
+    }
   }
 
   /**

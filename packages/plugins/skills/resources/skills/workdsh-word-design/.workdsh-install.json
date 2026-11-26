@@ -10,19 +10,19 @@
       "path": "SKILL.md",
       "size": 800,
       "sha256": "97b723c32938a425ff90a496daa2765626f39edb28acef878b91fc78bbf171cc",
-      "mtimeMs": 1791466819570
+      "mtimeMs": 1791079233115
     },
     {
       "path": "references/genre-and-typesetting.md",
       "size": 2215,
       "sha256": "494f80a4daeaa6e6c2f176e77c4d6bc628d1c43302b690687f76298866a00915",
-      "mtimeMs": 1791466819571
+      "mtimeMs": 1791079233115
     },
     {
       "path": "references/review-and-delivery.md",
       "size": 1499,
       "sha256": "9a12c3b3ea696595f61ce29f62528702be6acf2a3aea973e39cc0a8b6ee58dcd",
-      "mtimeMs": 1791466819571
+      "mtimeMs": 1791079233115
     }
   ],
   "digest": "f1ff4a1cd886b137a92a96fb0e3ea336c105378cd4f081c57d45391311ace79c",

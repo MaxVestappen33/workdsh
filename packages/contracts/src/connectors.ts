@@ -45,6 +45,8 @@ export interface ConnectorSummary {
   /** 授权状态：`unauthorized` 未授权；`revoked` 授权失效后被闸门自动停用。 */
   readonly authState?: 'unauthorized' | 'revoked';
   readonly authReason?: string;
+  /** 授权条目的结束时间（后台原样字符串）；仅在已过期时由界面展示到期提示。 */
+  readonly expiresAt?: string;
 }
 
 export interface ConnectorConfigView {

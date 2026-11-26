@@ -95,6 +95,15 @@ export function ExpertDetailModal({ expertId, management, acting, onClose, onSum
       : detail.authState === 'reinstall' ? '需重新安装'
         : detail.authState === 'unauthorized' ? '未授权' : undefined;
   const assetReason = detail.integrityReason ?? detail.authReason;
+  /** 到期提示：只在条目带结束时间且已经过期时展示；未过期不新增噪音。 */
+  const expiredNotice = (() => {
+    if (!detail.expiresAt) return undefined;
+    const at = Date.parse(detail.expiresAt);
+    if (Number.isNaN(at)) return '授权已过期';
+    if (at > Date.now()) return undefined;
+    const date = new Date(at);
+    return `已过期至 ${date.getMonth() + 1} 月 ${date.getDate()} 日`;
+  })();
   const kindLabel = definition.team ? '专家团' : '专家';
   const versionLabel = revision ? `版本 ${revision.revisionId.slice(0, 10)}` : '草稿';
 
@@ -138,6 +147,9 @@ export function ExpertDetailModal({ expertId, management, acting, onClose, onSum
 
     {assetState && <div className={`notice ${detail.integrityState && detail.integrityState !== 'unsigned' ? 'error' : 'warn'}`} role="status" style={{ marginTop: 20 }}>
       <div className="notice-body"><strong>{assetState}</strong><span>{assetReason ?? '当前状态不可召唤，请按提示处理后重试。'}</span></div>
+    </div>}
+    {expiredNotice && <div className="notice warn" role="status" style={{ marginTop: 20 }}>
+      <div className="notice-body"><strong>授权已过期</strong><span>{expiredNotice}，请重新申请或联系管理员。</span></div>
     </div>}
 
     {definition.description && <p className="detail-desc" style={{ marginTop: 20 }}>{definition.description}</p>}

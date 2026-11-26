@@ -239,6 +239,8 @@ export interface ExpertSummary {
   /** 授权状态：`unauthorized` 未授权；`revoked` 授权失效；`reinstall` 安装清单不完整需重新安装。 */
   readonly authState?: 'unauthorized' | 'revoked' | 'reinstall';
   readonly authReason?: string;
+  /** 授权条目的结束时间（后台原样字符串）；仅在已过期时由界面展示到期提示。 */
+  readonly expiresAt?: string;
   /** 完整性状态：`modified` 文件被修改；`missing` 组件缺失；`unreadable` 无法读取；`unsigned` 缺签名需重装。 */
   readonly integrityState?: 'modified' | 'missing' | 'unreadable' | 'unsigned';
   readonly integrityReason?: string;
@@ -270,6 +272,8 @@ export interface ExpertDetail {
   /** 与列表同一口径的授权/完整性状态：详情页据此禁用召唤并展示原因。 */
   readonly authState?: 'unauthorized' | 'revoked' | 'reinstall';
   readonly authReason?: string;
+  /** 授权条目的结束时间（后台原样字符串）；仅在已过期时由界面展示到期提示。 */
+  readonly expiresAt?: string;
   readonly integrityState?: 'modified' | 'missing' | 'unreadable' | 'unsigned';
   readonly integrityReason?: string;
 }

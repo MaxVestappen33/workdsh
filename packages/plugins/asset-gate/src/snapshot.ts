@@ -7,7 +7,9 @@
  *
  * 快照的生命周期上限由 staleAt 与登录态共同决定；登录态失效由宿主清空缓存来体现。
  */
-import { type AssetType, type McpEntitlementEntry, type SnapshotResult } from './types.js';
+import {
+  type AssetType, type EntitlementEntry, type McpEntitlementEntry, type SnapshotResult,
+} from './types.js';
 import { AssetGateError } from './errors.js';
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -21,74 +23,103 @@ function asText(value: unknown): string {
 }
 
 /**
- * 解析某一类的授权集合。
- *
- * 严格化约定（见 docs/asset-gate-mcp-tool-auth.md 第十一节）：字段缺失、不是数组、
- * 条目不是字符串，一律按协议错误处理，**不降级为空集合**。空集合会被撤权对账
- * 理解成「没有任何授权」，从而把已装资产整体判为撤权并停掉进程——这是必须区分
- * 「读不懂」与「确实为空」的原因。
+ * 解析条目的时间字段：缺省、null、空串都归一化为「无约束」，非字符串按协议错误处理。
+ * 不在这里换算时区，保留后台原文，由使用方按 `Date.parse` 判断是否过期。
  */
-function assetIds(type: AssetType, value: unknown): readonly string[] {
-  if (!Array.isArray(value)) {
-    throw new AssetGateError('asset-gate/response-invalid', `授权快照缺少「${type}」的授权集合。`);
+function timeOf(type: AssetType, id: string, field: string, value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string') {
+    throw new AssetGateError('asset-gate/response-invalid', `授权快照「${type}」条目 ${id} 的 ${field} 不是时间字符串。`);
   }
-  const ids: string[] = [];
-  for (const item of value) {
-    if (typeof item !== 'string') {
-      throw new AssetGateError('asset-gate/response-invalid', `授权快照「${type}」包含无法识别的条目。`);
-    }
-    const id = item.trim();
-    if (!id) throw new AssetGateError('asset-gate/response-invalid', `授权快照「${type}」包含空编号。`);
-    ids.push(id);
-  }
-  return [...new Set(ids)];
+  return value.trim() || undefined;
+}
+
+/** 重复条目合并：开始时间取更早、结束时间取更晚；任一侧为空表示无约束，优先保留。 */
+function widerStart(left: string | undefined, right: string | undefined): string | undefined {
+  if (left === undefined || right === undefined) return undefined;
+  const a = Date.parse(left); const b = Date.parse(right);
+  return Number.isNaN(a) || Number.isNaN(b) ? (left <= right ? left : right) : (a <= b ? left : right);
+}
+
+function widerEnd(left: string | undefined, right: string | undefined): string | undefined {
+  if (left === undefined || right === undefined) return undefined;
+  const a = Date.parse(left); const b = Date.parse(right);
+  return Number.isNaN(a) || Number.isNaN(b) ? (left >= right ? left : right) : (a >= b ? left : right);
 }
 
 /**
- * 解析连接器条目：`{id, tools?}`。
+ * 解析某一类的授权条目数组（v2 结构）：`{id, startTime?, endTime?, tools?}`。
  *
- * - `tools` 缺省、为 null 或空数组 → 全部工具；
- * - 同一 id 出现多次时取并集，且「任一处未收窄」优先于白名单（避免重复条目把全量升级成白名单）；
- * - 条目顺序与工具名顺序都按字典序归一化，保证本地记录可比较。
+ * 严格化约定（见 docs/asset-gate-mcp-tool-auth.md 第十一节）：字段缺失、不是数组、
+ * 条目不是对象、`id` 为空一律按协议错误处理，**不降级为空集合**。空集合会被撤权对账
+ * 理解成「没有任何授权」，从而把已装资产整体判为撤权并停掉进程——这是必须区分
+ * 「读不懂」与「确实为空」的原因。
  */
-function mcpEntries(value: unknown): readonly McpEntitlementEntry[] {
+function entriesOf(type: AssetType, value: unknown, withTools: boolean): readonly EntitlementEntry[] {
   if (!Array.isArray(value)) {
-    throw new AssetGateError('asset-gate/response-invalid', '授权快照缺少「mcp」的授权集合。');
+    throw new AssetGateError('asset-gate/response-invalid', `授权快照缺少「${type}」的授权集合。`);
   }
-  const merged = new Map<string, { unrestricted: boolean; tools: Set<string> }>();
+  interface Merged {
+    startTime?: string;
+    endTime?: string;
+    unrestricted: boolean;
+    tools: Set<string>;
+  }
+  const merged = new Map<string, Merged>();
   for (const item of value) {
     const record = asRecord(item);
     if (!record) {
-      throw new AssetGateError('asset-gate/response-invalid', '授权快照「mcp」包含无法识别的条目。');
+      throw new AssetGateError('asset-gate/response-invalid', `授权快照「${type}」包含无法识别的条目。`);
     }
     const id = asText(record.id);
-    if (!id) throw new AssetGateError('asset-gate/response-invalid', '授权快照「mcp」条目缺少连接器编号。');
-    const raw = record.tools;
+    if (!id) throw new AssetGateError('asset-gate/response-invalid', `授权快照「${type}」条目缺少资产编号。`);
+    const startTime = timeOf(type, id, 'startTime', record.startTime);
+    const endTime = timeOf(type, id, 'endTime', record.endTime);
     let tools: string[] | undefined;
-    if (raw !== undefined && raw !== null) {
-      if (!Array.isArray(raw)) {
-        throw new AssetGateError('asset-gate/response-invalid', `授权快照「mcp」条目 ${id} 的工具清单不是数组。`);
-      }
-      tools = [];
-      for (const name of raw) {
-        if (typeof name !== 'string') {
-          throw new AssetGateError('asset-gate/response-invalid', `授权快照「mcp」条目 ${id} 的工具名无法识别。`);
+    if (withTools) {
+      const raw = record.tools;
+      if (raw !== undefined && raw !== null) {
+        if (!Array.isArray(raw)) {
+          throw new AssetGateError('asset-gate/response-invalid', `授权快照「${type}」条目 ${id} 的工具清单不是数组。`);
         }
-        const tool = name.trim();
-        if (!tool) throw new AssetGateError('asset-gate/response-invalid', `授权快照「mcp」条目 ${id} 包含空工具名。`);
-        tools.push(tool);
+        tools = [];
+        for (const name of raw) {
+          if (typeof name !== 'string') {
+            throw new AssetGateError('asset-gate/response-invalid', `授权快照「${type}」条目 ${id} 的工具名无法识别。`);
+          }
+          const tool = name.trim();
+          if (!tool) throw new AssetGateError('asset-gate/response-invalid', `授权快照「${type}」条目 ${id} 包含空工具名。`);
+          tools.push(tool);
+        }
       }
     }
-    const current = merged.get(id) ?? { unrestricted: false, tools: new Set<string>() };
+    const current = merged.get(id);
+    if (current === undefined) {
+      merged.set(id, {
+        ...(startTime === undefined ? {} : { startTime }),
+        ...(endTime === undefined ? {} : { endTime }),
+        unrestricted: !tools || tools.length === 0,
+        tools: new Set(tools ?? []),
+      });
+      continue;
+    }
+    current.startTime = widerStart(current.startTime, startTime);
+    current.endTime = widerEnd(current.endTime, endTime);
+    // 任一重复条目未收窄即视为全部工具可用，避免重复条目把全量升级成白名单。
     if (!tools || tools.length === 0) current.unrestricted = true;
     else for (const tool of tools) current.tools.add(tool);
-    merged.set(id, current);
   }
   return [...merged.entries()]
     .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-    .map(([id, entry]) => (entry.unrestricted || entry.tools.size === 0
-      ? { id }
-      : { id, tools: [...entry.tools].sort() }));
+    .map(([id, entry]) => {
+      const base: EntitlementEntry = {
+        id,
+        ...(entry.startTime === undefined ? {} : { startTime: entry.startTime }),
+        ...(entry.endTime === undefined ? {} : { endTime: entry.endTime }),
+      };
+      if (!withTools || entry.unrestricted || entry.tools.size === 0) return base;
+      return { ...base, tools: [...entry.tools].sort() } satisfies McpEntitlementEntry;
+    });
 }
 
 /** 解析快照回包；revision 缺失视为不可识别，避免把旧数据当新数据使用。 */
@@ -106,13 +137,13 @@ export function parseSnapshotResult(value: unknown): SnapshotResult {
     generatedAt: asText(record.generatedAt) || undefined,
     staleAt: asText(record.staleAt) || null,
     assets: {
-      skill: assetIds('skill', assets.skill),
-      mcp: mcpEntries(assets.mcp),
-      expert: assetIds('expert', assets.expert),
-      expert_group: assetIds('expert_group', assets.expert_group),
-      model: assetIds('model', assets.model),
-      knowledge: assetIds('knowledge', assets.knowledge),
-      prompt: assetIds('prompt', assets.prompt),
+      skill: entriesOf('skill', assets.skill, false),
+      mcp: entriesOf('mcp', assets.mcp, true),
+      expert: entriesOf('expert', assets.expert, false),
+      expert_group: entriesOf('expert_group', assets.expert_group, false),
+      model: entriesOf('model', assets.model, false),
+      knowledge: entriesOf('knowledge', assets.knowledge, false),
+      prompt: entriesOf('prompt', assets.prompt, false),
     },
   };
 }
@@ -129,13 +160,13 @@ export function isCompleteSnapshotRecord(value: unknown): boolean {
   const assets = asRecord(record.assets);
   if (!assets) return false;
   try {
-    assetIds('skill', assets.skill);
-    mcpEntries(assets.mcp);
-    assetIds('expert', assets.expert);
-    assetIds('expert_group', assets.expert_group);
-    assetIds('model', assets.model);
-    assetIds('knowledge', assets.knowledge);
-    assetIds('prompt', assets.prompt);
+    entriesOf('skill', assets.skill, false);
+    entriesOf('mcp', assets.mcp, true);
+    entriesOf('expert', assets.expert, false);
+    entriesOf('expert_group', assets.expert_group, false);
+    entriesOf('model', assets.model, false);
+    entriesOf('knowledge', assets.knowledge, false);
+    entriesOf('prompt', assets.prompt, false);
     return true;
   } catch {
     return false;

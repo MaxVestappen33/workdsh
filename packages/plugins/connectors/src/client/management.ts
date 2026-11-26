@@ -3,6 +3,7 @@ import type {} from '@deepseek-ai/dsh-client-connection/client';
 import type {} from '@deepseek-ai/dsh-api-remotes/client';
 import type { MarketCategory, MarketIndexItem, MarketPage, MarketQuery } from '../market.js';
 import type { ConnectorConfigView, ConnectorInput, ConnectorInstallTask, ConnectorSummary, MarketInstallResult } from '../shared.js';
+import type { AssetGateClientState } from 'workdsh-contracts';
 
 const path = '/api/workdsh-connectors';
 
@@ -72,6 +73,8 @@ async function invoke<T>(ctx: Context, endpoint: string, payload: unknown, signa
 export function createConnectorManagementClient(ctx: Context, lifetime?: AbortSignal) {
   return {
     list: () => invoke<readonly ConnectorSummary[]>(ctx, 'list', {}, lifetime),
+    /** 闸门状态：判定统一在客户端，关闸时把后台 isAuthorized 一律按 Y 处理。 */
+    assetGateState: () => invoke<AssetGateClientState>(ctx, 'asset-gate-state', {}, lifetime),
     config: (id: string) => invoke<ConnectorConfigView>(ctx, 'config', { id }, lifetime),
     create: (input: ConnectorInput) => invoke<ConnectorSummary>(ctx, 'create', input, lifetime, CONNECT_TIMEOUT_MS),
     update: (id: string, input: ConnectorInput) => invoke<ConnectorSummary>(ctx, 'update', { id, input }, lifetime, CONNECT_TIMEOUT_MS),

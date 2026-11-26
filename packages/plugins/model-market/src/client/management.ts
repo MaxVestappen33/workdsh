@@ -5,6 +5,7 @@ import type {
   ModelMarketDetail, ModelMarketInstallResult, ModelMarketPage, ModelMarketQuery,
   ModelMarketUninstallResult,
 } from '../shared.js';
+import type { AssetGateClientState } from 'workdsh-contracts';
 
 const path = '/api/workdsh-model-market';
 const QUERY_TIMEOUT_MS = 20_000;
@@ -47,6 +48,8 @@ async function invoke<T>(endpoint: string, payload: unknown, signal?: AbortSigna
 export function createModelMarketClient(lifetime?: AbortSignal) {
   return {
     available: () => invoke<{ available: boolean }>('available', {}, lifetime),
+    /** 闸门状态：判定统一在客户端，关闸时把后台 isAuthorized 一律按 Y 处理。 */
+    assetGateState: () => invoke<AssetGateClientState>('asset-gate-state', {}, lifetime),
     list: (query: ModelMarketQuery) => invoke<ModelMarketPage>('list', query, lifetime),
     detail: (id: string) => invoke<ModelMarketDetail>('detail', { id }, lifetime),
     /** 授权申请/取消申请：拿后台管理系统的单点地址（degraded 时只有登录页）。 */

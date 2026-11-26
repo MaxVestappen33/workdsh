@@ -1,4 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis';
+import type { AssetGateClientState } from 'workdsh-contracts';
 import type {
   AvailabilityReceipt,
   ConfirmationProof,
@@ -149,6 +150,9 @@ export function createExpertManagementClient(ctx: Context, lifetime?: AbortSigna
     listSkills: (expertId: string, scope: 'available' | 'equipped', signal?: AbortSignal) => invoke<readonly ExpertSkillOption[]>('skills', { expertId, scope }, signal),
     newOperationId,
     list: (query: ExpertListQuery = {}, signal?: AbortSignal) => invoke<ExpertListResult>('list', query, signal),
+    /** 闸门状态：专家与专家团分别下发；关闸时对应 isAuthorized 一律按 Y 处理。 */
+    assetGateState: (signal?: AbortSignal) =>
+      invoke<{ readonly expert: AssetGateClientState; readonly expertGroup: AssetGateClientState }>('asset-gate-state', {}, signal),
     get: (expertId: string, revisionId?: string, signal?: AbortSignal) =>
       invoke<ExpertDetail>('get', { expertId, ...(revisionId === undefined ? {} : { revisionId }) }, signal),
     createDraft: (definition: Partial<ExpertDefinition> | undefined, operationId: string, signal?: AbortSignal) =>

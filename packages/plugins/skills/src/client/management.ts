@@ -3,6 +3,7 @@ import type {} from '@deepseek-ai/dsh-client-connection/client';
 import type {} from '@deepseek-ai/dsh-api-remotes/client';
 import type {} from '@deepseek-ai/dsh-api-session-controller/client';
 import type { SkillMarketAuthorized, SkillMarketDocument, SkillMarketInstallResult, SkillMarketPage, SkillMarketQuery, SkillScene } from '../market.js';
+import type { AssetGateClientState } from 'workdsh-contracts';
 import type { ManagedSkillDetail, ManagedSkillResource, ManagedSkillSummary, SkillBatchAction, SkillBatchResult, SkillCatalogSummary, SkillDependencyImpact, SkillInstallScope, SkillListingOptions, SkillListingPage, SkillListingQuery, SkillListingRequest, SkillMutationReceipt, SkillResourceWriteRequest, SkillWriteRequest, StagedSkillImport, TrashedSkillSummary } from '../shared.js';
 
 const path = '/api/workdsh-skills';
@@ -103,6 +104,8 @@ export function createSkillManagementClient(ctx: Context, lifetime?: AbortSignal
     /** 最近一次被闸门拒绝注入的技能：界面据此在会话里渲染红色提示。 */
     skillDenials: (sessionId: string) => invoke<{ readonly turn: number; readonly names: readonly string[]; readonly at: number } | undefined>('skill-denials', { sessionId }),
     marketAvailable: () => invoke<{ available: boolean }>('market-available', {}),
+    /** 闸门状态：判定在客户端完成，关闸时把后台 isAuthorized 一律按 Y 处理。 */
+    assetGateState: () => invoke<AssetGateClientState>('asset-gate-state', {}),
     marketList: (input: SkillMarketQuery) => invoke<SkillMarketPage>('market-list', input),
     marketCategories: () => invoke<readonly SkillScene[]>('market-categories', {}),
     /** 全量授权技能索引：本地技能的业务场景标签与内置属性按标识匹配这份数据；refresh 跳过宿主缓存。 */

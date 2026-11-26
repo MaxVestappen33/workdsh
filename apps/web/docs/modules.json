@@ -270,6 +270,19 @@
     ]
   },
   {
+    "path": "../../packages/plugins/session-transfer",
+    "title": "跨设备会话迁移",
+    "status": "in_progress",
+    "directories": [
+      "src",
+      "tests"
+    ],
+    "moduleVersion": "0.1",
+    "requirements": [
+      "R01"
+    ]
+  },
+  {
     "path": "../../packages/plugins/library",
     "title": "资料库",
     "status": "implemented",

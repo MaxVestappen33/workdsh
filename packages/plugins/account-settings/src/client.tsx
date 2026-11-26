@@ -201,10 +201,10 @@ function AccountLauncher({ wide, settingsShortcut, openSettings }: PropsRuntime<
   /** 「刷新缓存」在途：避免连点重复拉取用户信息与授权快照。 */
   const [cacheBusy, setCacheBusy] = useState(false);
   /** 刷新结果：显示在「刷新缓存」这一行右侧（进行中为蓝色，成功绿色、失败红色），结束后 3 秒自动消失。 */
-  const [cacheResult, setCacheResult] = useState<'busy' | 'ok' | 'fail'>();
+  const [cacheResult, setCacheResult] = useState<'busy' | 'ok' | 'fail' | 'policy-fail'>();
   const cacheTimer = useRef<number | undefined>(undefined);
   useEffect(() => () => { window.clearTimeout(cacheTimer.current); }, []);
-  const showCacheResult = (result: 'ok' | 'fail'): void => {
+  const showCacheResult = (result: 'ok' | 'fail' | 'policy-fail'): void => {
     setCacheResult(result);
     window.clearTimeout(cacheTimer.current);
     cacheTimer.current = window.setTimeout(() => setCacheResult(undefined), 3_000);
@@ -235,8 +235,8 @@ function AccountLauncher({ wide, settingsShortcut, openSettings }: PropsRuntime<
 
   /**
    * 刷新缓存：重新拉取用户信息（/api/auth/me 每次都会回源后台），
-   * 并让宿主强制重拉一次资产授权快照，避免撤权/授权变更要等到下一轮轮询才生效。
-   * 结束时用一条短提示告知成功或失败。
+   * 并让宿主重拉闸门策略与资产授权快照：主闸门/子闸门的开关变化立即反映到后续列表与判定，
+   * 撤权/授权变更也不用等到下一轮轮询。策略拉取失败会按 failClosed 语义生效，并如实提示失败。
    */
   const refreshCache = async (): Promise<void> => {
     if (cacheBusy) return;
@@ -245,7 +245,8 @@ function AccountLauncher({ wide, settingsShortcut, openSettings }: PropsRuntime<
     window.clearTimeout(cacheTimer.current);
     setCacheResult('busy');
     refresh();
-    let ok = false;
+    let listOk = false;
+    let policyOk = true;
     try {
       const response = await fetch('/api/workdsh-skills', {
         method: 'POST',
@@ -254,12 +255,17 @@ function AccountLauncher({ wide, settingsShortcut, openSettings }: PropsRuntime<
         body: JSON.stringify({ endpoint: 'refresh-cache', payload: {} }),
         signal: AbortSignal.timeout(30_000),
       });
-      const result = response.ok ? await response.json() as { ok?: boolean; value?: { refreshed?: boolean } } : undefined;
-      ok = result?.ok === true && result.value?.refreshed !== false;
-    } catch { ok = false; }
+      const result = response.ok ? await response.json() as {
+        ok?: boolean;
+        value?: { refreshed?: boolean; policyRefreshed?: boolean };
+      } : undefined;
+      listOk = result?.ok === true && result.value?.refreshed !== false;
+      // 策略拉取失败：宿主已按 failClosed 语义处理，这里必须显示失败而不是「刷新成功」。
+      policyOk = result?.ok === true && result.value?.policyRefreshed !== false;
+    } catch { listOk = false; policyOk = false; }
     finally { setCacheBusy(false); }
     // 用户需要明确知道刷新有没有生效：成功/失败直接在菜单行内给一个状态标签。
-    showCacheResult(ok ? 'ok' : 'fail');
+    showCacheResult(!listOk ? 'fail' : policyOk ? 'ok' : 'policy-fail');
   };
 
   const signOut = async (): Promise<void> => {
@@ -377,7 +383,7 @@ function AccountLauncher({ wide, settingsShortcut, openSettings }: PropsRuntime<
               {cacheResult && (
                 <span
                   role="status"
-                  className={`wd-account-cache-result ${cacheResult}`}
+                  className={`wd-account-cache-result ${cacheResult === 'ok' ? 'ok' : cacheResult === 'busy' ? 'busy' : 'fail'}`}
                   title={cacheResult === 'busy' ? undefined : '点击关闭'}
                   onClick={(event) => {
                     // 行本身是菜单按钮：状态标签不能被当成「再次刷新」。
@@ -385,7 +391,7 @@ function AccountLauncher({ wide, settingsShortcut, openSettings }: PropsRuntime<
                     if (cacheResult !== 'busy') dismissCacheResult();
                   }}
                 >
-                  {cacheResult === 'busy' ? '正在刷新...' : cacheResult === 'ok' ? '刷新成功' : '刷新失败'}
+                  {cacheResult === 'busy' ? '正在刷新...' : cacheResult === 'ok' ? '刷新成功' : cacheResult === 'policy-fail' ? '授权策略刷新失败' : '刷新失败'}
                 </span>
               )}
             </span>

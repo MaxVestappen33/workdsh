@@ -84,6 +84,8 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
   const [batchConfirm, setBatchConfirm] = useState(false);
   // 市场：可用性来自宿主绑定，不可用时整条链路（Tab、数据、安装）都不出现。
   const [marketOn, setMarketOn] = useState(false);
+  /** 闸门是否生效；默认按开启处理，拉取成功后切换。关闸时后台 isAuthorized 一律按 Y。 */
+  const [gateEnforced, setGateEnforced] = useState(true);
   const [marketDict, setMarketDict] = useState<readonly MarketCategory[]>([]);
   const [market, setMarket] = useState<MarketListState>(emptyMarketList);
   // 三种加载状态分开：首次/筛选重置（marketBusy）、滚动加载更多（marketMore）、失败（marketError / marketMoreError）。
@@ -143,14 +145,17 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
     row.originId === entry.originId || row.serverName === entry.originId || row.serverName === entry.serverName), []);
   const filter: MarketListFilter = useMemo(() => ({
     categories: activeCategories, keyword: query,
-    builtin: builtinFilter, install: installFilter, auth: authFilter, apply: applyFilter,
-  }), [activeCategories, query, builtinFilter, installFilter, authFilter, applyFilter]);
+    builtin: builtinFilter, install: installFilter,
+    ...(gateEnforced ? { auth: authFilter, apply: applyFilter } : {}),
+  }), [activeCategories, query, builtinFilter, installFilter, authFilter, applyFilter, gateEnforced]);
 
   /** `silent`：后台重拉（如回到窗口），不切到骨架屏，避免列表闪一下。 */
   const refresh = useCallback(async (silent = false) => {
     if (!silent) setBusy(true);
     setError('');
     try {
+      // 闸门开关可能刚在后台变更：列表与按钮按新状态渲染。
+      try { setGateEnforced((await management.assetGateState()).enforced); } catch { /* 保持开启态 */ }
       setRows(await management.list());
       return true;
     } catch (cause) {
@@ -163,6 +168,12 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
   useEffect(() => {
     void refresh();
   }, [refresh]);
+  // 关闸后授权类筛选立即失效并清空已选值，避免继续用旧条件过滤服务端结果。
+  useEffect(() => {
+    if (gateEnforced) return;
+    setAuthFilter(undefined);
+    setApplyFilter(undefined);
+  }, [gateEnforced]);
   // 成功提示 3 秒后自动消失；错误提示保持显示，直到下一次操作把它清掉。
   useEffect(() => {
     if (!notice) return;
@@ -833,22 +844,24 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
                 onChange={changeInstall}
               />
             </div>
-            <div className="filter-group">
-              <span className="filter-label">授权状态：</span>
-              <CategoryBar
-                categories={AUTH_OPTIONS}
-                values={authFilter === undefined ? [] : [authFilter === 'Y' ? AUTH_OPTIONS[0] : AUTH_OPTIONS[1]]}
-                onChange={changeAuth}
-              />
-            </div>
-            <div className="filter-group">
-              <span className="filter-label">申请状态：</span>
-              <CategoryBar
-                categories={APPLY_OPTIONS.map(item => item.label)}
-                values={applyFilter === undefined ? [] : [APPLY_LABEL[applyFilter]]}
-                onChange={changeApply}
-              />
-            </div>
+            {gateEnforced ? <>
+              <div className="filter-group">
+                <span className="filter-label">授权状态：</span>
+                <CategoryBar
+                  categories={AUTH_OPTIONS}
+                  values={authFilter === undefined ? [] : [authFilter === 'Y' ? AUTH_OPTIONS[0] : AUTH_OPTIONS[1]]}
+                  onChange={changeAuth}
+                />
+              </div>
+              <div className="filter-group">
+                <span className="filter-label">申请状态：</span>
+                <CategoryBar
+                  categories={APPLY_OPTIONS.map(item => item.label)}
+                  values={applyFilter === undefined ? [] : [APPLY_LABEL[applyFilter]]}
+                  onChange={changeApply}
+                />
+              </div>
+            </> : null}
           </>
         ) : null}
         <div className="filter-group scenes-filter">
@@ -918,6 +931,7 @@ export function ConnectorsPanel({ toggleNavigation, management, openCapability, 
                 {...installStateOf(entry.originId)}
                 busy={busy}
                 ssoBusy={ssoBusy}
+                gateEnforced={gateEnforced}
                 onOpen={setMarketDetailId}
                 onInstall={entry => void installMarket(entry)}
                 onUninstall={entry => setMarketConfirm(entry)}

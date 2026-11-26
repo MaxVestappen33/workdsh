@@ -215,6 +215,8 @@ export function ModelMarketPanel() {
   const [authFilter, setAuthFilter] = useState<'' | 'Y' | 'N'>('');
   /** 申请状态筛选：走后端 applyStatus；空串表示不筛选。 */
   const [applyFilter, setApplyFilter] = useState<'' | ModelApplyStatus>('');
+  /** 闸门是否生效；默认按开启处理，拉取成功后切换。关闸时后台 isAuthorized 一律按 Y。 */
+  const [gateEnforced, setGateEnforced] = useState(true);
   /** 添加状态筛选：客户端过滤（已添加/未添加）。 */
   const [installFilter, setInstallFilter] = useState<'' | 'added' | 'missing'>('');
   const [pageNo, setPageNo] = useState(1);
@@ -281,6 +283,20 @@ export function ModelMarketPanel() {
     return () => { active = false; };
   }, [client, availabilityKey]);
 
+  // 闸门状态随刷新重取：关闸后立即隐藏授权类筛选并清空已选值。
+  useEffect(() => {
+    let active = true;
+    client.assetGateState()
+      .then(state => { if (active) setGateEnforced(state.enforced); })
+      .catch(() => { /* 取不到时保持开启态，按现有标签展示 */ });
+    return () => { active = false; };
+  }, [client, reloadKey]);
+  useEffect(() => {
+    if (gateEnforced) return;
+    setAuthFilter('');
+    setApplyFilter('');
+  }, [gateEnforced]);
+
   // 成功提示 3 秒后自动消失；错误提示保留到下一次操作。
   useEffect(() => {
     if (!notice) return;
@@ -328,8 +344,8 @@ export function ModelMarketPanel() {
           pageSize: PAGE_SIZE,
           keyword: query.trim() || undefined,
           modelType: modelType || undefined,
-          authStatus: authFilter || undefined,
-          applyStatus: applyFilter || undefined,
+          authStatus: gateEnforced ? authFilter || undefined : undefined,
+          applyStatus: gateEnforced ? applyFilter || undefined : undefined,
         });
         const keep = (records: readonly ModelMarketModel[], ids: readonly string[]): readonly ModelMarketModel[] => {
           if (!installFilter) return records;
@@ -361,7 +377,7 @@ export function ModelMarketPanel() {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [available, client, pageNo, query, source, modelType, authFilter, applyFilter, installFilter, reloadKey]);
+  }, [available, client, pageNo, query, source, modelType, authFilter, applyFilter, installFilter, reloadKey, gateEnforced]);
 
   useEffect(() => {
     if (!available) return;
@@ -375,6 +391,8 @@ export function ModelMarketPanel() {
   }, [available, client, reloadKey]);
 
   const installed = useMemo(() => new Set(page?.installedIds ?? []), [page]);
+  /** 关闸时后台 isAuthorized 一律按 Y：安装按钮不因未授权置灰，申请类入口隐藏。 */
+  const isAuthorized = (model: ModelMarketModel): boolean => gateEnforced ? model.authorized : true;
   /**
    * 刷新：一轮只重取当前展示的数据，单飞——同一轮未结束时再点直接忽略，
    * 不会因为连点叠出多轮请求。市场模型页签下是一次列表请求 + 一次本地模型请求。
@@ -646,12 +664,12 @@ export function ModelMarketPanel() {
                       <span className="mm-detail-title">{model.modelName || model.modelCode}</span>
                       <span className="mm-detail-action">
                         {/* 顺序与卡片一致：申请 → 取消申请 → 添加 → 移除。 */}
-                        {!model.authorized && model.applyStatus !== 'pending' ? (
+                        {!isAuthorized(model) && model.applyStatus !== 'pending' ? (
                           <button type="button" className="mm-action primary" disabled={busy || ssoBusyId === model.id} onClick={() => void openAuthSso('apply', model)}>
                             申请
                           </button>
                         ) : null}
-                        {!model.authorized && model.applyStatus === 'pending' ? (
+                        {!isAuthorized(model) && model.applyStatus === 'pending' ? (
                           <button type="button" className="mm-action primary" disabled={busy || ssoBusyId === model.id} onClick={() => void openAuthSso('cancel', model)}>
                             取消申请
                           </button>
@@ -660,7 +678,7 @@ export function ModelMarketPanel() {
                           <button type="button" className="mm-action uninstall" disabled={busy} onClick={() => setConfirmUninstall(true)}>
                             {busy ? <><span className="mm-spinner" />移除中…</> : '移除'}
                           </button>
-                        ) : model.authorized ? (
+                        ) : isAuthorized(model) ? (
                           <button
                             type="button"
                             className="mm-action primary"
@@ -681,12 +699,14 @@ export function ModelMarketPanel() {
                   <span className="mm-tag" style={tagStyle(detail?.installed ? GREEN_TAG_TONE : GRAY_TAG_TONE)}>
                     {detail?.installed ? '已添加' : '未添加'}
                   </span>
-                  <span className="mm-tag" style={tagStyle(model.authorized ? GREEN_TAG_TONE : GRAY_TAG_TONE)}>
-                    {model.authorized ? '已授权' : '未授权'}
-                  </span>
-                  <span className="mm-tag" style={tagStyle(applyStatusTone(model.applyStatus))}>
-                    {APPLY_STATUS_TEXT[model.applyStatus]}
-                  </span>
+                  {gateEnforced ? <>
+                    <span className="mm-tag" style={tagStyle(isAuthorized(model) ? GREEN_TAG_TONE : GRAY_TAG_TONE)}>
+                      {isAuthorized(model) ? '已授权' : '未授权'}
+                    </span>
+                    <span className="mm-tag" style={tagStyle(applyStatusTone(model.applyStatus))}>
+                      {APPLY_STATUS_TEXT[model.applyStatus]}
+                    </span>
+                  </> : null}
                   <span className="mm-tag" style={tagStyle(model.isDefault ? BLUE_TAG_TONE : GRAY_TAG_TONE)}>
                     {model.isDefault ? '默认模型' : '非默认模型'}
                   </span>
@@ -805,18 +825,20 @@ export function ModelMarketPanel() {
             value={installFilter}
             onChange={next => changeFilter(() => setInstallFilter(next))}
           />
-          <FilterPills
-            label="授权状态"
-            options={AUTH_OPTIONS}
-            value={authFilter}
-            onChange={next => changeFilter(() => setAuthFilter(next))}
-          />
-          <FilterPills
-            label="申请状态"
-            options={APPLY_OPTIONS}
-            value={applyFilter}
-            onChange={next => changeFilter(() => setApplyFilter(next))}
-          />
+          {gateEnforced ? <>
+            <FilterPills
+              label="授权状态"
+              options={AUTH_OPTIONS}
+              value={authFilter}
+              onChange={next => changeFilter(() => setAuthFilter(next))}
+            />
+            <FilterPills
+              label="申请状态"
+              options={APPLY_OPTIONS}
+              value={applyFilter}
+              onChange={next => changeFilter(() => setApplyFilter(next))}
+            />
+          </> : null}
         </div>
         {notices}
         {source !== 'market' && customEntries.length ? (
@@ -948,12 +970,14 @@ export function ModelMarketPanel() {
                       <span className="mm-tag" style={tagStyle(isInstalled ? GREEN_TAG_TONE : GRAY_TAG_TONE)}>
                         {isInstalled ? '已添加' : '未添加'}
                       </span>
-                      <span className="mm-tag" style={tagStyle(model.authorized ? GREEN_TAG_TONE : GRAY_TAG_TONE)}>
-                        {model.authorized ? '已授权' : '未授权'}
-                      </span>
-                      <span className="mm-tag" style={tagStyle(applyStatusTone(model.applyStatus))}>
-                        {APPLY_STATUS_TEXT[model.applyStatus]}
-                      </span>
+                      {gateEnforced ? <>
+                        <span className="mm-tag" style={tagStyle(isAuthorized(model) ? GREEN_TAG_TONE : GRAY_TAG_TONE)}>
+                          {isAuthorized(model) ? '已授权' : '未授权'}
+                        </span>
+                        <span className="mm-tag" style={tagStyle(applyStatusTone(model.applyStatus))}>
+                          {APPLY_STATUS_TEXT[model.applyStatus]}
+                        </span>
+                      </> : null}
                       <span className="mm-tag" style={tagStyle(model.isDefault ? BLUE_TAG_TONE : GRAY_TAG_TONE)}>
                         {model.isDefault ? '默认模型' : '非默认模型'}
                       </span>
@@ -988,7 +1012,7 @@ export function ModelMarketPanel() {
                     {/* 操作按钮单独一行、右对齐；顺序固定：申请 → 取消申请 → 添加 → 移除。 */}
                     <div className="mm-card-actions is-row">
                         {/* 按钮顺序固定：申请 → 取消申请 → 添加 → 移除；申请与取消申请互斥。 */}
-                        {!model.authorized && model.applyStatus !== 'pending' ? (
+                        {!isAuthorized(model) && model.applyStatus !== 'pending' ? (
                           <button
                             type="button"
                             className="mm-action primary"
@@ -998,7 +1022,7 @@ export function ModelMarketPanel() {
                             申请
                           </button>
                         ) : null}
-                        {!model.authorized && model.applyStatus === 'pending' ? (
+                        {!isAuthorized(model) && model.applyStatus === 'pending' ? (
                           <button
                             type="button"
                             className="mm-action primary"
@@ -1020,7 +1044,7 @@ export function ModelMarketPanel() {
                           >
                             {busy ? <><span className="mm-spinner" />移除中…</> : '移除'}
                           </button>
-                        ) : model.authorized ? (
+                        ) : isAuthorized(model) ? (
                           <button
                             type="button"
                             className={usable.installable ? 'mm-action primary' : 'mm-action'}

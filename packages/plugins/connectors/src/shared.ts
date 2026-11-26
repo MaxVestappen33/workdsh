@@ -126,6 +126,8 @@ export interface ConnectorSummary {
   readonly authState?: 'unauthorized' | 'revoked';
   /** 与 `authState` 配套的中文原因文案，来自闸门 reasons.ts。 */
   readonly authReason?: string;
+  /** 授权条目的结束时间（后台原样字符串）；仅在已过期时由界面展示到期提示。 */
+  readonly expiresAt?: string;
   /**
    * 工具级授权（仅连接器被白名单收窄时有值）：
    * - `allowed`：后台白名单里的原始工具名；

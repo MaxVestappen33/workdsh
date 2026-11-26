@@ -14,11 +14,16 @@ const policy = (masterEnabled, assetGates = {}) => ({
   assetGates: { ...ALL_OFF, ...assetGates },
   revision: 'r1',
 });
+/** v2 快照的条目形态；测试里仍用字符串简写，统一在这里换算成 `{id}`。 */
+const entryOf = item => (typeof item === 'string' ? { id: item.trim() } : item);
 const snapshot = (assets, staleAt = null, fetchedAt = new Date(0).toISOString()) => ({
   accountKey: 'org:user',
   revision: 'r1',
   staleAt,
-  assets: { ...Object.fromEntries(Object.keys(ALL_OFF).map(type => [type, []])), ...assets },
+  assets: {
+    ...Object.fromEntries(Object.keys(ALL_OFF).map(type => [type, []])),
+    ...Object.fromEntries(Object.entries(assets ?? {}).map(([type, list]) => [type, list.map(entryOf)])),
+  },
   fetchedAt,
 });
 const hostile = () => new Proxy({}, { get() { throw new Error('snapshot must not be read'); } });
@@ -151,7 +156,7 @@ test('快照缓存按账号隔离，落盘内容不是明文', async () => {
     const store = new SnapshotStore(directory);
     const record = snapshot({ skill: ['secret-skill'] });
     await store.save(record, 'token-a');
-    assert.equal(store.peek('org:user').assets.skill[0], 'secret-skill');
+    assert.deepEqual(store.peek('org:user').assets.skill[0], { id: 'secret-skill' });
     assert.equal(store.peek('org:other'), undefined, '切号必须立即丢弃旧缓存');
 
     const [name] = await readdir(directory);
@@ -160,7 +165,7 @@ test('快照缓存按账号隔离，落盘内容不是明文', async () => {
     assert.equal(sealed.includes('org:user'), false);
 
     const reopened = new SnapshotStore(directory);
-    assert.equal((await reopened.load('org:user', 'token-a')).assets.skill[0], 'secret-skill');
+    assert.deepEqual((await reopened.load('org:user', 'token-a')).assets.skill[0], { id: 'secret-skill' });
     assert.equal(await new SnapshotStore(directory).load('org:user', 'wrong-token'), undefined);
     assert.equal(await new SnapshotStore(directory).load('org:user', 'token-a'), undefined, '解密失败的缓存必须删除');
   } finally {
@@ -263,7 +268,7 @@ test('主闸门关闭期间只低频轮询策略，拿到开后立即恢复快�
       return {
         revision: 'r1',
         staleAt: '2999-01-01T00:00:00.000Z',
-        assets: { skill: ['s1'], mcp: [], expert: [], expert_group: [], model: [], knowledge: [], prompt: [] },
+        assets: { skill: [{ id: 's1' }], mcp: [], expert: [], expert_group: [], model: [], knowledge: [], prompt: [] },
       };
     },
   });
@@ -417,7 +422,7 @@ test('按 staleAt 接力重拉，插件销毁后定时器不再请求', async ()
   const directory = await mkdtemp(join(tmpdir(), 'asset-gate-'));
   const revisions = [];
   let round = 0;
-  const assets = { skill: ['s1'], mcp: [], expert: [], expert_group: [], model: [], knowledge: [], prompt: [] };
+  const assets = { skill: [{ id: 's1' }], mcp: [], expert: [], expert_group: [], model: [], knowledge: [], prompt: [] };
   const ctx = new Context();
   ctx.provide('workdshIdentity', identity());
   ctx.provide('workdshBackend', {
@@ -462,7 +467,7 @@ test('连接器条目解析：全量、白名单、重复合并与非法结构',
   assert.deepEqual(parse([{ id: 'a', tools: ['x'] }, { id: 'a', tools: ['y'] }]), [{ id: 'a', tools: ['x', 'y'] }], '重复条目白名单求并集');
 
   assert.throws(() => parse(['a']), /mcp/, '字符串条目不可识别');
-  assert.throws(() => parse([{ tools: [] }]), /连接器编号/, '缺少 id');
+  assert.throws(() => parse([{ tools: [] }]), /资产编号/, '缺少 id');
   assert.throws(() => parse([{ id: 'a', tools: 'x' }]), /不是数组/, '工具清单不是数组');
   assert.throws(() => parse([{ id: 'a', tools: [''] }]), /空工具名/, '空工具名');
 });
@@ -630,7 +635,7 @@ test('闸门开启后同步策略与快照，按账号隔离并复用加密磁�
         return {
           revision: 'r1',
           staleAt: '2999-01-01T00:00:00.000Z',
-          assets: { skill: ['s1'], mcp: [], expert: [], expert_group: [], model: [], knowledge: [], prompt: [] },
+          assets: { skill: [{ id: 's1' }], mcp: [], expert: [], expert_group: [], model: [], knowledge: [], prompt: [] },
         };
       },
     });

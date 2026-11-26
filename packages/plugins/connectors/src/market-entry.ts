@@ -116,7 +116,7 @@ export class ConnectorMarketService extends Service implements ConnectorMarket {
    */
   private readonly tasks = new Map<string, ConnectorInstallTask>();
   /** 全量授权索引缓存：避免每次进页/切页签都拉一遍全量。 */
-  private indexCache?: { readonly at: number; readonly rows: readonly MarketIndexItem[] };
+  private indexCache?: { readonly at: number; readonly rows: readonly MarketIndexItem[]; readonly enforced: boolean };
 
   constructor(ctx: Context, private readonly options: ConnectorMarketOptions = {}) { super(ctx, 'workdshConnectorMarket'); }
 
@@ -139,10 +139,24 @@ export class ConnectorMarketService extends Service implements ConnectorMarket {
    * 缓存只减少重复请求；`refresh` 用于用户主动刷新时绕过缓存。
    */
   async index(signal?: AbortSignal, refresh = false): Promise<readonly MarketIndexItem[]> {
-    if (!refresh && this.indexCache && Date.now() - this.indexCache.at < INDEX_CACHE_MS) return this.indexCache.rows;
+    const enforced = this.gateEnforced();
+    // 闸门状态纳入缓存键：关闸后不得继续用开闸期间取回的授权索引展示授权状态。
+    if (!refresh && this.indexCache && this.indexCache.enforced === enforced && Date.now() - this.indexCache.at < INDEX_CACHE_MS) {
+      return this.indexCache.rows;
+    }
     const rows = await (await this.client_()).index(signal);
-    this.indexCache = { at: Date.now(), rows };
+    this.indexCache = { at: Date.now(), rows, enforced };
     return rows;
+  }
+
+  /** 连接器子闸门是否开启；闸门服务不可用时按关闭处理（不做授权判定）。 */
+  private gateEnforced(): boolean {
+    try {
+      const gate = this.ctx.reflect.get('workdshAssetGate') as { enabled?(assetType: string): boolean } | undefined;
+      return gate?.enabled?.('mcp') === true;
+    } catch {
+      return false;
+    }
   }
 
   /**

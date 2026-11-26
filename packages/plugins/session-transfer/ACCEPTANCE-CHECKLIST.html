@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WorkDSH 会话迁移 · 开发环境人工验收清单</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --text: #1a1d21;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --accent: #2563eb;
+    --accent-soft: #eff6ff;
+    --done-bg: #f0fdf4;
+    --code-bg: #f1f3f5;
+    --hot: #c2410c;
+    --hot-bg: #fff7ed;
+    --real: #15803d;
+    --real-bg: #f0fdf4;
+    --shadow: 0 1px 2px rgba(16,24,40,.04), 0 8px 24px rgba(16,24,40,.04);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a;
+      --card: #1c1f25;
+      --text: #e8eaed;
+      --muted: #99a1ad;
+      --border: #2c313a;
+      --accent: #60a5fa;
+      --accent-soft: #17233a;
+      --done-bg: #16281c;
+      --code-bg: #252a32;
+      --hot: #fb923c;
+      --hot-bg: #33210f;
+      --real: #4ade80;
+      --real-bg: #16281c;
+      --shadow: 0 1px 2px rgba(0,0,0,.2), 0 8px 24px rgba(0,0,0,.2);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 940px; margin: 0 auto; padding: 36px 22px 72px; }
+  .eyebrow { font-size: 12px; letter-spacing: .08em; color: var(--accent); font-weight: 700; text-transform: uppercase; }
+  h1 { margin: 8px 0 6px; font-size: 27px; letter-spacing: -.02em; }
+  .sub { margin: 0 0 20px; color: var(--muted); font-size: 13px; }
+  .notice {
+    background: var(--accent-soft);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 8px 8px 0;
+    padding: 12px 16px;
+    font-size: 13px;
+    line-height: 1.7;
+  }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    background: var(--code-bg);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 12px;
+  }
+  .toolbar {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; align-items: center; gap: 14px;
+    margin: 18px 0 20px; padding: 12px 16px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+  }
+  .progress { flex: 1; height: 7px; background: var(--code-bg); border-radius: 999px; overflow: hidden; }
+  .bar { height: 100%; width: 0; background: var(--accent); border-radius: 999px; transition: width .2s ease; }
+  .stat { font-size: 13px; color: var(--muted); white-space: nowrap; }
+  .stat strong { color: var(--text); font-size: 16px; }
+  button {
+    font: inherit; font-size: 12.5px; cursor: pointer;
+    background: var(--card); color: var(--text);
+    border: 1px solid var(--border); border-radius: 7px;
+    padding: 5px 11px; white-space: nowrap;
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  section {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    margin-bottom: 16px;
+    overflow: hidden;
+  }
+  section > h2 {
+    display: flex; align-items: center; gap: 10px;
+    margin: 0; padding: 14px 18px;
+    font-size: 15px; font-weight: 700;
+    border-bottom: 1px solid var(--border);
+  }
+  .num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; border-radius: 6px;
+    background: var(--accent); color: #fff;
+    font-size: 12px; font-weight: 700; flex: none;
+  }
+  .gstat { margin-left: auto; font-size: 12px; font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { border-bottom: 1px solid var(--border); }
+  li:last-child { border-bottom: 0; }
+  li > label {
+    display: flex; align-items: flex-start; gap: 12px;
+    padding: 12px 18px; cursor: pointer;
+    transition: background .15s ease;
+  }
+  li > label:hover { background: var(--accent-soft); }
+  li.done > label { background: var(--done-bg); }
+  input[type="checkbox"] {
+    width: 17px; height: 17px; margin: 3px 0 0;
+    accent-color: var(--accent); flex: none; cursor: pointer;
+  }
+  .body { min-width: 0; flex: 1; }
+  .op { display: block; font-size: 13.5px; font-weight: 600; line-height: 1.55; }
+  .exp { display: block; margin-top: 3px; font-size: 12.5px; color: var(--muted); line-height: 1.55; }
+  li.done .op { text-decoration: line-through; color: var(--muted); font-weight: 500; }
+  .tag {
+    display: inline-block; margin-left: 7px; padding: 1px 7px;
+    border-radius: 999px; font-size: 11px; font-weight: 600;
+    vertical-align: 1px; text-decoration: none;
+  }
+  .tag.hot { color: var(--hot); background: var(--hot-bg); }
+  .tag.real { color: var(--real); background: var(--real-bg); }
+  footer {
+    margin-top: 24px; padding: 18px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    font-size: 12.5px; color: var(--muted); line-height: 1.8;
+  }
+  footer strong { color: var(--text); }
+  footer .row { margin-top: 6px; }
+  @media print {
+    body { background: #fff; color: #000; }
+    .wrap { max-width: none; padding: 0; }
+    .toolbar { position: static; box-shadow: none; }
+    .toolbar button, .progress { display: none; }
+    section, footer { box-shadow: none; break-inside: avoid; }
+    li { break-inside: avoid; }
+    .notice { background: #f3f6fc; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">WorkDSH · workdsh-plugin-session-transfer</div>
+    <h1>开发环境人工验收清单</h1>
+    <p class="sub">单文件离线可用 · 勾选状态自动保存在本机浏览器 · 支持打印 · 生成于 2026-11-26</p>
+    <div class="notice">
+      <strong>环境已就绪：</strong>开发 Profile 内已是最新版插件（<code>dist</code> 与源码一致，含「结果报告」步骤条修复，<code>cordis.patch.yml</code> 已注册）。直接 <code>corepack yarn dev</code> 启动即可。<br>
+      <strong>只有改过插件源码</strong>才需要先跑 <code>corepack yarn dev:rebuild --filter workdsh-plugin-session-transfer</code> —— 只跑 <code>yarn dev</code> 加载的是打包好的 Profile，不读源码。项目强制登录，请准备真实账号。
+    </div>
+  </header>
+
+  <div class="toolbar">
+    <div class="progress"><div class="bar" id="bar"></div></div>
+    <div class="stat"><strong id="done">0</strong> / <span id="total">0</span> 已完成</div>
+    <button id="reset" type="button">重置勾选</button>
+    <button id="print" type="button">打印</button>
+  </div>
+
+  <main>
+
+    <section>
+      <h2><span class="num">0</span> 启动与登录 <span class="gstat" data-gstat></span></h2>
+      <ul>
+        <li><label><input type="checkbox" id="a1"><span class="body"><span class="op">确认改动状态：若改过插件源码，先执行 <code>corepack yarn dev:rebuild --filter workdsh-plugin-session-transfer</code></span><span class="exp">预期：依次完成「构建插件 → 重打包 Profile → 重装运行时 → 校验制品哈希 → 结束旧进程 → 启动」，无报错。未改源码可跳过。</span></span></label></li>
+        <li><label><input type="checkbox" id="a2"><span class="body"><span class="op">运行 <code>corepack yarn dev</code> 启动桌面客户端</span><span class="exp">预期：Electron 窗口正常打开，无 Profile 校验失败 / 运行时缺失提示。</span></span></label></li>
+        <li><label><input type="checkbox" id="a3"><span class="body"><span class="op">用真实账号登录</span><span class="exp">预期：侧栏会话列表可见。未登录会导致导入末尾 <code>bindSession</code> 失败、新会话不显示。</span></span></label></li>
+      </ul>
+    </section>
+
+    <section>
+      <h2><span class="num">1</span> 准备测试数据（一次） <span class="gstat" data-gstat></span></h2>
+      <ul>
+        <li><label><input type="checkbox" id="b1"><span class="body"><span class="op">新建/打开一个工作区，放入被会话引用过的相对路径文件，例如 <code>src/a.ts</code></span><span class="exp">预期：文件位于工作区根内，且会话消息里引用过它（口径 A 只带被引用 + 相对路径文件）。</span></span></label></li>
+        <li><label><input type="checkbox" id="b2"><span class="body"><span class="op">在同一个会话里发 1 张图片或 1 个文件附件</span><span class="exp">预期：消息里能看到附件，导出统计里「附件 1 个」。</span></span></label></li>
+        <li><label><input type="checkbox" id="b3"><span class="body"><span class="op">造 1 个已归档会话 + 1 个子会话</span><span class="exp">预期：侧栏可见归档标记与子会话，用来验归档策略和级联选择。</span></span></label></li>
+        <li><label><input type="checkbox" id="b4"><span class="body"><span class="op">工作区里额外放 <code>node_modules/</code>、<code>.env</code> 等敏感/大目录</span><span class="exp">预期：导出时这些被内置排除规则跳过，出现在「跳过」统计里，不会被打进包。</span></span></label></li>
+      </ul>
+    </section>
+
+    <section>
+      <h2><span class="num">2</span> 导出 · 三步「选择会话 → 预览内容 → 生成并下载」 <span class="gstat" data-gstat></span></h2>
+      <ul>
+        <li><label><input type="checkbox" id="c1"><span class="body"><span class="op">点侧栏「资料库」下方的「会话迁移」（主入口）</span><span class="exp">预期：主区域整页打开会话迁移，默认停在「导出」Tab，步骤条第 1 步「选择会话」高亮。</span></span></label></li>
+        <li><label><input type="checkbox" id="c2"><span class="body"><span class="op">在某个会话行点右键 →「迁移会话」</span><span class="exp">预期：主面板打开并切到导出 Tab，该会话被预选。</span></span></label></li>
+        <li><label><input type="checkbox" id="c3"><span class="body"><span class="op">在工作区分组标题行点 ▾ 收起 / 展开，并点该行的「全选」</span><span class="exp">预期：分组默认展开；收起后不渲染会话行；「全选」只勾选该工作区的会话，再次点击变「取消全选」。</span></span></label></li>
+        <li><label><input type="checkbox" id="c4"><span class="body"><span class="op">在「搜索会话名称或 ID」输入框里过滤</span><span class="exp">预期：列表显示会话标题（有标题时），按标题或 ID 都能过滤；空会话（创建后从未提问）与子代理会话不出现，已归档会话带「已归档」标记。</span></span></label></li>
+        <li><label><input type="checkbox" id="c5"><span class="body"><span class="op">点工具栏「全选」</span><span class="exp">预期：会话连同子会话一并勾选，已选计数更新。</span></span></label></li>
+        <li><label><input type="checkbox" id="c6"><span class="body"><span class="op">在需要的工作区分组行勾选「携带工作区文件」（每个工作区独立），必要时追加自定义忽略规则</span><span class="exp">预期：只打包该工作区内被会话引用的相对路径文件；内置安全基线不可移除，只可追加忽略规则。「未归属工作区」分组没有工作区目录，该项为禁用态。</span></span></label></li>
+        <li><label><input type="checkbox" id="c7"><span class="body"><span class="op">点「下一步：预览」，核对统计卡</span><span class="exp">预期：会话数 / 附件数与字节 / 工作区文件数与字节 / 跳过数 / 预计包大小 / 归档数 均合理；<code>node_modules</code>、<code>.env</code> 落在跳过里。可「上一步」返回修改。</span></span></label></li>
+        <li><label><input type="checkbox" id="c8"><span class="body"><span class="op">点「生成并下载」</span><span class="exp">预期：进度跑到「导出完成」，系统真实下载一个 <code>.zip</code>；文件已保存到下载目录。<strong>记下路径，第 3 步要用。</strong></span></span></label></li>
+      </ul>
+    </section>
+
+    <section>
+      <h2><span class="num">3</span> 导入 · 四步「选择迁移包 → 预览与设置 → 导入中 → 结果报告」 <span class="gstat" data-gstat></span></h2>
+      <ul>
+        <li><label><input type="checkbox" id="d1"><span class="body"><span class="op">切到「导入」Tab，把刚才的 zip 拖进页面内拖放区「把会话迁移包拖到这里」</span><span class="exp">预期：进入第 2 步。拖放只在本页面内生效，在窗口其它区域拖入不应有反应。</span></span></label></li>
+        <li><label><input type="checkbox" id="d2"><span class="body"><span class="op">核对版本裁决区</span><span class="exp">预期：显示「v4 → 本机 v4，事件格式版本与本机一致，可直接导入」；旧版本包显示「导入时将复用官方迁移链自动升级」。</span></span></label></li>
+        <li><label><input type="checkbox" id="d3"><span class="body"><span class="op">核对工作区映射区</span><span class="exp">预期：显示「已匹配」，或可用「新建目录…」指定目标；目标目录已有内容时给出更换提示。</span></span></label></li>
+        <li><label><input type="checkbox" id="d4"><span class="body"><span class="op">核对会话选择列表与冲突标识</span><span class="exp">预期：勾选项与导出一致；重复导入时出现橙色「本地已有同 ID」徽标。</span></span></label></li>
+        <li><label><input type="checkbox" id="d5"><span class="body"><span class="op">选择归档状态策略</span><span class="exp">预期：「按包内状态恢复」/「全部设为未归档」可切换并生效。</span></span></label></li>
+        <li><label><input type="checkbox" id="d6"><span class="body"><span class="op">点「开始导入」</span><span class="exp">预期：进入第 3 步，进度相位依次推进（校验 → 日志 → 附件 → 工作区文件 → 归档 → 绑定）。</span></span></label></li>
+        <li><label><input type="checkbox" id="d7"><span class="body"><span class="op">导入过程中观察进度与「取消导入」入口</span><span class="exp">预期：进度相位依次推进，可随时点「取消导入」触发回滚。</span></span></label></li>
+        <li><label><input type="checkbox" id="d8"><span class="body"><span class="op">导入过程中切到「导出」再切回「导入」</span><span class="exp">预期：页面会重新挂载、界面状态重置，但后台导入批次仍在执行；如需连续观察进度请停留本页。</span></span></label></li>
+        <li><label><input type="checkbox" id="d9"><span class="body"><span class="op">核对结果报告页数据</span><span class="exp">预期：「成功导入 1 / 失败 0」，结果行显示「已导入」、文件还原 1、附件还原 1、标题「迁移测试会话（导入）」。</span></span></label></li>
+        <li><label><input type="checkbox" id="d10"><span class="body"><span class="op">核对顶部步骤条<span class="tag hot">修复点</span></span><span class="exp">预期：第 4 步「结果报告」点亮。曾修复过「停在 3 导入中、第 4 步永不点亮」的 UI bug。</span></span></label></li>
+      </ul>
+    </section>
+
+    <section>
+      <h2><span class="num">4</span> 重点回归（真机才验得了） <span class="gstat" data-gstat></span></h2>
+      <ul>
+        <li><label><input type="checkbox" id="e1"><span class="body"><span class="op">打开导入后的会话，点开图片 / 文件附件<span class="tag hot">重点</span><span class="tag real">真机专属</span></span><span class="exp">预期：正常显示，不是裂图、空文件或「附件缺失」。这是逻辑测试覆盖不到的一环。</span></span></label></li>
+        <li><label><input type="checkbox" id="e2"><span class="body"><span class="op">到目标工作区查看 <code>src/a.ts</code> 是否存在且内容一致<span class="tag hot">重点</span></span><span class="exp">预期：文件在；会话 <code>cwd</code> 指向本机真实路径，AI 能继续读它；绝对路径引用应仍只能看不能操作。</span></span></label></li>
+        <li><label><input type="checkbox" id="e3"><span class="body"><span class="op">在同一台机把同一个包再导一次（造 ID 冲突）<span class="tag hot">重点</span></span><span class="exp">预期：生成新 ID、标题追加「（导入）」，原会话不被覆盖；新会话在当前账号下侧栏可见。</span></span></label></li>
+        <li><label><input type="checkbox" id="e4"><span class="body"><span class="op">造大包（多会话 + 大文件）后，在导入中点「取消导入」<span class="tag hot">重点</span></span><span class="exp">预期：「已取消并回滚」；结果为空，侧栏无新会话，附件/工作区文件/owner 绑定无残留。包太小会瞬间完成，来不及点取消。</span></span></label></li>
+        <li><label><input type="checkbox" id="e5"><span class="body"><span class="op">如有更高版本客户端产出的包，尝试导入</span><span class="exp">预期：「无法导入此包 / 此包来自更新版本客户端，请升级」，整包拒绝，不做降级导入。</span></span></label></li>
+      </ul>
+    </section>
+
+    <section>
+      <h2><span class="num">5</span> 出错定位与收尾 <span class="gstat" data-gstat></span></h2>
+      <ul>
+        <li><label><input type="checkbox" id="f1"><span class="body"><span class="op">打开 DevTools → Network，确认 7 个 <code>/api/session.transfer.*</code> 请求</span><span class="exp">预期：导出预览 / 导出 / 导出状态 / 导入预览 / 导入应用 / 导入状态 / 导入取消 均为 200；导出响应头带 <code>x-transfer-job-id</code>。</span></span></label></li>
+        <li><label><input type="checkbox" id="f2"><span class="body"><span class="op">若报错，对照常见文案定位</span><span class="exp">「正在运行的会话请等待结束」「目标目录已有内容，请在下方更换」「导入的会话已绑定当前账号；如提示绑定失败，请重新登录后重试」。</span></span></label></li>
+        <li><label><input type="checkbox" id="f3"><span class="body"><span class="op">确认下载真的落盘、文件名正确<span class="tag real">真机专属</span></span><span class="exp">预期：Electron 中 <code>a[download]</code> / Blob 下载正常触发。这是自动化浏览器宿主覆盖不到的外壳差异。</span></span></label></li>
+        <li><label><input type="checkbox" id="f4"><span class="body"><span class="op">与 9 张自动化截图逐页比对</span><span class="exp">位置：<code>.artifacts/session-transfer-click/01-host.png</code> ～ <code>09-restore-from-settings.png</code>，重点看 04 导出预览、07 导入预览、08 结果报告。</span></span></label></li>
+        <li><label><input type="checkbox" id="f5"><span class="body"><span class="op">需要时跑自动化对照：<code>corepack pnpm --filter workdsh-plugin-session-transfer test:click</code></span><span class="exp">预期：31 项断言全过，脚本位于 <code>tests/browser/click-e2e.mjs</code>。逻辑层另有 25/25 单测与 17/17 发布门禁。</span></span></label></li>
+      </ul>
+    </section>
+
+  </main>
+
+  <footer>
+    <strong>勾选状态</strong>保存在本机 <code>localStorage</code>（键 <code>workdsh-st-checklist-v1</code>）；换浏览器或清缓存会重置，点「重置勾选」可清空。
+    <div class="row"><strong>别忘了</strong>：验收通过后，工作区改动目前仍是未提交状态，需要提交代码。</div>
+    <div class="row"><strong>已知边界</strong>：本清单验的是开发 Profile 里的桌面客户端；打包后 Windows <code>.exe</code> / 信创 Linux <code>.deb</code> 安装副本的外壳与登录态差异，需在装机后另验一轮。</div>
+  </footer>
+
+</div>
+<script>
+  (function () {
+    var KEY = 'workdsh-st-checklist-v1';
+    var boxes = Array.prototype.slice.call(document.querySelectorAll('input[type="checkbox"]'));
+    var saved = {};
+    try { saved = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (e) { saved = {}; }
+
+    function persist() {
+      try { localStorage.setItem(KEY, JSON.stringify(saved)); } catch (e) { /* file:// 下不可用时仅本次会话有效 */ }
+    }
+
+    function render() {
+      var done = 0;
+      boxes.forEach(function (b) {
+        var on = !!saved[b.id];
+        b.checked = on;
+        if (on) done += 1;
+        var li = b.closest('li');
+        if (li) li.classList.toggle('done', on);
+      });
+      document.getElementById('done').textContent = String(done);
+      document.getElementById('total').textContent = String(boxes.length);
+      document.getElementById('bar').style.width = (boxes.length ? (done / boxes.length * 100) : 0) + '%';
+      Array.prototype.forEach.call(document.querySelectorAll('section'), function (sec) {
+        var all = sec.querySelectorAll('input[type="checkbox"]');
+        var d = 0;
+        Array.prototype.forEach.call(all, function (x) { if (x.checked) d += 1; });
+        var badge = sec.querySelector('[data-gstat]');
+        if (badge) badge.textContent = d + '/' + all.length;
+      });
+    }
+
+    boxes.forEach(function (b) {
+      b.addEventListener('change', function () {
+        saved[b.id] = b.checked;
+        persist();
+        render();
+      });
+    });
+    document.getElementById('reset').addEventListener('click', function () {
+      saved = {};
+      try { localStorage.removeItem(KEY); } catch (e) {}
+      render();
+    });
+    document.getElementById('print').addEventListener('click', function () { window.print(); });
+    render();
+  })();
+</script>
+</body>
+</html>

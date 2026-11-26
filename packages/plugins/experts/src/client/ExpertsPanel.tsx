@@ -73,6 +73,16 @@ function assetStateOf(summary: ExpertSummary): { label: string; tone?: 'red' | '
   return undefined;
 }
 
+/** 授权到期提示：只在条目带结束时间且已经过期时展示；未过期不新增噪音。 */
+function expiryNoticeOf(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const at = Date.parse(value);
+  if (Number.isNaN(at)) return '授权已过期';
+  if (at > Date.now()) return undefined;
+  const date = new Date(at);
+  return `已过期至 ${date.getMonth() + 1} 月 ${date.getDate()} 日`;
+}
+
 /** 本地自建（含已发布的自建）：无市场安装记录且非内置，按“不受支持”只读展示。 */
 function isLegacyLocal(summary: ExpertSummary): boolean {
   return summary.origin === 'personal' && !summary.installedFromCatalog && !summary.builtin;
@@ -560,6 +570,7 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
                 {/* 只保留异常态；正常（可用）不再出标签。 */}
                 {!draft && summary.readiness !== 'ready' && <span className={`badge ${readiness.cls}`}>{readiness.label}</span>}
                 {state ? <StateTag state={state} /> : null}
+                {expiryNoticeOf(summary.expiresAt) ? <span className="tag tag-muted">{expiryNoticeOf(summary.expiresAt)}</span> : null}
                 {legacy ? <TongyunTagSingle auth={false}>本地自建（不受支持）</TongyunTagSingle> : null}
                 {authBlocked ? <TongyunTagSingle tone={applyStatusTone(applyStatus)}>{EXPERT_APPLY_LABEL[applyStatus]}</TongyunTagSingle> : null}
               </div>
@@ -643,6 +654,7 @@ export function ExpertsPanel({ toggleNavigation, management, openCapability, has
               {draft && <span className="badge">未发布</span>}
               {summary.executionBlocked === 'approval-required' && <span className="badge warn">需上架审核</span>}
               {state ? <StateTag state={state} /> : null}
+              {expiryNoticeOf(summary.expiresAt) ? <span className="tag tag-muted">{expiryNoticeOf(summary.expiresAt)}</span> : null}
               {legacy ? <TongyunTagSingle auth={false}>本地自建（不受支持）</TongyunTagSingle> : null}
               {summary.origin === 'default' && <span className="badge">默认</span>}
             </div>

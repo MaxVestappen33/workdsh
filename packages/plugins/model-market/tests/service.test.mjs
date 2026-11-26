@@ -284,7 +284,7 @@ test('执行期授权：默认模型直接放行，其余市场模型按授权�
       1: { ...base, id: '1', modelName: 'DeepSeek-V4.1-Flash', modelCode: 'deepseek-flash', isDefault: '1', apiKey: 'sk-1' },
       2: { ...base, id: '2', modelName: 'DeepSeek-V4-Pro', modelCode: 'deepseek-pro', isDefault: '0', apiKey: 'sk-1' },
     };
-    const snapshot = { current: { revision: 'r1', assets: { model: ['1', '2'] } } };
+    const snapshot = { current: { revision: 'r1', assets: { model: [{ id: '1' }, { id: '2' }] } } };
     let refreshes = 0;
     const gate = {
       enabled: () => true,
@@ -297,7 +297,7 @@ test('执行期授权：默认模型直接放行，其余市场模型按授权�
     await service.install('2');
 
     // 快照命中即已授权；同时会触发一次快照刷新。
-    snapshot.current = { revision: 'r2', assets: { model: ['2'] } };
+    snapshot.current = { revision: 'r2', assets: { model: [{ id: '2' }] } };
     assert.equal(await service.authorizationOf('workdsh-deepseek', 'deepseek-pro'), 'authorized');
     assert.ok(refreshes > 0, '判定前应触发快照刷新');
 
@@ -319,7 +319,7 @@ test('执行期授权：默认模型直接放行，其余市场模型按授权�
     records.installs['2'].route = 'workdsh-renamed';
     delete records.installs['2'].manifest;
     await writeFile(recordsFile, JSON.stringify(records), 'utf8');
-    snapshot.current = { revision: 'r4', assets: { model: ['2'] } };
+    snapshot.current = { revision: 'r4', assets: { model: [{ id: '2' }] } };
     assert.equal(await service.authorizationOf('workdsh-renamed', 'deepseek-pro'), 'authorized');
     snapshot.current = { revision: 'r5', assets: { model: [] } };
     assert.equal(await service.authorizationOf('workdsh-renamed', 'deepseek-pro'), 'unauthorized');

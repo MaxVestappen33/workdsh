@@ -327,6 +327,8 @@ interface AssetGateProbe {
   integrityMismatch(): { readonly reason: string; readonly message: string };
   decide(request: { readonly assetType: string; readonly assetId: string; readonly usage: string }):
     Promise<{ readonly allow: boolean; readonly message: string }>;
+  /** 某资产的有效期条目（只读内存）；闸门关闭或未命中时返回 undefined。 */
+  entitlement?(assetType: string, assetId: string): { readonly startTime?: string | null; readonly endTime?: string | null } | undefined;
 }
 
 /** 后台管理系统单点跳转结果：degraded 为 true 时只拿到纯登录地址。 */
@@ -816,7 +818,7 @@ export class ExpertsManager extends Service implements ExpertsService {
   }
 
   /** 列表授权状态：只对市场来源且对应子闸门开启的资产计算。 */
-  private async authStateOf(expert: Expert): Promise<{ readonly authState?: 'unauthorized' | 'revoked' | 'reinstall'; readonly authReason?: string }> {
+  private async authStateOf(expert: Expert): Promise<{ readonly authState?: 'unauthorized' | 'revoked' | 'reinstall'; readonly authReason?: string; readonly expiresAt?: string }> {
     const manifest = this.installManifestOf(expert.id);
     if (!manifest) return {};
     // 市场安装但清单缺后台编号：无法校验授权，按“需重新安装”处理（fail-closed）。
@@ -826,15 +828,18 @@ export class ExpertsManager extends Service implements ExpertsService {
     if (manifest.source !== 'market' || !manifest.assetId) return {};
     const gate = this.gateProbe();
     if (!gate?.enabled(manifest.assetType)) return {};
+    // 条目有效期：只在闸门开启且快照命中、条目带结束时间时有值。
+    const expires = gate.entitlement?.(manifest.assetType, manifest.assetId)?.endTime?.trim();
+    const expiry = expires ? { expiresAt: expires } : {};
     // 验签开关开启但清单没有签名块：专家装于关闭期间，只能重新安装（复用 integrityState 通道）。
     if (gate.signatureEnabled?.() === true && manifest.signature === undefined) {
-      return { authState: 'reinstall', authReason: SIGNATURE_REINSTALL_MESSAGE };
+      return { authState: 'reinstall', authReason: SIGNATURE_REINSTALL_MESSAGE, ...expiry };
     }
     if (gate.revoked(manifest.assetType, manifest.assetId)) {
-      return { authState: 'revoked', authReason: gate.revocationReason().message };
+      return { authState: 'revoked', authReason: gate.revocationReason().message, ...expiry };
     }
     const decision = await gate.decide({ assetType: manifest.assetType, assetId: manifest.assetId, usage: 'use' });
-    return decision.allow ? {} : { authState: 'unauthorized', authReason: decision.message };
+    return decision.allow ? expiry : { authState: 'unauthorized', authReason: decision.message, ...expiry };
   }
 
   /**
@@ -1023,7 +1028,7 @@ export class ExpertsManager extends Service implements ExpertsService {
     readiness: ExpertReadiness,
     preference: ExpertPreference | undefined,
     caps: { canUse: boolean; canEdit: boolean; canManage: boolean },
-    auth?: { readonly authState?: 'unauthorized' | 'revoked' | 'reinstall'; readonly authReason?: string },
+    auth?: { readonly authState?: 'unauthorized' | 'revoked' | 'reinstall'; readonly authReason?: string; readonly expiresAt?: string },
     integrity?: { readonly integrityState?: 'modified' | 'missing' | 'unreadable' | 'unsigned'; readonly integrityReason?: string },
   ): ExpertSummary {
     const definition = draft.definition;
@@ -1056,6 +1061,7 @@ export class ExpertsManager extends Service implements ExpertsService {
       installedFromCatalog: this.isInstalledExpert(expert.id),
       ...(this.executionBlockOf(expert.id) === undefined ? {} : { executionBlocked: 'approval-required' as const }),
       ...(auth?.authState ? { authState: auth.authState, ...(auth.authReason ? { authReason: auth.authReason } : {}) } : {}),
+      ...(auth?.expiresAt ? { expiresAt: auth.expiresAt } : {}),
       ...(integrity?.integrityState ? { integrityState: integrity.integrityState, ...(integrity.integrityReason ? { integrityReason: integrity.integrityReason } : {}) } : {}),
       // 安装清单快照：业务场景/来源节点/公开状态只在市场安装时写入，本地自建专家保持缺省。
       ...(manifest?.assetId ? { assetId: manifest.assetId } : {}),
@@ -1314,6 +1320,7 @@ export class ExpertsManager extends Service implements ExpertsService {
       installedFromCatalog: this.isInstalledExpert(expertId),
       ...(this.executionBlockOf(expertId) === undefined ? {} : { executionBlocked: 'approval-required' as const }),
       ...(auth.authState ? { authState: auth.authState, ...(auth.authReason ? { authReason: auth.authReason } : {}) } : {}),
+      ...(auth.expiresAt ? { expiresAt: auth.expiresAt } : {}),
       ...(integrity.integrityState ? { integrityState: integrity.integrityState, ...(integrity.integrityReason ? { integrityReason: integrity.integrityReason } : {}) } : {}),
     };
   }

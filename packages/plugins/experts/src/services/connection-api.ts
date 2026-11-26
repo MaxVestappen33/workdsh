@@ -32,7 +32,7 @@ export const expertsExportPath = '/api/workdsh-experts/export';
 const maximumBodyBytes = 32 * 1024 * 1024;
 
 type Endpoint =
-  | 'skills' | 'list' | 'get' | 'create-draft' | 'update-draft' | 'copy' | 'validate'
+  | 'skills' | 'list' | 'get' | 'asset-gate-state' | 'create-draft' | 'update-draft' | 'copy' | 'validate'
   | 'request-publish-confirmation' | 'confirm-publish' | 'publish'
   | 'set-availability' | 'set-preference' | 'prepare-execution' | 'create-execution'
   | 'consume-handoff' | 'prepare-handoff' | 'create-handoff' | 'preview-import'
@@ -96,6 +96,10 @@ type GateAssetType = 'skill' | 'mcp' | 'expert' | 'expert_group' | 'model' | 'pr
 type GateAuditAction = 'install' | 'enable' | 'restore' | 'uninstall' | 'delete';
 interface AssetGateLike {
   enabled(assetType: GateAssetType): boolean;
+  /** 主闸门与验签开关是否同时开启；旧版闸门没有该方法时按关闭处理。 */
+  signatureEnabled?(): boolean;
+  /** 当前生效策略：只用于向界面暴露闸门状态。 */
+  policy?(): { readonly masterEnabled: boolean; readonly failClosed?: boolean; readonly assetGates: Readonly<Record<string, boolean>> };
   /** 触发式校验：进市场页/刷新/写操作完成后做一次 revision 比对；旧版闸门没有该方法时跳过。 */
   refreshNow?(): Promise<void>;
   /** 强制刷新快照（绕过节流）；旧版闸门没有该方法时不做授权变更重试。 */
@@ -318,6 +322,15 @@ async function dispatch(ctx: Context, manager: ExpertsManager, actor: ActorConte
       // 授权只在启用/可用性切换与市场列表二次过滤处判定。
       case 'list':
         return ok(await manager.list(actor, listQuery(payload), signal));
+      case 'asset-gate-state': {
+        const gate = assetGate(ctx);
+        const state = (assetType: GateAssetType) => ({
+          enforced: gate?.enabled(assetType) === true,
+          signatureEnforced: gate?.signatureEnabled?.() === true,
+          policyUnavailable: gate?.policy?.()?.failClosed === true,
+        });
+        return ok({ expert: state('expert'), expertGroup: state('expert_group') });
+      }
       case 'get': {
         const expertId = str(input?.expertId);
         if (!expertId) return fail('experts/invalid-request', '请求缺少专家标识。');

@@ -11,6 +11,7 @@ export const PRODUCT_SERVICES = Object.freeze({
   'workdsh-plugin-projects': 'workdshProjects',
   'workdsh-plugin-prompts': 'workdshPrompts',
   'workdsh-plugin-session-recycle': 'workdshSessionRecycle',
+  'workdsh-plugin-session-transfer': 'workdshSessionTransfer',
   'workdsh-plugin-skills': 'workdshSkills',
   'workdsh-plugin-workbenches': 'workdshWorkbenchRegistration',
 })

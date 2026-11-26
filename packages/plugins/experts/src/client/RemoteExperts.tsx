@@ -64,8 +64,8 @@ function RemoteAvatar({ item }: { item: RemoteExpertSummary }) {
  * 不具备安装条件的状态：未授权（需先申请）、后台未返回安装包、后台标记资产签名不可用。
  * 已安装且已是最新版、或正在安装中时不渲染安装入口，由按钮的出现条件处理。
  */
-function installBlockedReason(item: RemoteExpertSummary): string | undefined {
-  if (!item.authorized) return '尚未授权，请先申请';
+function installBlockedReason(item: RemoteExpertSummary, authorized: boolean): string | undefined {
+  if (!authorized) return '尚未授权，请先申请';
   if (item.package === undefined) return '后台未返回安装包，暂不能安装';
   if (item.signatureState === 'unavailable') return item.signatureReason || '该条目资产签名不可用，暂不能安装';
   return undefined;
@@ -113,6 +113,10 @@ export function RemoteExperts({ management, kind, keyword, onChanged, reloadKey 
   const [installFilter, setInstallFilter] = useState<'installed' | 'uninstalled'>();
   const [auth, setAuth] = useState<'Y' | 'N'>();
   const [apply, setApply] = useState<RemoteExpertApplyStatus>();
+  /** 闸门是否生效；默认按开启处理。关闸时后台 isAuthorized 一律按 Y。 */
+  const [gateEnforced, setGateEnforced] = useState(true);
+  /** 关闸时把后台 isAuthorized 统一按 Y 处理：安装不置灰、申请入口隐藏。 */
+  const authorizedOf = (item: RemoteExpertSummary): boolean => gateEnforced ? item.authorized : true;
   /** 申请/取消申请跳转占用：与安装分开，避免互相禁用。 */
   const [ssoBusy, setSsoBusy] = useState(false);
   /** 卸载确认弹窗：与技能市场一致，先弹确认再执行，不再用原生 confirm。 */
@@ -129,8 +133,8 @@ export function RemoteExperts({ management, kind, keyword, onChanged, reloadKey 
 
   /** 筛选条件是请求依赖：用 useMemo 固定引用，否则每次渲染都会重新取数。 */
   const filter = useMemo<ExpertMarketFilter>(
-    () => ({ scenes, keyword, builtin, install: installFilter, auth, apply }),
-    [scenes, keyword, builtin, installFilter, auth, apply],
+    () => ({ scenes, keyword, builtin, install: installFilter, ...(gateEnforced ? { auth, apply } : {}) }),
+    [scenes, keyword, builtin, installFilter, auth, apply, gateEnforced],
   );
 
   /** 合并新页里的业务场景选项：只增不减，筛选栏不会因为翻页而丢失选项。 */
@@ -186,6 +190,19 @@ export function RemoteExperts({ management, kind, keyword, onChanged, reloadKey 
   }, [management, filter, kind, mergeScenes]);
 
   useEffect(() => { void load(); }, [load, reloadKey]);
+  // 闸门状态随页签/刷新重取：关闸后隐藏授权类筛选并清空已选值。
+  useEffect(() => {
+    let active = true;
+    management.assetGateState()
+      .then(state => { if (active) setGateEnforced((kind === 'team' ? state.expertGroup : state.expert).enforced); })
+      .catch(() => { /* 取不到时保持开启态 */ });
+    return () => { active = false; };
+  }, [management, kind, reloadKey]);
+  useEffect(() => {
+    if (gateEnforced) return;
+    setAuth(undefined);
+    setApply(undefined);
+  }, [gateEnforced]);
 
   /** 加载更多：滚动接近底部时按当前筛选追加下一页；失败只影响加载更多。 */
   const loadMore = useCallback(async () => {
@@ -346,14 +363,16 @@ export function RemoteExperts({ management, kind, keyword, onChanged, reloadKey 
         <CategoryBar label="安装状态" categories={EXPERT_INSTALL_OPTIONS} values={installFilter === undefined ? [] : [installFilter === 'installed' ? EXPERT_INSTALL_OPTIONS[0] : EXPERT_INSTALL_OPTIONS[1]]}
           onChange={next => setInstallFilter(next.length ? (next[next.length - 1] === EXPERT_INSTALL_OPTIONS[0] ? 'installed' : 'uninstalled') : undefined)} />
       </div>
-      <div className="filter-group"><span className="filter-label">授权状态：</span>
-        <CategoryBar label="授权状态" categories={EXPERT_AUTH_OPTIONS} values={auth === undefined ? [] : [auth === 'Y' ? EXPERT_AUTH_OPTIONS[0] : EXPERT_AUTH_OPTIONS[1]]}
-          onChange={next => setAuth(next.length ? (next[next.length - 1] === EXPERT_AUTH_OPTIONS[0] ? 'Y' : 'N') : undefined)} />
-      </div>
-      <div className="filter-group"><span className="filter-label">申请状态：</span>
-        <CategoryBar label="申请状态" categories={EXPERT_APPLY_OPTIONS} values={apply === undefined ? [] : [EXPERT_APPLY_LABEL[apply]]}
-          onChange={next => setApply(next.length ? EXPERT_APPLY_VALUE[next[next.length - 1]] : undefined)} />
-      </div>
+      {gateEnforced ? <>
+        <div className="filter-group"><span className="filter-label">授权状态：</span>
+          <CategoryBar label="授权状态" categories={EXPERT_AUTH_OPTIONS} values={auth === undefined ? [] : [auth === 'Y' ? EXPERT_AUTH_OPTIONS[0] : EXPERT_AUTH_OPTIONS[1]]}
+            onChange={next => setAuth(next.length ? (next[next.length - 1] === EXPERT_AUTH_OPTIONS[0] ? 'Y' : 'N') : undefined)} />
+        </div>
+        <div className="filter-group"><span className="filter-label">申请状态：</span>
+          <CategoryBar label="申请状态" categories={EXPERT_APPLY_OPTIONS} values={apply === undefined ? [] : [EXPERT_APPLY_LABEL[apply]]}
+            onChange={next => setApply(next.length ? EXPERT_APPLY_VALUE[next[next.length - 1]] : undefined)} />
+        </div>
+      </> : null}
       <div className="filter-group scenes-filter"><span className="filter-label">业务场景：</span>
         <CategoryBar label="业务场景" categories={sceneTexts} values={scenes} onChange={next => setScenes(next)} />
       </div>
@@ -374,8 +393,8 @@ export function RemoteExperts({ management, kind, keyword, onChanged, reloadKey 
         const sourceText = item.sourceNodeList.join(' · ');
         const publicText = item.isPublic === undefined ? '' : item.isPublic ? '公开' : '非公开';
         // 申请状态只在未授权时参与按钮：只有「申请中」是取消申请；已通过但被撤权的仍可重新申请。
-        const applicable = !item.authorized && item.applyStatus !== 'pending';
-        const cancelable = !item.authorized && item.applyStatus === 'pending';
+        const applicable = gateEnforced && !authorizedOf(item) && item.applyStatus !== 'pending';
+        const cancelable = gateEnforced && !authorizedOf(item) && item.applyStatus === 'pending';
         return <article className={`card expert-market-card${installed ? ' published' : ''}`} key={item.remoteId}>
           <div className="card-top">
             <button className="card-open" aria-label={`查看${kindLabel} ${item.name}`} onClick={() => {
@@ -412,16 +431,18 @@ export function RemoteExperts({ management, kind, keyword, onChanged, reloadKey 
               {item.version ? <TongyunTagSingle>{formatTagVersion(item.version)}</TongyunTagSingle> : null}
               {item.builtin === undefined ? null : <TongyunTagSingle tone={item.builtin ? 'gray' : 'cyan'}>{item.builtin ? '内置' : '非内置'}</TongyunTagSingle>}
               <TongyunTagSingle tone={installed ? 'green' : 'gray'}>{installed ? '已安装' : '未安装'}</TongyunTagSingle>
-              <TongyunTagSingle auth={item.authorized}>{item.authorized ? '已授权' : '未授权'}</TongyunTagSingle>
-              <TongyunTagSingle tone={applyStatusTone(item.applyStatus)}>{EXPERT_APPLY_LABEL[item.applyStatus]}</TongyunTagSingle>
+              {gateEnforced ? <>
+                <TongyunTagSingle auth={authorizedOf(item)}>{authorizedOf(item) ? '已授权' : '未授权'}</TongyunTagSingle>
+                <TongyunTagSingle tone={applyStatusTone(item.applyStatus)}>{EXPERT_APPLY_LABEL[item.applyStatus]}</TongyunTagSingle>
+              </> : null}
             </div>
             <div className="market-card-actions">
               {/* 按钮顺序与技能市场一致：申请 → 取消申请 → 安装 → 卸载。 */}
               {applicable ? <button type="button" className="market-action primary" aria-label={`申请${kindLabel} ${item.name}`} disabled={ssoBusy} onClick={() => void openAuth('apply', item.remoteId)}>申请</button> : null}
               {cancelable ? <button type="button" className="market-action primary" aria-label={`取消申请 ${item.name}`} disabled={ssoBusy} onClick={() => void openAuth('cancel', item.remoteId)}>取消申请</button> : null}
-              {!installed ? <button type="button" className="install" disabled={working || installBlockedReason(item) !== undefined} title={installBlockedReason(item) ?? '安装到本地'} onClick={() => void install(item)}>{working ? '安装中…' : '安装'}</button> : null}
-              {installed && installed.status === 'missing-dependency' ? <button type="button" className="install" disabled={working || installBlockedReason(item) !== undefined} title={installBlockedReason(item) ?? '重新发布该专家'} onClick={() => void install(item)}>{working ? '处理中…' : '重试发布'}</button> : null}
-              {installed && installed.updateAvailable && installed.status !== 'missing-dependency' ? <button type="button" className="install" disabled={working || installBlockedReason(item) !== undefined} title={installBlockedReason(item) ?? '更新到最新版本'} onClick={() => void install(item)}>{working ? '更新中…' : '更新'}</button> : null}
+              {!installed ? <button type="button" className="install" disabled={working || installBlockedReason(item, authorizedOf(item)) !== undefined} title={installBlockedReason(item, authorizedOf(item)) ?? '安装到本地'} onClick={() => void install(item)}>{working ? '安装中…' : '安装'}</button> : null}
+              {installed && installed.status === 'missing-dependency' ? <button type="button" className="install" disabled={working || installBlockedReason(item, authorizedOf(item)) !== undefined} title={installBlockedReason(item, authorizedOf(item)) ?? '重新发布该专家'} onClick={() => void install(item)}>{working ? '处理中…' : '重试发布'}</button> : null}
+              {installed && installed.updateAvailable && installed.status !== 'missing-dependency' ? <button type="button" className="install" disabled={working || installBlockedReason(item, authorizedOf(item)) !== undefined} title={installBlockedReason(item, authorizedOf(item)) ?? '更新到最新版本'} onClick={() => void install(item)}>{working ? '更新中…' : '更新'}</button> : null}
               {installed ? <button type="button" className="market-action danger" disabled={working} onClick={() => void uninstall(item)}>卸载</button> : null}
             </div>
           </div>
@@ -451,16 +472,16 @@ export function RemoteExperts({ management, kind, keyword, onChanged, reloadKey 
               {detail.version}{detail.domainLabel ? ` · ${detail.domainLabel}` : ''} · {detail.expertType === 'team' ? '专家团' : '专家'} · {detail.installed ? '已安装' : '未安装'}
             </p>
             <div className="detail-head-actions">
-              {!detail.authorized && detail.applyStatus !== 'pending' ? <Button variant="primary" className="summon" disabled={ssoBusy} onClick={() => void openAuth('apply', detail.remoteId)}>申请</Button> : null}
-              {!detail.authorized && detail.applyStatus === 'pending' ? <Button className="summon" disabled={ssoBusy} onClick={() => void openAuth('cancel', detail.remoteId)}>取消申请</Button> : null}
-              {!detail.installed ? <Button variant="primary" className="summon" disabled={acting === detail.remoteId || installBlockedReason(detail) !== undefined}
-                title={installBlockedReason(detail) ?? '安装到本地'}
+              {gateEnforced && !authorizedOf(detail) && detail.applyStatus !== 'pending' ? <Button variant="primary" className="summon" disabled={ssoBusy} onClick={() => void openAuth('apply', detail.remoteId)}>申请</Button> : null}
+              {gateEnforced && !authorizedOf(detail) && detail.applyStatus === 'pending' ? <Button className="summon" disabled={ssoBusy} onClick={() => void openAuth('cancel', detail.remoteId)}>取消申请</Button> : null}
+              {!detail.installed ? <Button variant="primary" className="summon" disabled={acting === detail.remoteId || installBlockedReason(detail, authorizedOf(detail)) !== undefined}
+                title={installBlockedReason(detail, authorizedOf(detail)) ?? '安装到本地'}
                 onClick={() => void install(detail)}>{acting === detail.remoteId ? '安装中…' : '安装'}</Button> : null}
-              {detail.installed && detail.installed.status === 'missing-dependency' ? <Button variant="primary" className="summon" disabled={acting === detail.remoteId || installBlockedReason(detail) !== undefined}
-                title={installBlockedReason(detail) ?? '重新发布该专家'}
+              {detail.installed && detail.installed.status === 'missing-dependency' ? <Button variant="primary" className="summon" disabled={acting === detail.remoteId || installBlockedReason(detail, authorizedOf(detail)) !== undefined}
+                title={installBlockedReason(detail, authorizedOf(detail)) ?? '重新发布该专家'}
                 onClick={() => void install(detail)}>{acting === detail.remoteId ? '处理中…' : '重试发布'}</Button> : null}
-              {detail.installed && detail.installed.updateAvailable && detail.installed.status !== 'missing-dependency' ? <Button variant="primary" className="summon" disabled={acting === detail.remoteId || installBlockedReason(detail) !== undefined}
-                title={installBlockedReason(detail) ?? '更新到最新版本'}
+              {detail.installed && detail.installed.updateAvailable && detail.installed.status !== 'missing-dependency' ? <Button variant="primary" className="summon" disabled={acting === detail.remoteId || installBlockedReason(detail, authorizedOf(detail)) !== undefined}
+                title={installBlockedReason(detail, authorizedOf(detail)) ?? '更新到最新版本'}
                 onClick={() => void install(detail)}>{acting === detail.remoteId ? '更新中…' : '更新'}</Button> : null}
               {detail.installed ? <Button tone="danger" disabled={acting === detail.remoteId} onClick={() => void uninstall(detail)}>卸载</Button> : null}
             </div>

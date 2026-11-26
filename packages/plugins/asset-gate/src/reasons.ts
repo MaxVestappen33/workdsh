@@ -54,7 +54,7 @@ export const GATE_REASON_MESSAGES: Readonly<Record<GateReasonCode, string>> = {
   [GATE_REASONS.allowedOpen]: '资产闸门未启用，本次放行。',
   [GATE_REASONS.allowedEntitled]: '当前账号已获得该项资产的授权。',
   [GATE_REASONS.deniedNoSnapshot]: '当前没有可用的授权快照，已按最小权限拒绝。',
-  [GATE_REASONS.deniedPolicyUnavailable]: '无法获取资产闸门策略，已按最小权限拒绝，请联网后重试。',
+  [GATE_REASONS.deniedPolicyUnavailable]: '授权服务暂时不可用：无法获取资产闸门策略，已按最小权限拒绝，请稍后重试。',
   [GATE_REASONS.deniedExpired]: '授权已过期，请联网刷新授权后重试。',
   [GATE_REASONS.deniedSnapshotStale]: '离线时间过长（超过 24 小时未成功同步授权），联网后可继续操作。',
   [GATE_REASONS.deniedNotEntitled]: '当前账号未获得该项资产的授权。',

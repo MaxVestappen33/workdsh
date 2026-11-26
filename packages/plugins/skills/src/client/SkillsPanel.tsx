@@ -67,6 +67,18 @@ function statusToneOf(text: string): string {
   if (/审批|审核/u.test(text)) return 'pending';
   return 'neutral';
 }
+/**
+ * 授权到期提示：只在条目带结束时间且已经过期时展示；未过期不新增噪音。
+ * 时间无法解析时按已过期处理（与闸门 fail-closed 口径一致）。
+ */
+function expiryNoticeOf(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const at = Date.parse(value);
+  if (Number.isNaN(at)) return '授权已过期';
+  if (at > Date.now()) return undefined;
+  const date = new Date(at);
+  return `已过期至 ${date.getMonth() + 1} 月 ${date.getDate()} 日`;
+}
 
 /** Stable brand tone for skills without a bundled marketplace icon. */
 function toneOf(name: string): { background: string; color: string } {
@@ -103,6 +115,22 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
   const [authorizedReady, setAuthorizedReady] = useState(false);
   // 市场：可用性来自宿主绑定，不可用时整条链路（页签、数据、筛选）都不出现。
   const [marketOn, setMarketOn] = useState(false);
+  /**
+   * 闸门是否生效（主闸门 + 技能子闸门）。默认按开启处理，拉取成功后按实际值切换；
+   * 关闸时把后台 isAuthorized 一律按 Y 处理：隐藏授权/申请标签与入口、放开安装按钮。
+   */
+  const [gateEnforced, setGateEnforced] = useState(true);
+  const refreshGate = useCallback(async () => {
+    try { setGateEnforced((await management.assetGateState()).enforced); }
+    catch (cause) { console.error('[workdsh:skills:gate-state]', cause); }
+  }, [management]);
+  useEffect(() => { void refreshGate(); }, [refreshGate]);
+  // 关闸后授权类筛选立即失效并清空已选值，避免继续用旧条件过滤服务端结果。
+  useEffect(() => {
+    if (gateEnforced) return;
+    setAuthFilter(undefined);
+    setApplyFilter(undefined);
+  }, [gateEnforced]);
   const [marketDict, setMarketDict] = useState<readonly SkillScene[]>([]);
   const [market, setMarket] = useState<SkillMarketListState>(emptySkillMarketList);
   // 三种加载状态分开：首屏/筛选重置（marketBusy）、滚动加载更多（marketMore）、失败（marketError / marketMoreError）。
@@ -333,6 +361,8 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
   const reloadAll = () => {
     if (reloadingRef.current) return reloadingRef.current;
     const task = (async () => {
+      // 闸门开关可能刚在后台变更：先取一次状态，后续列表与按钮按新状态渲染。
+      await refreshGate();
       await refresh();
       if (!marketOn) return;
       if (tab === 'market') await loadMarket(filter);
@@ -787,6 +817,8 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
    * 界面只负责展示，因此卡片上的「＋」与详情页的「安装 / 卸载」始终跟着它走。
    */
   const isInstalled = (entry: SkillMarketItem) => entry.installed === true;
+  /** 关闸时后台 isAuthorized 一律按 Y：安装按钮不因未授权置灰，申请类入口隐藏。 */
+  const authorizedOf = (entry: SkillMarketItem): boolean => gateEnforced ? entry.authorized === true : true;
   /**
    * 技能不可用的原因文案：授权问题优先（后台撤权需要先重新申请），
    * 其次才是完整性（本地文件被修改，需要重新安装）。两者都只在各自卡片上展示。
@@ -802,7 +834,7 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
   const options = dictTexts;
   /** 只保留当前页签仍存在的选中项：切页签或字典变化后，失效的选择自动丢弃。 */
   const activeScenes = scenes.filter(name => options.includes(name));
-  const filter: SkillMarketFilter = { scenes: activeScenes, keyword: query, builtin: builtinFilter, install: installFilter, auth: authFilter, apply: applyFilter };
+  const filter: SkillMarketFilter = { scenes: activeScenes, keyword: query, builtin: builtinFilter, install: installFilter, ...(gateEnforced ? { auth: authFilter, apply: applyFilter } : {}) };
   /** 安装状态是客户端过滤：卡片渲染只用这里的可见条目。 */
   const marketEntries = marketItemsByInstall(market.items, installFilter);
 
@@ -863,7 +895,9 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
     // 随客户端内置：默认启用、不允许停用和卸载；索引不可用时由宿主按随包来源兜底。
     const clientBuiltin = clientBuiltinOf(skill);
     // 只有「授权已失效」的技能才展示授权/申请状态与申请入口，其它技能保持原样。
-    const revoked = skill.authState === 'revoked';
+    const revoked = gateEnforced && skill.authState === 'revoked';
+    const unlisted = skill.authState === 'unlisted';
+    const expired = expiryNoticeOf(skill.expiresAt);
     const marketRef = revoked ? marketRefOf(skill) : undefined;
     const applyRef = marketRef?.applyStatus;
     const applyApplicable = revoked && applyRef !== 'pending';
@@ -882,6 +916,8 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
           {version ? <TongyunTagSingle>{formatTagVersion(version)}</TongyunTagSingle> : null}
           <TongyunTagSingle tone={builtinOf(skill) ? 'gray' : 'cyan'}>{builtinOf(skill) ? '内置' : '非内置'}</TongyunTagSingle>
           {revoked ? <TongyunTagSingle auth={false}>未授权</TongyunTagSingle> : null}
+          {unlisted ? <TongyunTagSingle auth={false}>未登记</TongyunTagSingle> : null}
+          {expired ? <TongyunTagSingle auth={false}>{expired}</TongyunTagSingle> : null}
           {revoked && applyRef ? <TongyunTagSingle tone={applyStatusTone(applyRef)}>{APPLY_LABEL[applyRef]}</TongyunTagSingle> : null}
         </div>
         <div className="market-card-actions">
@@ -901,10 +937,10 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
     const installing = marketInstalling === entry.id;
     const failure = marketFailures[entry.id];
     const installed = isInstalled(entry);
-    const authorized = entry.authorized === true;
+    const authorized = authorizedOf(entry);
     // 申请状态只在未授权时参与按钮：只有「申请中」是取消申请；已通过但被后台撤权的仍要能重新申请。
-    const applicable = !authorized && entry.applyStatus !== 'pending';
-    const cancelable = !authorized && entry.applyStatus === 'pending';
+    const applicable = gateEnforced && !authorized && entry.applyStatus !== 'pending';
+    const cancelable = gateEnforced && !authorized && entry.applyStatus === 'pending';
     return <article className={`card market-card${installing ? ' is-installing' : ''}`} key={entry.id}>
       <button className="card-open" aria-label={`查看技能 ${entry.title}`} onClick={() => void openMarketDetail(entry)}><SkillMark name={entry.slug} title={entry.title} iconUrl={entry.icon} /><span className="card-title"><strong title={entry.title}>{entry.title}</strong><small className="market-slug" title={entry.slug}>{entry.slug}</small></span></button>
       {sceneText ? <small className="tag" title={sceneText}>{sceneText}</small> : null}
@@ -915,9 +951,11 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
           {entry.version ? <TongyunTagSingle>{formatTagVersion(entry.version)}</TongyunTagSingle> : null}
           <TongyunTagSingle tone={entry.builtin ? 'gray' : 'cyan'}>{entry.builtin ? '内置' : '非内置'}</TongyunTagSingle>
           <TongyunTagSingle tone={installed ? 'green' : 'gray'}>{installed ? '已安装' : '未安装'}</TongyunTagSingle>
-          {/* 授权状态只看 isAuthorized；申请状态只看 applyStatus，两者互不影响。 */}
-          <TongyunTagSingle auth={authorized}>{authorized ? '已授权' : '未授权'}</TongyunTagSingle>
-          <TongyunTagSingle tone={applyStatusTone(entry.applyStatus)}>{APPLY_LABEL[entry.applyStatus]}</TongyunTagSingle>
+          {/* 授权状态只看 isAuthorized；关闸时不做授权判定，隐藏授权与申请状态标签。 */}
+          {gateEnforced ? <>
+            <TongyunTagSingle auth={authorized}>{authorized ? '已授权' : '未授权'}</TongyunTagSingle>
+            <TongyunTagSingle tone={applyStatusTone(entry.applyStatus)}>{APPLY_LABEL[entry.applyStatus]}</TongyunTagSingle>
+          </> : null}
         </div>
         <div className="market-card-actions">
           {!installed && authorized
@@ -993,8 +1031,10 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
         {/* 三个状态条件只作用于技能市场；本地技能页签里它们没有意义。 */}
         {tab === 'market' ? <>
           <div className="filter-group"><span className="filter-label">安装状态：</span><CategoryBar categories={INSTALL_OPTIONS} values={installFilter === undefined ? [] : [installFilter === 'installed' ? INSTALL_OPTIONS[0] : INSTALL_OPTIONS[1]]} onChange={changeInstall} /></div>
-          <div className="filter-group"><span className="filter-label">授权状态：</span><CategoryBar categories={AUTH_OPTIONS} values={authFilter === undefined ? [] : [authFilter === 'Y' ? AUTH_OPTIONS[0] : AUTH_OPTIONS[1]]} onChange={changeAuth} /></div>
-          <div className="filter-group"><span className="filter-label">申请状态：</span><CategoryBar categories={APPLY_OPTIONS} values={applyFilter === undefined ? [] : [APPLY_LABEL[applyFilter]]} onChange={changeApply} /></div>
+          {gateEnforced ? <>
+            <div className="filter-group"><span className="filter-label">授权状态：</span><CategoryBar categories={AUTH_OPTIONS} values={authFilter === undefined ? [] : [authFilter === 'Y' ? AUTH_OPTIONS[0] : AUTH_OPTIONS[1]]} onChange={changeAuth} /></div>
+            <div className="filter-group"><span className="filter-label">申请状态：</span><CategoryBar categories={APPLY_OPTIONS} values={applyFilter === undefined ? [] : [APPLY_LABEL[applyFilter]]} onChange={changeApply} /></div>
+          </> : null}
         </> : null}
         <div className="filter-group scenes-filter"><span className="filter-label">业务场景：</span><CategoryBar categories={options} values={activeScenes} onChange={changeScene} /></div>
       </div>}
@@ -1028,7 +1068,7 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
     {overlayVisible ? <QueryOverlay /> : null}
 
     <Modal open={Boolean(marketEntry)} label={marketEntry ? `${marketEntry.title} 技能详情` : '技能详情'} className="skill-detail-dialog" onClose={() => { setMarketDetailId(undefined); setMarketDoc(undefined); setMarketDocError(''); }}>
-      {marketEntry && <article data-testid="skill-market-detail"><div className="detail-hero"><SkillMark large name={marketEntry.slug} title={marketEntry.title} iconUrl={marketEntry.icon} /><div className="detail-title"><h1>{marketEntry.title}</h1><p className="slug">{marketEntry.slug}</p><div className="detail-actions">{isInstalled(marketEntry) ? <><Button className="installed-action" disabled>已安装</Button>{!marketEntry.authorized && marketEntry.applyStatus === 'pending' ? <Button className="try" disabled={ssoBusy} onClick={() => void openAuthSso('cancel', marketEntry)}>取消申请</Button> : null}{!marketEntry.authorized && marketEntry.applyStatus !== 'pending' ? <Button variant="primary" className="try" disabled={ssoBusy} onClick={() => void openAuthSso('apply', marketEntry)}>申请</Button> : null}{marketEntry.clientBuiltin !== true && <Button tone="danger" className="danger" onClick={() => void uninstallFromMarket(marketEntry)}>卸载</Button>}</> : marketEntry.authorized ? <Button variant="primary" className="try" disabled={Boolean(marketInstalling)} onClick={() => void installFromMarket(marketEntry)}>{marketInstalling === marketEntry.id ? '正在安装…' : marketFailures[marketEntry.id] ? '重试安装' : '安装'}</Button> : marketEntry.applyStatus === 'pending' ? <Button className="try" disabled={ssoBusy} onClick={() => void openAuthSso('cancel', marketEntry)}>取消申请</Button> : <Button variant="primary" className="try" disabled={ssoBusy} onClick={() => void openAuthSso('apply', marketEntry)}>申请</Button>}</div></div></div>
+      {marketEntry && <article data-testid="skill-market-detail"><div className="detail-hero"><SkillMark large name={marketEntry.slug} title={marketEntry.title} iconUrl={marketEntry.icon} /><div className="detail-title"><h1>{marketEntry.title}</h1><p className="slug">{marketEntry.slug}</p><div className="detail-actions">{isInstalled(marketEntry) ? <><Button className="installed-action" disabled>已安装</Button>{gateEnforced && !authorizedOf(marketEntry) && marketEntry.applyStatus === 'pending' ? <Button className="try" disabled={ssoBusy} onClick={() => void openAuthSso('cancel', marketEntry)}>取消申请</Button> : null}{gateEnforced && !authorizedOf(marketEntry) && marketEntry.applyStatus !== 'pending' ? <Button variant="primary" className="try" disabled={ssoBusy} onClick={() => void openAuthSso('apply', marketEntry)}>申请</Button> : null}{marketEntry.clientBuiltin !== true && <Button tone="danger" className="danger" onClick={() => void uninstallFromMarket(marketEntry)}>卸载</Button>}</> : authorizedOf(marketEntry) ? <Button variant="primary" className="try" disabled={Boolean(marketInstalling)} onClick={() => void installFromMarket(marketEntry)}>{marketInstalling === marketEntry.id ? '正在安装…' : marketFailures[marketEntry.id] ? '重试安装' : '安装'}</Button> : marketEntry.applyStatus === 'pending' ? <Button className="try" disabled={ssoBusy} onClick={() => void openAuthSso('cancel', marketEntry)}>取消申请</Button> : <Button variant="primary" className="try" disabled={ssoBusy} onClick={() => void openAuthSso('apply', marketEntry)}>申请</Button>}</div></div></div>
         <p className="detail-summary">{marketEntry.description}</p>
         {marketInstalling === marketEntry.id ? <div className="install-bar" role="progressbar" aria-label={`正在安装 ${marketEntry.title}`}><i className="install-bar-fill" /></div> : null}
         {marketFailures[marketEntry.id] && !isInstalled(marketEntry) && marketInstalling !== marketEntry.id ? <p className="error" role="alert">{marketFailures[marketEntry.id]}</p> : null}
@@ -1046,6 +1086,7 @@ export function SkillsPanel({ toggleNavigation, management, startSkillTask, star
       {selected && <article data-testid="skill-detail"><div className="detail-hero"><SkillMark large name={selected.name} title={titleOf(selected)} iconUrl={marketIconOf(selected)} /><div className="detail-title"><h1>{titleOf(selected)}</h1>{titleOf(selected) !== selected.name ? <p className="slug">{selected.name}</p> : null}<div className="detail-actions"><Button className="try" disabled={(selected.state !== 'enabled' && selected.state !== 'readonly') || selected.authState !== undefined || selected.integrityState !== undefined} onClick={() => void trial(selected.name)}>去试试</Button>{(selected.manageable || selected.directoryPath) && <Button disabled={!selected.directoryPath} onClick={() => void openDirectory(selected)}>打开文件夹</Button>}{selected.manageable && !clientBuiltinOf(selected) && <Button tone="danger" className="danger" onClick={() => void prepareUninstall(selected)}>卸载</Button>}</div></div><button className="switch" role="switch" disabled={!selected.manageable || selected.state === 'invalid' || clientBuiltinOf(selected)} aria-checked={clientBuiltinOf(selected) || selected.state === 'enabled'} onClick={() => void setEnabled(selected, selected.state !== 'enabled')} /></div>
         <p className="detail-summary">{selected.localizedDescription ?? selected.description}</p>
         {blockedReasonOf(selected) ? <p className="error" role="alert">{blockedReasonOf(selected)}</p> : null}
+        {expiryNoticeOf(selected.expiresAt) ? <p className="error" role="alert">{expiryNoticeOf(selected.expiresAt)}</p> : null}
         {trialErrors[selected.name] ? <p className="error" role="alert">{trialErrors[selected.name]}</p> : null}
         <h2 className="detail-section-title">{icon('library')}概述</h2>
         <div className="detail-body">{resource ? <><div className="resource-editor-head"><Button onClick={() => setResource(undefined)}>返回概述</Button><strong>{resource.path}</strong></div><label className="editor-label" htmlFor="resource-document">资源文件</label><Textarea id="resource-document" className="skill-editor" value={resourceDocument} onChange={event => setResourceDocument(event.currentTarget.value)} spellCheck={false} /><div className="editor-actions"><Button onClick={() => { setResourceDocument(resource.document); setResource(undefined); }}>取消</Button><Button variant="primary" className="save" disabled={busy || (!resource.isNew && resourceDocument === resource.document)} onClick={() => void saveResource()}>保存资源</Button></div></> : editing ? <><label className="editor-label" htmlFor="skill-document">SKILL.md</label><Textarea id="skill-document" className="skill-editor" value={skillDocument} onChange={event => setSkillDocument(event.currentTarget.value)} spellCheck={false} /><div className="editor-actions"><Button onClick={() => { setSkillDocument(selected.document ?? ''); setEditing(false); }}>取消</Button><Button variant="primary" className="save" disabled={busy || skillDocument === selected.document} onClick={() => void save()}>保存并重新发现</Button></div></> : <><dl><dt>名称</dt><dd>{selected.name}</dd><dt>业务场景</dt><dd>{scenesOf(selected).join(' · ') || '未标注'}</dd><dt>状态</dt><dd>{selected.state === 'enabled' ? '已启用' : selected.state === 'disabled' ? '已停用' : selected.state === 'invalid' ? '需要修复' : '只读'}</dd><dt>调用方式</dt><dd><code className="command">/{selected.name}</code></dd></dl>{selected.diagnostics?.length ? <section className="validation-errors"><h3>校验问题</h3><ul>{selected.diagnostics.map(item => <li key={`${item.code}-${item.path ?? ''}`}>{item.message}</li>)}</ul><Button onClick={() => setEditing(true)}>修复 SKILL.md</Button></section> : null}{selected.manageable && <section className="resource-section"><h3>资源文件</h3>{selected.resources.length ? <div className="resource-list">{selected.resources.map(path => <Button key={path} onClick={() => void openResource(path)}>{path}</Button>)}</div> : <p className="muted">暂无附加资源</p>}<div className="new-resource"><Input aria-label="新资源路径" placeholder="例如 references/guide.md" value={newResourcePath} onChange={event => setNewResourcePath(event.currentTarget.value)} /><Button disabled={!newResourcePath.trim()} onClick={beginResource}>新建资源</Button></div></section>}<pre className="skill-document">{selected.document ?? selected.whenToUse ?? selected.description}</pre></>}{error && <p className="error" role="alert">{error}</p>}</div>

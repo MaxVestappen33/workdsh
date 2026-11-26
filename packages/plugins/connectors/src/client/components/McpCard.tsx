@@ -107,6 +107,19 @@ type LocalCardProps = {
 };
 
 /**
+ * 授权到期提示：只在条目带结束时间且已经过期时展示；未过期不新增噪音。
+ * 时间无法解析时按已过期处理（与闸门 fail-closed 口径一致）。
+ */
+export function expiryNoticeOf(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const at = Date.parse(value);
+  if (Number.isNaN(at)) return '授权已过期';
+  if (at > Date.now()) return undefined;
+  const date = new Date(at);
+  return `已过期至 ${date.getMonth() + 1} 月 ${date.getDate()} 日`;
+}
+
+/**
  * 卡片内自带行为的元素：开关、删除、安装加号、加载指示、批量勾选框等。
  * 命中它们时由元素自身处理，不冒泡触发整卡打开详情。
  */
@@ -171,6 +184,7 @@ export function LocalMcpCard({ row, category, market, marketRef, builtin, busy, 
         {version ? <TongyunTagSingle>{formatTagVersion(version)}</TongyunTagSingle> : null}
         <TongyunTagSingle tone={builtin ? 'gray' : 'cyan'}>{builtin ? '内置' : '非内置'}</TongyunTagSingle>
         {blocked ? <TongyunTagSingle auth={false}>未授权</TongyunTagSingle> : null}
+        {expiryNoticeOf(row.expiresAt) ? <TongyunTagSingle auth={false}>{expiryNoticeOf(row.expiresAt)}</TongyunTagSingle> : null}
         {blocked && applyStatus ? <TongyunTagSingle tone={applyStatusTone(applyStatus)}>{APPLY_LABEL[applyStatus]}</TongyunTagSingle> : null}
       </div>
       {/* 授权异常原因就地展示（闸门统一文案）：与技能的提示位一致，不自己拼文案。 */}
@@ -208,6 +222,8 @@ type MarketCardProps = {
   readonly busy: boolean;
   /** 单点跳转请求占用：申请/取消申请期间禁用按钮。 */
   readonly ssoBusy: boolean;
+  /** 闸门是否生效：关闸时把后台 isAuthorized 一律按 Y，隐藏授权/申请标签与入口。 */
+  readonly gateEnforced: boolean;
   readonly onOpen: (id: string) => void;
   readonly onInstall: (entry: MarketItem) => void;
   readonly onUninstall: (entry: MarketItem) => void;
@@ -219,16 +235,16 @@ type MarketCardProps = {
  * 市场卡片：图标 · 名称 · 服务标识 · 分类 · 描述 · 统计行 · 状态徽标组 · 底部操作区。
  * 布局与技能市场一致：标签靠左、操作按钮靠右；卸载属于危险操作，固定放在最右侧。
  */
-export function MarketMcpCard({ entry, category, installed, installing, failure, busy, ssoBusy, onOpen, onInstall, onUninstall, onApply, onCancelApply }: MarketCardProps) {
+export function MarketMcpCard({ entry, category, installed, installing, failure, busy, ssoBusy, gateEnforced, onOpen, onInstall, onUninstall, onApply, onCancelApply }: MarketCardProps) {
   /** 整卡可点击：点卡片任意空白区都打开详情，卡片内的按钮区仍走各自行为。 */
   const openCard = (event: MouseEvent<HTMLElement>) => {
     if (isCardAction(event.target)) return;
     onOpen(entry.originId);
   };
-  const authorized = entry.authorized === true;
+  const authorized = gateEnforced ? entry.authorized === true : true;
   // 未授权时：申请中给「取消申请」，其余状态都给「申请」（已通过但被撤权的仍可重新申请）。
-  const cancelable = !authorized && entry.applyStatus === 'pending';
-  const applicable = !authorized && entry.applyStatus !== 'pending';
+  const cancelable = gateEnforced && !authorized && entry.applyStatus === 'pending';
+  const applicable = gateEnforced && !authorized && entry.applyStatus !== 'pending';
   return (
     <article className={`card market-card${installing ? ' is-installing' : ''}`} onClick={openCard}>
       <div className="card-top">
@@ -257,8 +273,10 @@ export function MarketMcpCard({ entry, category, installed, installing, failure,
           {entry.version ? <TongyunTagSingle>{formatTagVersion(entry.version)}</TongyunTagSingle> : null}
           {entry.builtin === undefined ? null : <TongyunTagSingle tone={entry.builtin ? 'gray' : 'cyan'}>{entry.builtin ? '内置' : '非内置'}</TongyunTagSingle>}
           <TongyunTagSingle tone={installed ? 'green' : 'gray'}>{installed ? '已安装' : '未安装'}</TongyunTagSingle>
-          <TongyunTagSingle auth={authorized}>{authorized ? '已授权' : '未授权'}</TongyunTagSingle>
-          <TongyunTagSingle tone={applyStatusTone(entry.applyStatus)}>{APPLY_LABEL[entry.applyStatus]}</TongyunTagSingle>
+          {gateEnforced ? <>
+            <TongyunTagSingle auth={authorized}>{authorized ? '已授权' : '未授权'}</TongyunTagSingle>
+            <TongyunTagSingle tone={applyStatusTone(entry.applyStatus)}>{APPLY_LABEL[entry.applyStatus]}</TongyunTagSingle>
+          </> : null}
         </div>
         <div className="market-card-actions">
           {!installed && authorized

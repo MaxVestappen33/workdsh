@@ -64,35 +64,65 @@ export interface EffectiveGatePolicy {
 }
 
 /**
- * 连接器授权条目。
+ * 授权条目（v2 快照的通用形态）。
  *
- * `id` 必有；`tools` 缺省或空数组表示该连接器全部工具可用，非空表示工具白名单。
+ * `id` 必有；`startTime` / `endTime` 缺省、空串或 null 都表示不受该端约束，
+ * 两个都为 null 即「永久有效」。时间按后台原样保存，不在解析阶段换算时区。
+ */
+export interface EntitlementEntry {
+  readonly id: string;
+  readonly startTime?: string | null;
+  readonly endTime?: string | null;
+}
+
+/**
+ * 连接器授权条目：在通用条目上多一个工具白名单。
+ *
+ * `tools` 缺省或空数组表示该连接器全部工具可用，非空表示工具白名单。
  * 白名单只做收窄：条目本身仍代表「连接器已授权」。
  */
-export interface McpEntitlementEntry {
-  readonly id: string;
+export interface McpEntitlementEntry extends EntitlementEntry {
   readonly tools?: readonly string[];
 }
 
-/** 七类资产的授权集合：`mcp` 为条目数组，其余六类为编号数组。 */
+/** 七类资产的授权集合：全部为条目数组，`mcp` 的条目额外带工具白名单。 */
 export interface SnapshotAssets {
-  readonly skill: readonly string[];
+  readonly skill: readonly EntitlementEntry[];
   readonly mcp: readonly McpEntitlementEntry[];
-  readonly expert: readonly string[];
-  readonly expert_group: readonly string[];
-  readonly model: readonly string[];
-  readonly knowledge: readonly string[];
-  readonly prompt: readonly string[];
+  readonly expert: readonly EntitlementEntry[];
+  readonly expert_group: readonly EntitlementEntry[];
+  readonly model: readonly EntitlementEntry[];
+  readonly knowledge: readonly EntitlementEntry[];
+  readonly prompt: readonly EntitlementEntry[];
 }
 
 /**
  * 某类资产的授权编号投影。
  *
- * `mcp` 从条目里取 `id`，其余类型直接用数组；撤权对账、判定器与界面统计都走这一个投影，
- * 避免出现「编号集合」与「工具明细」两套来源。
+ * 撤权对账、判定器与界面统计都走这一个投影，避免出现「编号集合」与「条目明细」两套来源。
  */
 export function entitlementIds(assets: SnapshotAssets, assetType: AssetType): readonly string[] {
-  return assetType === 'mcp' ? assets.mcp.map(entry => entry.id) : assets[assetType];
+  return assets[assetType].map(entry => entry.id);
+}
+
+/** 取某个资产的授权条目；不存在时返回 undefined。只读内存，不触发任何 IO。 */
+export function entitlementOf(
+  assets: SnapshotAssets,
+  assetType: AssetType,
+  assetId: string,
+): EntitlementEntry | undefined {
+  return assets[assetType].find(entry => entry.id === assetId);
+}
+
+/**
+ * 条目是否已经过期：`endTime` 为空表示永久有效；无法解析的时间按已过期处理，
+ * 宁可拒绝也不把不可信的时间当有效授权。
+ */
+export function entitlementExpired(entry: EntitlementEntry, now: number = Date.now()): boolean {
+  const raw = entry.endTime?.trim();
+  if (!raw) return false;
+  const deadline = Date.parse(raw);
+  return Number.isNaN(deadline) ? true : now >= deadline;
 }
 
 /** 一次授权快照的本地记录（后台字段 + 本地归属信息）。 */

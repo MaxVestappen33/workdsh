@@ -46,10 +46,10 @@ interface AssetGateLike {
     readonly assetId?: string;
     readonly assetName?: string;
   }): void;
-  /** 当前授权快照（主闸门关闭或尚未就绪时不可用）；`assets.model` 是已授权的模型资产编号。 */
+  /** 当前授权快照（主闸门关闭或尚未就绪时不可用）；`assets.model` 是已授权的模型资产条目。 */
   snapshot?(): {
     readonly revision: string;
-    readonly assets: { readonly model: readonly string[] };
+    readonly assets: { readonly model: readonly { readonly id: string }[] };
   } | undefined;
   /** 触发一次快照刷新；实现内部自带节流，失败由实现吞掉。 */
   refreshNow?(): void;
@@ -498,7 +498,10 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
     const records = await readMarketRecords(this.recordsFile);
     const assetId = this.marketAssetOf(records, provider, model);
     if (assetId === undefined) return 'authorized';
-    assetGate(this.ctx)?.refreshNow?.();
+    const gate = assetGate(this.ctx);
+    // 关闸时判定统一在客户端：市场模型一律按已授权处理，不使用缓存的授权索引。
+    if (gate && !gate.enabled('model')) return 'authorized';
+    gate?.refreshNow?.();
     return this.entitledIds()?.has(assetId) === true ? 'authorized' : 'unauthorized';
   }
 
@@ -506,11 +509,16 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
    * 模型选择器批量入口：与单个判定同一套口径，全程不产生后台模型查询。
    */
   async authorizationsOf(items: readonly ModelAuthorizationQuery[], signal?: AbortSignal): Promise<readonly ModelAuthorizationEntry[]> {
+    // 关闸时不判定、不读缓存：所有条目统一按已授权返回。
+    const gate = assetGate(this.ctx);
+    if (gate && !gate.enabled('model')) {
+      return items.map(item => ({ provider: item.provider, model: item.model, state: 'authorized' as const }));
+    }
     // 打开面板时强制要一份整份快照（15 秒节流内直接复用）；最多等 300ms，
     // 慢的时候先用当前已恢复的快照出结论，不把面板拖住。
-    const refresh = assetGate(this.ctx)?.refreshNowFull?.();
+    const refresh = gate?.refreshNowFull?.();
     if (refresh) await Promise.race([refresh.catch(() => {}), new Promise(resolve => setTimeout(resolve, 300))]);
-    else assetGate(this.ctx)?.refreshNow?.();
+    else gate?.refreshNow?.();
     const records = await readMarketRecords(this.recordsFile);
     const entitled = this.entitledIds();
     return items.map(item => {
@@ -542,12 +550,15 @@ export class ModelMarketService extends Service implements ModelMarketServiceApi
     return /^\d+$/.test(id) ? id : undefined;
   }
 
-  /** 快照里的已授权模型集合：按 revision 记忆；主闸门关闭或快照未就绪时返回 undefined。 */
+  /** 快照里的已授权模型集合：按 revision + 闸门状态记忆；关闸或快照未就绪时返回 undefined。 */
   private entitledIds(): ReadonlySet<string> | undefined {
-    const snapshot = assetGate(this.ctx)?.snapshot?.();
+    const gate = assetGate(this.ctx);
+    // 关闸时不得继续使用缓存的授权索引：直接跳过，由调用方按已授权处理。
+    if (gate && !gate.enabled('model')) return undefined;
+    const snapshot = gate?.snapshot?.();
     if (!snapshot) return undefined;
     if (this.authMemo?.revision !== snapshot.revision) {
-      this.authMemo = { revision: snapshot.revision, entitled: new Set(snapshot.assets.model) };
+      this.authMemo = { revision: snapshot.revision, entitled: new Set(snapshot.assets.model.map(entry => entry.id)) };
     }
     return this.authMemo.entitled;
   }

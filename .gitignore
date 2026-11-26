@@ -31,6 +31,7 @@ apps/desktop/build/official-release-cache/
 
 # Local caches and development evidence are not release content.
 /.artifacts/
+**/.artifacts/
 /.idea/
 /.playwright-mcp/
 /.pnpm-store/

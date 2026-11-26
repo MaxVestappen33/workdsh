@@ -56,6 +56,10 @@ interface AssetGateProbe {
   revocationReason(): { readonly reason: string; readonly message: string };
   /** 判定过程抛异常时的原因码与文案：列表标记复用同一份。 */
   evaluationError(): { readonly reason: string; readonly message: string };
+  /** 未上架/未登记的拒绝原因：本地技能可见但不可用时复用同一份文案。 */
+  unlisted?(): { readonly reason: string; readonly message: string };
+  /** 某资产的有效期条目（只读内存）；闸门关闭或未命中时返回 undefined。 */
+  entitlement?(assetType: string, assetId: string): { readonly startTime?: string | null; readonly endTime?: string | null } | undefined;
   /** 触发式快照校验（内部有节流）：进入技能面板时先做一次 revision 比对。 */
   refreshNow?(): Promise<void>;
   decide(request: { readonly assetType: string; readonly assetId: string; readonly usage: string }):
@@ -398,13 +402,22 @@ export class SkillManager extends Service implements SkillManagementService {
     }));
     // 闸门开启或验签开关开启时才为市场来源的技能补授权/重装标记；都关闭时不读清单、不做判定。
     const gate = probe;
-    // 闸门开启时市场外技能直接不显示（用户手放到技能目录、未从市场安装）。
-    const visible = gate?.enabled('skill') === true && externalLocal.size > 0
-      ? merged.filter(row => !externalLocal.has(row.name))
-      : merged;
+    // 未登记的本地技能（用户手放/自建）不再从列表里消失：与连接器、专家口径一致，
+    // 保留可见并在卡片上标记「未登记不可用」，召唤/启用/调用仍由调用期闸门拒绝。
     const described = gate && (gate.enabled('skill') || gate.signatureEnabled?.() === true)
-      ? await Promise.all(visible.map(async row => ({ ...row, ...(await this.authStateOf(row.name, gate)) })))
-      : visible;
+      ? await Promise.all(merged.map(async row => {
+        const state = await this.authStateOf(row.name, gate);
+        if (gate.enabled('skill') && externalLocal.has(row.name) && state.authState === undefined) {
+          return {
+            ...row,
+            ...state,
+            authState: 'unlisted' as const,
+            authReason: gate.unlisted?.().message ?? '该资产未上架或未登记，已标记为不可用。',
+          };
+        }
+        return { ...row, ...state };
+      }))
+      : merged;
     // 市场来源技能每次都按缓存比对一次内容摘要：用户在本地改过文件后，卡片要立刻显示「不可用」
     // 而不是等到真正调用时才被调用期闸门拒绝。授权问题优先展示，两者都有时不叠加两条文案。
     const verified = marketInstalled.size === 0 && builtinInstalled.size === 0 ? described : await Promise.all(described.map(async row => (
@@ -475,7 +488,19 @@ export class SkillManager extends Service implements SkillManagementService {
     let integrity: Pick<ManagedSkillSummary, 'integrityState' | 'integrityReason'> = {};
     try { if ((await this.installManifest(detail.name))?.source === 'market') integrity = await this.integrityStateOf(detail.name); }
     catch { integrity = {}; }
-    return { ...detail, ...contribution, ...entry, ...(title ? { title } : {}), ...integrity };
+    // 详情与列表同一口径：市场来源带授权/到期状态；未登记的本地技能标记为不可用。
+    let auth: Pick<ManagedSkillSummary, 'authState' | 'authReason' | 'expiresAt'> = {};
+    try {
+      const gate = this.gateProbe();
+      const manifest = await this.installManifest(detail.name);
+      if (gate?.enabled('skill')) {
+        if (manifest?.source === 'market' && manifest.assetId) auth = await this.authStateOf(detail.name, gate);
+        else if (manifest?.source !== 'builtin' && detail.directoryPath) {
+          auth = { authState: 'unlisted', authReason: gate.unlisted?.().message ?? '该资产未上架或未登记，已标记为不可用。' };
+        }
+      }
+    } catch { auth = {}; }
+    return { ...detail, ...contribution, ...entry, ...(title ? { title } : {}), ...integrity, ...auth };
   }
 
   private async readDetail(name: string, signal?: AbortSignal): Promise<ManagedSkillDetail | undefined> {
@@ -1067,19 +1092,22 @@ export class SkillManager extends Service implements SkillManagementService {
   private async authStateOf(
     name: string,
     gate: AssetGateProbe,
-  ): Promise<{ readonly authState?: 'unauthorized' | 'revoked' | 'reinstall' | 'error'; readonly authReason?: string }> {
+  ): Promise<{ readonly authState?: 'unauthorized' | 'revoked' | 'reinstall' | 'error'; readonly authReason?: string; readonly expiresAt?: string }> {
     try {
       const manifest = await this.installManifest(name);
       if (manifest?.source !== 'market' || !manifest.assetId) return {};
+      // 条目有效期：仅在快照命中该资产且带结束时间时有值；界面只在已过期时展示提示。
+      const expires = gate.entitlement?.('skill', manifest.assetId)?.endTime?.trim();
+      const expiry = expires ? { expiresAt: expires } : {};
       if (gate.revoked('skill', manifest.assetId)) {
-        return { authState: 'revoked', authReason: gate.revocationReason().message };
+        return { authState: 'revoked', authReason: gate.revocationReason().message, ...expiry };
       }
       // 验签开关开启但清单没有签名块：资产装于关闭期间，只能重新安装，不做一次性放行。
       if (gate.signatureEnabled?.() === true && manifest.signature === undefined) {
-        return { authState: 'reinstall', authReason: SIGNATURE_REINSTALL_MESSAGE };
+        return { authState: 'reinstall', authReason: SIGNATURE_REINSTALL_MESSAGE, ...expiry };
       }
       const decision = await gate.decide({ assetType: 'skill', assetId: manifest.assetId, usage: 'use' });
-      return decision.allow ? {} : { authState: 'unauthorized', authReason: decision.message };
+      return decision.allow ? expiry : { authState: 'unauthorized', authReason: decision.message, ...expiry };
     } catch {
       // 判定异常不能静默当作正常：按最小权限标记，文案仍取自闸门 reasons.ts。
       return { authState: 'error', authReason: gate.evaluationError().message };

@@ -26,10 +26,10 @@ import { RevocationLedger, reconcileRevocations, type RevocableAssetType } from 
 import { isCompleteSnapshotRecord, snapshotExpired } from './snapshot.js';
 import { SnapshotStore } from './snapshot-store.js';
 import type {
-  AssetUsage, EffectiveGatePolicy, GateAssetType, GateDecision, GatePolicy,
+  AssetUsage, EffectiveGatePolicy, EntitlementEntry, GateAssetType, GateDecision, GatePolicy,
   LocalGateConfig, SnapshotRecord,
 } from './types.js';
-import { entitlementIds } from './types.js';
+import { entitlementIds, entitlementOf } from './types.js';
 
 /** 运行中 revision 比对周期：用户要求授权变更尽快可见，取 60 秒。 */
 const REFRESH_INTERVAL_MS = 60_000;
@@ -63,6 +63,11 @@ export interface AssetGateApi {
   signatureEnabled(): boolean;
   /** 拉取后台策略并重算生效闸门；失败时沿用上一份策略，从未成功过则 fail-closed。 */
   refreshPolicy(signal?: AbortSignal): Promise<EffectiveGatePolicy>;
+  /**
+   * 与 `refreshPolicy` 相同，但把「是否真正从后台取到策略」一并返回。
+   * 供「刷新缓存」这类需要明确提示失败的入口使用；没有后台绑定时视为成功（不请求）。
+   */
+  refreshPolicyStrict(signal?: AbortSignal): Promise<{ readonly ok: boolean; readonly policy: EffectiveGatePolicy }>;
   /** 主闸门开启时按 revision 比对并刷新快照；关闭时直接返回 undefined。 */
   refreshSnapshot(signal?: AbortSignal): Promise<SnapshotRecord | undefined>;
   /** 登录后的完整同步：先策略，再按需快照，并按结果安排下一轮。 */
@@ -98,6 +103,13 @@ export interface AssetGateApi {
    * `restricted=false` 表示该连接器未收窄（或闸门未开启），此时 `tools` 为空数组。
    */
   mcpTools(assetId: string): { readonly restricted: boolean; readonly tools: readonly string[] };
+  /**
+   * 某资产的有效期条目（只读内存，不触发网络或磁盘读取）。
+   *
+   * 仅在该类型子闸门开启、且快照里存在该资产时返回；闸门关闭时不暴露任何授权信息，
+   * 界面据此不再展示到期提示。`endTime` 缺省表示永久有效。
+   */
+  entitlement(assetType: GateAssetType, assetId: string): EntitlementEntry | undefined;
   /**
    * 「未上架/未登记」的拒绝结果：数据层拿不到后台资产编号时复用它，
    * 保证原因码与文案只在 reasons.ts 维护一份。
@@ -279,9 +291,13 @@ export class AssetGateService extends Service implements AssetGateApi {
   }
 
   async refreshPolicy(signal?: AbortSignal): Promise<EffectiveGatePolicy> {
+    return (await this.refreshPolicyStrict(signal)).policy;
+  }
+
+  async refreshPolicyStrict(signal?: AbortSignal): Promise<{ readonly ok: boolean; readonly policy: EffectiveGatePolicy }> {
     if (!(await this.backend.available())) {
       // 没有后台绑定（个人模式/未登录）：不改变策略，也不主动请求。
-      return this.effective;
+      return { ok: true, policy: this.effective };
     }
     try {
       const policy = await this.backend.policy(signal);
@@ -293,12 +309,13 @@ export class AssetGateService extends Service implements AssetGateApi {
         this.persisted = serialized;
       }
       this.applyEffective(resolveEffectivePolicy(policy, this.local));
+      return { ok: true, policy: this.effective };
     } catch (error) {
       this.ctx.logger.warn(`资产闸门：策略获取失败（${detail(error)}）。`);
       // 有历史策略就沿用；从未成功拉取过则按「开」+ 拒绝，不能退回全关放行。
       this.applyEffective(this.remote ? resolveEffectivePolicy(this.remote, this.local) : failClosedPolicy());
+      return { ok: false, policy: this.effective };
     }
-    return this.effective;
   }
 
   async refreshSnapshot(signal?: AbortSignal): Promise<SnapshotRecord | undefined> {
@@ -382,6 +399,14 @@ export class AssetGateService extends Service implements AssetGateApi {
     return entry?.tools?.length
       ? { restricted: true, tools: entry.tools }
       : unrestricted;
+  }
+
+  entitlement(assetType: GateAssetType, assetId: string): EntitlementEntry | undefined {
+    // 闸门关闭时不暴露授权信息：界面据此不展示任何到期提示。
+    if (!this.enabled(assetType)) return undefined;
+    const account = this.account();
+    const snapshot = account ? this.store.peek(account.key) : undefined;
+    return snapshot ? entitlementOf(snapshot.assets, assetType, assetId) : undefined;
   }
 
   unlisted(): { readonly reason: GateReasonCode; readonly message: string } {

@@ -39,12 +39,16 @@ interface GateAuditWriteInput {
 }
 interface AssetGateLike {
   enabled(assetType: GateAssetType): boolean;
+  /** 当前生效策略：只用于向界面暴露闸门状态；旧版闸门没有该方法时按「已开」处理。 */
+  policy?(): { readonly masterEnabled: boolean; readonly failClosed?: boolean; readonly assetGates: Readonly<Record<string, boolean>> };
   /** 主闸门与验签开关是否同时开启；旧版闸门没有该方法时按关闭处理。 */
   signatureEnabled?(): boolean;
   /** 触发式校验：进市场页/刷新/写操作完成后做一次 revision 比对；旧版闸门没有该方法时跳过。 */
   refreshNow?(): Promise<void>;
   /** 强制刷新快照（绕过节流）；旧版闸门没有该方法时不做授权变更重试。 */
   refreshSnapshotForced?(signal?: AbortSignal): Promise<boolean>;
+  /** 强制刷新闸门策略，并返回是否真正取到；旧版闸门没有该方法时按成功处理。 */
+  refreshPolicyStrict?(signal?: AbortSignal): Promise<{ readonly ok: boolean; readonly policy?: { readonly failClosed?: boolean } }>;
   /** 最近一次被闸门拒绝注入的技能（按会话），界面据此渲染红色提示。 */
   skillDenials?(sessionId: string): { readonly turn: number; readonly names: readonly string[]; readonly at: number } | undefined;
   decide(request: { assetType: GateAssetType; assetId: string; usage: 'read' | 'use' | 'write' }): Promise<{ allow: boolean; reason: string; message: string }>;
@@ -318,11 +322,17 @@ async function dispatch(ctx: Context, manager: SkillManagementService, marketSer
     if (endpoint === 'list') return ok(await manager.list(signal));
     if (endpoint === 'root-path') return ok(manager.rootPath());
     if (endpoint === 'refresh-cache') {
-      // 「刷新缓存」：强制重拉授权快照（绕开常规节流）；闸门关闭时快照不存在，按成功处理。
+      // 「刷新缓存」：先重拉闸门策略（让主/子闸门开关立即生效），再按新策略强制重拉授权快照。
+      // 闸门关闭时快照不存在，按成功处理；策略拉取失败必须如实回报，不能静默成功。
       const gate = ctx.reflect.get('workdshAssetGate') as AssetGateLike | undefined;
+      const policyResult = await gate?.refreshPolicyStrict?.();
       const active = gate?.enabled('skill') === true;
       const refreshed = active ? await gate?.refreshSnapshotForced?.() ?? false : true;
-      return ok({ refreshed });
+      return ok({
+        refreshed,
+        policyRefreshed: policyResult?.ok ?? true,
+        policyUnavailable: policyResult?.policy?.failClosed === true,
+      });
     }
     if (endpoint === 'skill-denials') {
       const sessionId = record(payload)?.sessionId;
@@ -432,6 +442,14 @@ async function dispatch(ctx: Context, manager: SkillManagementService, marketSer
       return ok(await listing().adminSsoTarget(menuId, bizParams, signal));
     }
     // 技能市场：业务场景与关键词都由服务端筛选，参数非法直接拒绝，不把错误取值带给后台。
+    if (endpoint === 'asset-gate-state') {
+      const gate = assetGate(ctx);
+      return ok({
+        enforced: gate?.enabled('skill') === true,
+        signatureEnforced: gate?.signatureEnabled?.() === true,
+        policyUnavailable: gate?.policy?.()?.failClosed === true,
+      });
+    }
     if (endpoint === 'market-available') {
       const service = marketService();
       return ok({ available: service ? await service.available() : false });

@@ -43,6 +43,8 @@ interface AssetGateProbe {
   unlisted?(): { readonly reason: string; readonly message: string };
   /** 工具级白名单；旧版闸门没有该方法时按未收窄处理。 */
   mcpTools?(assetId: string): { readonly restricted: boolean; readonly tools: readonly string[] };
+  /** 某资产的有效期条目（只读内存）；闸门关闭或未命中时返回 undefined。 */
+  entitlement?(assetType: string, assetId: string): { readonly startTime?: string | null; readonly endTime?: string | null } | undefined;
 }
 
 /**
@@ -456,9 +458,12 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
     const gate = this.gateProbe();
     let authState: 'unauthorized' | 'revoked' | undefined;
     let authReason: string | undefined;
+    let expiresAt: string | undefined;
     const manifest = definition.installManifest;
     if (gate?.enabled('mcp') && manifest?.source === 'market' && manifest.assetId) {
       const assetId = manifest.assetId;
+      // 条目有效期：只在闸门开启且快照命中、条目带结束时间时有值。
+      expiresAt = gate.entitlement?.('mcp', assetId)?.endTime?.trim() || undefined;
       if (gate.revoked('mcp', assetId)) {
         authState = 'revoked'; authReason = gate.revocationReason().message;
       } else {
@@ -494,6 +499,7 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
       ...(definition.installManifest ? { installManifest: definition.installManifest } : {}),
       ...(definition.marketServiceId ? { marketServiceId: definition.marketServiceId } : {}),
       ...(authState ? { authState, ...(authReason ? { authReason } : {}) } : {}),
+      ...(expiresAt ? { expiresAt } : {}),
       ...(toolAuth ? { toolAuth } : {}),
       ...(health.diagnostic ? { diagnostic: health.diagnostic } : {}) };
   }

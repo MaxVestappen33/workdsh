@@ -44,6 +44,19 @@ export function registerModelMarketConnection(ctx: Context): void {
         endpoint = body?.endpoint;
         const payload = record(body?.payload) ?? {};
         if (endpoint === 'available') return Response.json(ok({ available: await market().available() }), noStore);
+        // 闸门状态：判定统一在客户端，关闸时把后台 isAuthorized 一律按 Y 处理。
+        if (endpoint === 'asset-gate-state') {
+          const gate = ctx.reflect.get('workdshAssetGate') as {
+            enabled?(assetType: string): boolean;
+            signatureEnabled?(): boolean;
+            policy?(): { readonly failClosed?: boolean };
+          } | undefined;
+          return Response.json(ok({
+            enforced: gate?.enabled?.('model') === true,
+            signatureEnforced: gate?.signatureEnabled?.() === true,
+            policyUnavailable: gate?.policy?.()?.failClosed === true,
+          }), noStore);
+        }
         if (endpoint === 'list') {
           const pageNo = optionalCount(payload.pageNo);
           const pageSize = optionalCount(payload.pageSize);

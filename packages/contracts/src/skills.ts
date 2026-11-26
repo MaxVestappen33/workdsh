@@ -58,11 +58,17 @@ export interface ManagedSkillSummary {
    * - `unauthorized`：当前账号未获得授权，但仍保留在本机；
    * - `revoked`：授权已失效，已被闸门自动逻辑禁用（与用户手动停用区分）；
    * - `reinstall`：安装于验签开关关闭期间，重开后缺少签名，需重新安装；
+   * - `unlisted`：未登记/未上架（用户手放或自建）的本地技能，可见但不可使用；
    * - `error`：判定过程抛异常，按最小权限处理（不静默当作正常）。
    */
-  readonly authState?: 'unauthorized' | 'revoked' | 'reinstall' | 'error';
+  readonly authState?: 'unauthorized' | 'revoked' | 'reinstall' | 'unlisted' | 'error';
   /** 与 `authState` 配套的中文原因文案，来自闸门 reasons.ts。 */
   readonly authReason?: string;
+  /**
+   * 授权条目的结束时间（后台原样字符串）。仅在闸门开启且快照命中该资产、条目带 endTime 时有值；
+   * 界面只在已过期时展示到期提示，未过期不新增噪音。
+   */
+  readonly expiresAt?: string;
   /**
    * 完整性状态（仅从市场安装的技能有值）：磁盘内容与安装清单不一致时不可使用，
    * 调用期闸门同样会拒绝。
@@ -307,7 +313,7 @@ export interface SkillListingUpload {
   readonly size: number;
 }
 
-export type SkillManagementEndpoint = 'list' | 'root-path' | 'refresh-cache' | 'skill-denials' | 'detail' | 'update' | 'resource' | 'write-resource' | 'set-enabled' | 'dependency-impact' | 'uninstall' | 'batch' | 'trash-list' | 'restore' | 'commit-import' | 'discard-import' | 'catalog' | 'install-catalog' | 'market-available' | 'market-list' | 'market-categories' | 'market-index' | 'market-install' | 'market-uninstall' | 'market-document' | 'listing-options' | 'listing-list' | 'listing-submit' | 'listing-sso';
+export type SkillManagementEndpoint = 'list' | 'root-path' | 'refresh-cache' | 'skill-denials' | 'detail' | 'update' | 'resource' | 'write-resource' | 'set-enabled' | 'dependency-impact' | 'uninstall' | 'batch' | 'trash-list' | 'restore' | 'commit-import' | 'discard-import' | 'catalog' | 'install-catalog' | 'asset-gate-state' | 'market-available' | 'market-list' | 'market-categories' | 'market-index' | 'market-install' | 'market-uninstall' | 'market-document' | 'listing-options' | 'listing-list' | 'listing-submit' | 'listing-sso';
 export interface SkillManagementFailure { readonly code: string; readonly message: string; }
 export type SkillManagementResult<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: SkillManagementFailure };
 

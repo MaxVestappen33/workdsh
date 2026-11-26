@@ -25,6 +25,10 @@ type GateAssetType = 'skill' | 'mcp' | 'expert' | 'expert_group' | 'model' | 'pr
 type GateAuditAction = 'install' | 'enable' | 'restore' | 'uninstall' | 'delete';
 interface AssetGateLike {
   enabled(assetType: GateAssetType): boolean;
+  /** 主闸门与验签开关是否同时开启；旧版闸门没有该方法时按关闭处理。 */
+  signatureEnabled?(): boolean;
+  /** 当前生效策略：只用于向界面暴露闸门状态。 */
+  policy?(): { readonly masterEnabled: boolean; readonly failClosed?: boolean; readonly assetGates: Readonly<Record<string, boolean>> };
   /** 触发式校验：进市场页/刷新/写操作完成后做一次 revision 比对；旧版闸门没有该方法时跳过。 */
   refreshNow?(): Promise<void>;
   /** 强制刷新快照（绕过节流）；旧版闸门没有该方法时不做授权变更重试。 */
@@ -159,6 +163,14 @@ export function registerConnectorManagementConnection(ctx: Context): void {
         endpoint = body?.endpoint;
         const payload = record(body?.payload) ?? {};
         if (endpoint === 'list') return Response.json(ok(await manager.list(request.signal)), noStore);
+        if (endpoint === 'asset-gate-state') {
+          const gate = assetGate(ctx);
+          return Response.json(ok({
+            enforced: gate?.enabled('mcp') === true,
+            signatureEnforced: gate?.signatureEnabled?.() === true,
+            policyUnavailable: gate?.policy?.()?.failClosed === true,
+          }), noStore);
+        }
         if (endpoint === 'config' && typeof payload.id === 'string') return Response.json(ok(await manager.config(payload.id)), noStore);
         if (endpoint === 'create') {
           const meta = { action: 'install', assetType: 'mcp', ...(typeof payload.name === 'string' ? { assetName: payload.name } : {}) } as const;
