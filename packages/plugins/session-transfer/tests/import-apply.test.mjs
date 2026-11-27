@@ -49,6 +49,24 @@ function makeLog(root, sha, imageBytes) {
       data: { content: [{ type: 'image', attachment: { attachmentId: `sha256:${sha}`, mediaType: 'image/png', bytes: imageBytes } }] },
     }),
     JSON.stringify({ type: 'tool/call', data: { arguments: '{"path":"src/a.ts"}' } }),
+    JSON.stringify({
+      type: 'deliverables/presented',
+      data: { files: [{ path: join(root, 'src', 'a.ts'), description: '产物' }] },
+    }),
+    JSON.stringify({
+      type: 'tool/result',
+      data: {
+        meta: {
+          cwd: join(root, 'src'),
+          path: join(root, 'src', 'a.ts'),
+          diffs: [{ path: join(root, 'src', 'a.ts'), oldText: '', newText: `see ${join(root, 'src', 'a.ts')}` }],
+        },
+      },
+    }),
+    JSON.stringify({
+      type: 'assistant/message',
+      data: { message: { content: [{ type: 'text', text: `created ${join(root, 'src', 'a.ts')}` }] } },
+    }),
   ].join('\n') + '\n'
 }
 
@@ -93,7 +111,7 @@ async function buildBundle() {
     sessionIds: ['s1'], includeWorkspaceFiles: true, userExcludes: [], archivePolicy: 'preserve',
   })
   return {
-    exportHome, imageBytes, sha, fileBytes,
+    exportHome, root, imageBytes, sha, fileBytes,
     bytes: await consume(archive.stream),
   }
 }
@@ -219,6 +237,19 @@ test('完整链路：导出包 → 预览 → 落盘，会话/附件/源文件/�
     assert.equal(cwdEvent.data.cwd, join(targetRoot, 'src'))
     const toolEvent = state.appended.find((event) => event.type === 'tool/call')
     assert.equal(toolEvent.data.arguments, '{"path":"src/a.ts"}')
+
+    // 产物卡片与工具结构化元数据里的绝对路径改写为目标工作区（否则导入端预览提示文件不存在）
+    const delivered = state.appended.find((event) => event.type === 'deliverables/presented')
+    assert.equal(delivered.data.files[0].path, join(targetRoot, 'src', 'a.ts'))
+    const metaEvent = state.appended.find((event) => event.type === 'tool/result')
+    assert.equal(metaEvent.data.meta.cwd, join(targetRoot, 'src'))
+    assert.equal(metaEvent.data.meta.path, join(targetRoot, 'src', 'a.ts'))
+    assert.equal(metaEvent.data.meta.diffs[0].path, join(targetRoot, 'src', 'a.ts'))
+
+    // diff 内容与消息正文等文本内容不参与改写（红线 2）
+    assert.equal(metaEvent.data.meta.diffs[0].newText, `see ${join(bundle.root, 'src', 'a.ts')}`)
+    const assistantEvent = state.appended.find((event) => event.type === 'assistant/message')
+    assert.equal(assistantEvent.data.message.content[0].text, `created ${join(bundle.root, 'src', 'a.ts')}`)
 
     // 附件按 sha 内容寻址回写；工作区源文件还原
     assert.deepEqual(

@@ -72,7 +72,7 @@ workspace/<workspaceId>/<rel/path>    # 口径 A：仅被会话引用、位于�
 ## 关键实现契约（三条红线）
 
 1. **禁止硬编码版本号 `4`**：所有版本判断走 `sessionFormatCatalog.currentVersion` / `readHeader` / `createRestore`。包版本高于本机 → **整包拒绝并提示升级客户端**；低于本机 → 复用官方相邻迁移链升级导入。
-2. **禁止全局替换事件文本里的路径字符串**：只改结构化字段——header `cwd`、`working-directory/change.data.cwd`、结构化 id 引用（`sessionId` / `parentSession` / `targetSessionId`）。原因是 `workspace.attachSession(id)` 校验 `header.cwd === workspace.path`。
+2. **禁止全局替换事件文本里的路径字符串**：只改结构化字段——header `cwd`、`working-directory/change.data.cwd`、`deliverables/presented.data.files[].path`、`tool/result.data.meta` 的 `cwd`/`path`/`diffs[].path`、结构化 id 引用（`sessionId` / `parentSession` / `targetSessionId`）。原因是 `workspace.attachSession(id)` 校验 `header.cwd === workspace.path`；产物卡片与工具元数据里的绝对路径若不改写，导入端预览会指向导出机路径并提示「文件不存在」。`diffs[].oldText/newText`、消息正文等文本内容一律不改。
 3. **禁止用只读的 `dsh-api-workspace-files` 做迁移**：导出走本机文件系统 + 官方 `readSessionLogText`，导入走 sha256 校验后的落盘。
 
 其它要点：

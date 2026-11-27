@@ -30,7 +30,7 @@ import type { HostContext, Services, CatalogLike, SessionHeaderLike } from './ho
 import { warn } from './host.js'
 import { checkSessionLogHeader, crossCheckMembers, parseManifest } from './manifest.js'
 import { restoreAttachments } from './attachments.js'
-import { defaultWorkspaceRoot, rewriteCwd } from './paths.js'
+import { defaultWorkspaceRoot, rewriteCwd, rewriteWorkspacePath } from './paths.js'
 import type { ExtractResult } from './zip.js'
 import { extractZipTo, memberPath, writeUploadTo } from './zip.js'
 import { restoreWorkspaceFiles, targetDirState } from './workspace-files.js'
@@ -548,6 +548,19 @@ function rewriteStructuredPaths(
         cwd: rewriteCwd((data as Record<string, unknown>).cwd as string, sourcePath, targetPath) }
     }
   }
+  // 产物卡片（deliverables/presented）的 files[].path 是结构化绝对路径，
+  // UI 预览直接按它打开文件；不改写会让导入端预览指向导出机工作区而提示「文件不存在」。
+  if (event.type === 'deliverables/presented' && isRecord(event.data) && Array.isArray(event.data.files)) {
+    event.data = {
+      ...event.data,
+      files: event.data.files.map((file) => rewritePathField(file, 'path', sourcePath, targetPath)),
+    }
+  }
+  // tool/result 的结构化元数据也带工作区绝对路径（cwd / path / diffs[].path），
+  // 只改这些结构化字段，diffs[].oldText/newText 等内容文本保持原样（红线 2）。
+  if (event.type === 'tool/result' && isRecord(event.data) && isRecord(event.data.meta)) {
+    event.data = { ...event.data, meta: rewriteMetaPaths(event.data.meta, sourcePath, targetPath) }
+  }
   // 标题后缀：仅 ID 冲突重映射时，写进 session/title 事件而非只改 manifest
   if (event.type === 'session/title' && hasSuffix) {
     const data = event.data
@@ -577,6 +590,43 @@ function rewriteStructuredPaths(
     }
   }
   return event
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** 改写一个对象里的单个路径字段；不在源工作区内则原样返回。 */
+function rewritePathField(value: unknown, key: string, sourcePath: string, targetPath: string): unknown {
+  if (!isRecord(value)) return value
+  const path = value[key]
+  if (typeof path !== 'string') return value
+  const rewritten = rewriteWorkspacePath(path, sourcePath, targetPath)
+  return rewritten === undefined ? value : { ...value, [key]: rewritten }
+}
+
+/** 改写 tool/result.meta 里的结构化路径；不触碰任何文本内容。 */
+function rewriteMetaPaths(
+  meta: Record<string, unknown>,
+  sourcePath: string,
+  targetPath: string,
+): Record<string, unknown> {
+  let next = meta
+  const rewrite = (key: string): void => {
+    const value = next[key]
+    if (typeof value !== 'string') return
+    const rewritten = rewriteWorkspacePath(value, sourcePath, targetPath)
+    if (rewritten === undefined) return
+    if (next === meta) next = { ...meta }
+    next[key] = rewritten
+  }
+  rewrite('cwd')
+  rewrite('path')
+  if (Array.isArray(meta.diffs)) {
+    next = next === meta ? { ...meta } : next
+    next.diffs = meta.diffs.map((item) => rewritePathField(item, 'path', sourcePath, targetPath))
+  }
+  return next
 }
 
 function toSessionHeader(

@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   checkMember, stripCommonWrapper, normalizeRelative, relativeToWorkspace,
-  rewriteCwd, defaultWorkspaceRoot, attachmentMember, sessionLogMember,
+  rewriteCwd, rewriteWorkspacePath, defaultWorkspaceRoot, attachmentMember, sessionLogMember,
   isExcluded, matchesExcludeRule,
 } from '../dist/paths.js'
 import { BASE_EXCLUDE_DIRECTORIES, BUILTIN_EXCLUDES } from '../dist/constants.js'
@@ -39,6 +39,19 @@ test('rewriteCwd maps source workspace prefix to the local target path', () => {
   assert.equal(rewriteCwd('/elsewhere', '/ws', '/home/u/proj'), '/home/u/proj')
   assert.equal(rewriteCwd(undefined, '/ws', '/home/u/proj'), '/home/u/proj')
   assert.equal(rewriteCwd('C:\\ws\\sub', 'C:\\ws', 'D:\\proj'), 'D:\\proj/sub')
+})
+
+test('rewriteWorkspacePath only rewrites paths inside the source workspace', () => {
+  assert.equal(
+    rewriteWorkspacePath('C:\\Users\\www\\ws\\诗_静夜思.docx', 'C:\\Users\\www\\ws', 'C:\\Users\\tongyun007\\ws'),
+    'C:\\Users\\tongyun007\\ws\\诗_静夜思.docx',
+  )
+  assert.equal(
+    rewriteWorkspacePath('/home/u/proj/sub/a.ts', '/home/u/proj', '/target/proj'),
+    '/target/proj/sub/a.ts',
+  )
+  assert.equal(rewriteWorkspacePath('/etc/passwd', '/home/u/proj', '/target/proj'), undefined)
+  assert.equal(rewriteWorkspacePath('/home/u/proj', '/home/u/proj', '/target/proj'), '/target/proj')
 })
 
 test('defaultWorkspaceRoot is platform neutral and never hardcodes a user or drive', () => {

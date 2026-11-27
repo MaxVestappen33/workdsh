@@ -90,6 +90,35 @@ test('collectFileReferences only keeps references inside a workspace root', () =
   assert.ok(result.skipped.length > 0)
 })
 
+test('tool/call 参数是转义 JSON 时，Windows 绝对路径也能解析为工作区相对路径', () => {
+  const wsPath = 'C:\\Users\\www\\AppData\\Roaming\\PoliceAssistant\\workspace\\default-workspace'
+  const target = `${wsPath}\\测试word.docx`
+  const log = [
+    JSON.stringify({ type: 'session', version: 4, id: 's1' }),
+    JSON.stringify({
+      type: 'tool/call',
+      data: {
+        arguments: JSON.stringify({
+          description: 'copy attachment into workspace',
+          command: `$file = "C:\\Users\\www\\attachments\\v1\\files\\ff\\测试word.docx"\nCopy-Item $file "${target}" -Force`,
+        }),
+      },
+    }),
+  ].join('\n')
+  const { references } = collectFileReferences(log, [{ id: 'w1', path: wsPath }])
+  assert.deepEqual(references.map((ref) => ref.relative), ['测试word.docx'])
+})
+
+test('deliverables/presented 的结构化产物路径也会进入工作区文件收集', () => {
+  const wsPath = '/home/u/proj'
+  const log = [
+    JSON.stringify({ type: 'session', version: 4, id: 's1' }),
+    JSON.stringify({ type: 'deliverables/presented', data: { files: [{ path: `${wsPath}/out/report.docx` }] } }),
+  ].join('\n')
+  const { references } = collectFileReferences(log, [{ id: 'w1', path: wsPath }])
+  assert.deepEqual(references.map((ref) => ref.relative), ['out/report.docx'])
+})
+
 test('subagentCascade and expandSelection keep parent before child', () => {
   const snapshots = [
     { header: { id: 'root', version: 4, createdAt: 1, isSeeded: false } },

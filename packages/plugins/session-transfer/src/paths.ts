@@ -198,6 +198,27 @@ export function rewriteCwd(cwd: string | undefined, sourcePath: string, targetPa
   return targetPath
 }
 
+/** 目标工作区内的绝对路径拼接：沿用目标路径自身的分隔符。 */
+function joinUnderTarget(targetPath: string, relative: string): string {
+  const sep = targetPath.includes('\\') && !targetPath.includes('/') ? '\\' : '/'
+  return targetPath.replace(/[\\/]+$/u, '') + sep + relative.split('/').join(sep)
+}
+
+/**
+ * 把「源工作区内的绝对路径」改写成「本机目标工作区内的绝对路径」。
+ * 只用于结构化字段（产物卡片 files[].path、tool/result.meta 等）；
+ * 不在源工作区内时返回 undefined，调用方保留原值。
+ */
+export function rewriteWorkspacePath(value: string, sourcePath: string, targetPath: string): string | undefined {
+  if (value === '' || sourcePath === '' || targetPath === '') return undefined
+  const normValue = value.replace(/\\/gu, '/').replace(/\/+$/u, '')
+  const normSource = sourcePath.replace(/\\/gu, '/').replace(/\/+$/u, '')
+  if (normValue.toLowerCase() === normSource.toLowerCase()) return targetPath
+  const prefix = normSource + '/'
+  if (!normValue.toLowerCase().startsWith(prefix.toLowerCase())) return undefined
+  return joinUnderTarget(targetPath, normValue.slice(prefix.length))
+}
+
 /** 按 process.platform 生成「新建目录」默认路径（不硬编码用户名或盘符）。 */
 export function defaultWorkspaceRoot(platform: string, homedir: string, title: string): string {
   const safeTitle = title.replace(/[\\/:*?"<>|\u0000-\u001f]/gu, '_').trim() || '新工作区'

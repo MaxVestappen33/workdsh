@@ -148,8 +148,13 @@ function* candidateStrings(event: Record<string, unknown>): Generator<string> {
   if (type === 'tool/call' || type === 'tool/result') {
     for (const key of ['arguments', 'args', 'input', 'result', 'output', 'path', 'filePath']) {
       const value = record[key]
-      if (typeof value === 'string') yield value
-      else if (typeof value === 'object' && value !== null) {
+      if (typeof value === 'string') {
+        yield value
+        // arguments 本身是「转义后的 JSON 文本」：Windows 绝对路径会写成
+        // `C:\\Users\\...`，直接按文本抽 token 会得到双反斜杠而匹配不到工作区根，
+        // 必须先按 JSON 解析，再取其中的单反斜杠字符串。
+        yield* jsonNestedStrings(value)
+      } else if (typeof value === 'object' && value !== null) {
         for (const nested of stringValues(value)) yield nested
       }
     }
@@ -160,6 +165,14 @@ function* candidateStrings(event: Record<string, unknown>): Generator<string> {
       for (const value of textValues((message as Record<string, unknown>).content)) yield value
     }
     for (const value of textValues(record.content)) yield value
+  }
+  // 产物卡片是结构化文件引用：即使工具输出文本里没有绝对路径，也要带上产物文件。
+  if (type === 'deliverables/presented' && Array.isArray(record.files)) {
+    for (const file of record.files) {
+      if (typeof file !== 'object' || file === null) continue
+      const path = (file as Record<string, unknown>).path
+      if (typeof path === 'string') yield path
+    }
   }
   // dsh-resource:// 地址
   for (const value of stringValues(record)) {
@@ -196,6 +209,19 @@ function* stringValues(value: unknown): Generator<string> {
   if (typeof value === 'object' && value !== null) {
     for (const nested of Object.values(value as Record<string, unknown>)) yield* stringValues(nested)
   }
+}
+
+/** 解析「转义后的 JSON 文本」（tool 参数）并取出其中所有字符串值。 */
+function* jsonNestedStrings(text: string): Generator<string> {
+  const trimmed = text.trim()
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(trimmed)
+  } catch {
+    return
+  }
+  yield* stringValues(parsed)
 }
 
 /** 从字符串里抽取看起来像路径的 token。 */
